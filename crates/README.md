@@ -1,6 +1,6 @@
 # crates
 
-Hallow's Cargo workspace. Crates arrive in Phase 1.
+Hallow's Cargo workspace.
 
 | Crate | What it is |
 |---|---|
@@ -8,5 +8,8 @@ Hallow's Cargo workspace. Crates arrive in Phase 1.
 | `control-plane/` | Server and proxy registry, matchmaker, presence, orchestration through the Wings API, fleet manager |
 | `providers/*` | One crate per machine provider (Hetzner Cloud, Hetzner Robot, OVHcloud) behind the fleet manager's provider trait |
 | `vine-plugins/` | Presence, global ping, duplicate-login check, parties, queues, cross-proxy commands (WASM) |
-| `minigame-lib/` | Arenas, teams, kits, scoreboards, map reset, stats (WASM) |
-| `games/*` | One crate per game (WASM) |
+| `hallow-sdk/` | For server repos: minigame library (arenas, teams, kits, scoreboards, spectating, stats) and control-plane client (WASM) |
+| `server-plugin/` | Hallow's plugin in every server image: presence, stats, the link to the control plane (WASM) |
+| `netcheck/` | Smoke test: joins through the proxy as a bot and switches servers |
+
+Games and lobbies are not crates here; each is its own server repo (see [Servers](../docs/SERVERS.md)).

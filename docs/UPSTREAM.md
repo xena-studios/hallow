@@ -30,12 +30,16 @@ Vine and multiversion depend on Pumpkin crates by relative path (`../Pumpkin/cra
 
 ## Contributions
 
-Fixes and reports we have for upstream projects. Each is offered upstream before or alongside using it in a fork.
+Fixes and reports we have for upstream projects. Each is offered upstream before or alongside using it in our fork.
+
+**How we contribute:** Pumpkin's [CONTRIBUTING.md](https://github.com/Pumpkin-MC/Pumpkin/blob/master/CONTRIBUTING.md#ai-generated-contributions) and [AGENTS.md](https://github.com/Pumpkin-MC/Pumpkin/blob/master/AGENTS.md#pull-requests) apply across Pumpkin-MC. A person opens every PR and issue after reading and running the change, and AI use is disclosed in the description. Agents prepare the branch and the draft, never post. Commits use Conventional Commits with a scope, like `fix(bridge): ...`.
 
 | Project | What | Kind | Status |
 |---|---|---|---|
-| Vine | Doesn't build against Pumpkin `master`, so Vine's own CI fails: `rsa` pre-release pin, a second `wasmtime` version, `StoreExecutor` API changes, and Pumpkin's removal of RakNet ([Pumpkin-MC/Pumpkin#4427](https://github.com/Pumpkin-MC/Pumpkin/pull/4427)) | Fix ready: [xena-studios/Vine `fix/build-against-current-pumpkin`](https://github.com/xena-studios/Vine/tree/fix/build-against-current-pumpkin) | Not yet sent |
+| Vine | Doesn't build against Pumpkin `master`, so Vine's own CI fails: `rsa` pre-release pin, a second `wasmtime` version, `StoreExecutor` API changes, and Pumpkin's removal of RakNet ([Pumpkin-MC/Pumpkin#4427](https://github.com/Pumpkin-MC/Pumpkin/pull/4427)) | Fix | Sent: [Pumpkin-MC/Vine#9](https://github.com/Pumpkin-MC/Vine/pull/9) |
+| Vine | Switching servers disconnects every 1.20.2+ client: Vine relays the client's Configuration Acknowledged to a backend still in the login state, which closes the connection | Fix ready: [xena-studios/Vine `fix/server-switch-login-ack`](https://github.com/xena-studios/Vine/tree/fix/server-switch-login-ack), stacked on #9 | Not yet sent |
+| Vine | Closes the old backend without a disconnect packet on a switch, so Pumpkin logs "Broken pipe" | Small fix | Not yet written |
 | Vine | Defaults still say 26.2 (protocol 776) while Pumpkin is on 26.3 (777) | Small fix | Not yet written |
 | Vine | No README | Docs | Not yet written |
-| pumpkin-java-multiversion | No LICENSE file, though `Cargo.toml` says MIT OR Apache-2.0; it bundles ViaBackwards and ViaRewind data, both GPL-3.0 | Issue for the maintainers to decide | Not yet sent |
-| pumpkin-java-multiversion | README says chunks are adapted for 1.7, 1.8, 1.9 and 1.18, but `src/chunk/` is left out of the WASM build and never called | Issue | Not yet sent |
+| pumpkin-java-multiversion | No LICENSE file, though `Cargo.toml` says MIT OR Apache-2.0; it bundles ViaBackwards and ViaRewind data, both GPL-3.0 | Issue | Sent: [#10](https://github.com/Pumpkin-MC/pumpkin-java-multiversion/issues/10) |
+| pumpkin-java-multiversion | README says chunks are adapted for 1.7, 1.8, 1.9 and 1.18, but `src/chunk/` is left out of the WASM build and never called | Issue | Sent: [#11](https://github.com/Pumpkin-MC/pumpkin-java-multiversion/issues/11) |
