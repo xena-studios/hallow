@@ -1,6 +1,6 @@
 # Hallow
 
-**A full minigame network, built on [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin).** Lobbies, matchmaking, parties, multiple proxies, one panel for every node, server, player and ban. Java 1.7 to 26.3 and Bedrock, written in Rust.
+**A full minigame network, built on [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin).** Lobbies, matchmaking, parties, multiple proxies, machines bought and returned on demand from Hetzner and OVHcloud, one panel for every node, server, player and ban. Java 1.7 to 26.3 and Bedrock, written in Rust.
 
 Hallow is a Xena Studios project. It exists to show that Pumpkin and its ecosystem can run a large-network setup, not just a single server, and to send what we build back upstream.
 
@@ -21,10 +21,12 @@ flowchart TB
     cp <--> redis[("Redis")] & pg[("PostgreSQL")]
     cp --> wings["Calagopus Wings<br/>on every node"]
     wings --> lobby & games
+    cp -- "buy / cancel nodes" --> providers["Hetzner · OVHcloud APIs"]
+    providers -.-> wings
     panel["Hallow Panel<br/>Calagopus fork + extensions"] --> cp & wings & pg
 ```
 
-Old Java clients are translated on each backend by [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion). Vine instances share state through the control plane and Redis, so any number of proxies act as one network. The full picture is in [Architecture](docs/ARCHITECTURE.md).
+Old Java clients are translated on each backend by [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion). Vine instances share state through the control plane and Redis, so any number of proxies act as one network. The fleet manager adds hourly cloud machines for peaks and returns them when load drops. The full picture is in [Architecture](docs/ARCHITECTURE.md).
 
 ## Stack
 
@@ -38,6 +40,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 | Minigame library and games | arenas, kits, scoreboards, map reset, stats | Rust → WASM |
 | Control plane | matchmaker, registry, sessions, orchestration | Rust (tokio, tonic) |
 | Node agent | [Calagopus Wings](https://github.com/calagopus/wings) + Docker | Rust |
+| Fleet | Fleet manager in the control plane; Hetzner Cloud, Hetzner Robot, OVHcloud provider crates; cloud-init; WireGuard | Rust |
 | Panel | [Calagopus Panel](https://github.com/calagopus/panel) fork + extensions | Rust (Axum) + React |
 | Data | Redis (live state), PostgreSQL (accounts, ranks, stats, bans) | |
 | Monitoring | Prometheus, Grafana, Loki | |
@@ -57,6 +60,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 
 - [Architecture](docs/ARCHITECTURE.md): every component and how players move through the network
 - [Multi-proxy](docs/MULTI-PROXY.md): how several Vine proxies act as one
+- [Fleet](docs/FLEET.md): buying, setting up and returning machines on demand
 - [Panel](docs/PANEL.md): one panel for nodes, servers, players, staff and bans
 - [Upstream](docs/UPSTREAM.md): what Pumpkin, Vine, multiversion and Calagopus do today, from their source
 - [Roadmap](docs/ROADMAP.md): phases, gates and every task

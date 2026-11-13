@@ -12,5 +12,9 @@ The biggest risk is that old-version support turns into a protocol-translation p
 | Bedrock route A bypasses Vine | Two routing paths | Pick the route in Phase 0; the control plane treats both the same |
 | Calagopus extension API too narrow | More core edits, harder upstream merges | Check in Phase 0; keep core edits to hooks and upstream them |
 | Wings too slow for short-lived instances | Long queue times | Measure in Phase 0; pool warm instances; talk to Docker directly as a last resort |
+| A scaling bug buys machines in a loop | A large bill | Spend caps, node limits, cooldowns, dry run by default, alerts on every order |
+| Provider API keys leak | Someone buys or wipes machines on our account | Keys in the secrets store, scoped to what the fleet manager needs, rotated; audit log of every call |
+| New nodes take too long to be ready | Players wait during a spike | Measure in Phase 0; prebuilt images; scale up early with headroom |
+| Provider stock or region outage | No burst capacity | More than one provider and region behind the same trait |
 | GPL-3.0 on Vine and Pumpkin | Forks must stay GPL when distributed | Hallow is AGPL-3.0; anything private lives outside this repo |
 | Trademark and Minecraft EULA | Takedowns | Original names and art; follow Minecraft's commercial usage guidelines for any store |

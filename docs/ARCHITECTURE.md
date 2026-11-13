@@ -26,6 +26,7 @@ flowchart TB
     subgraph Nodes
         wings["Calagopus Wings + Docker"]
     end
+    providers["Hetzner · OVHcloud APIs"]
     java --> lb --> vine
     bedrock -.-> geyser -.-> lb
     bedrock -. "option A" .-> lobby
@@ -34,6 +35,8 @@ flowchart TB
     lobby & games <--> cp
     cp <--> redis & pg
     cp --> wings
+    cp -- "buy / cancel nodes" --> providers
+    providers -. "new machine" .-> wings
     panel --> cp & wings & pg
     wings --> vine & lobby & games
 ```
@@ -52,6 +55,7 @@ flowchart TB
 | Control plane | Server registry, matchmaker, instance orchestration, sessions, proxy sync | Ours, Rust | `crates/control-plane` |
 | Protocol | gRPC types shared by the control plane and every plugin | Ours, protobuf | `crates/proto` |
 | Node agent | Creates, starts, stops and deletes server containers from templates | Calagopus Wings | `upstream/wings` |
+| Fleet manager | Buys machines from providers when capacity runs low, sets them up, drains and cancels them when it doesn't | Ours, part of the control plane | `crates/control-plane`, `crates/providers/*` |
 | Hallow Panel | One panel for nodes, servers, players, staff, bans, games and stats | Calagopus Panel fork + extensions | `panel/` |
 | Redis | Live state: presence, queues, server list, pub/sub between proxies | | |
 | PostgreSQL | Accounts, ranks, stats, punishments, panel data | | |
@@ -81,6 +85,10 @@ Vine's Bedrock listener only answers server-list pings today (`src/bedrock/liste
 
 - **Long-lived** (proxies, lobbies, limbo) are normal Calagopus servers. Staff see their consoles, logs and files in the panel.
 - **Short-lived** game instances are created and deleted by the matchmaker through the Wings API, never one panel record each. The panel shows them in a live view read from the control plane.
+
+## Fleet
+
+Nodes come in two kinds: monthly dedicated machines for base load and hourly cloud machines for peaks. The fleet manager watches free game slots and queue times, buys burst nodes from Hetzner Cloud or OVHcloud Public Cloud when capacity runs low, sets them up with cloud-init (Docker, Wings, private network), and drains and cancels them when load drops. Monthly orders need staff approval. See [Fleet](FLEET.md).
 
 ## Multi-proxy
 

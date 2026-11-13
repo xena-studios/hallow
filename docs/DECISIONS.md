@@ -19,3 +19,6 @@ Every locked decision and why. Change one with a pull request that edits its row
 | 13 | **Redis for live state, PostgreSQL for everything kept.** | Standard pairing; PostgreSQL is also the panel's database. |
 | 14 | **AGPL-3.0.** | Matches Raptor; compatible with the GPL-3.0 upstreams; network services stay open. |
 | 15 | **1.8-style combat: open.** Decide before Phase 2. | Decides whether the minigame library carries a legacy combat module. |
+| 16 | **The network buys and returns its own machines.** A fleet manager in the control plane uses provider APIs, Hetzner and OVHcloud first, behind one provider trait. | Peaks are short and hourly machines are cheap; buying by hand doesn't keep up. One trait keeps new providers to one crate. |
+| 17 | **Base load on monthly dedicated machines, peaks on hourly cloud.** Burst nodes scale automatically; monthly orders and base-node cancellations need staff approval. | Dedicated is cheapest per core but can't be returned within the hour. |
+| 18 | **Spend caps, cooldowns and dry run by default.** | A scaling bug must not run up a bill. |
