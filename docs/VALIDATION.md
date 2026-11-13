@@ -28,6 +28,8 @@ Old clients matter most because the multiversion plugin rewrites packet bodies o
 | Vine messages on old clients | `/server`, chat and tab completion render on 1.8.9 | |
 | Wings create from template | A game instance is up and joinable in under 10 s | |
 | Wings churn | 200 create and delete cycles on one node with no leaks | |
+| Cloud node ready time | A Hetzner Cloud machine goes from API call to taking games, with Docker and Wings installed by cloud-init; record the time | |
+| Provider billing | Billing step and minimum term for Hetzner Cloud, Hetzner Robot and OVHcloud, from their current docs | |
 | Calagopus extensions | An extension adds a table, an API route and a page | |
 | Pumpkin capacity | Bot players per backend before tick time passes 50 ms | |
 | Vine capacity | Bot players per proxy before latency rises | |

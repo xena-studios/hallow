@@ -26,6 +26,7 @@ One panel runs the whole network: nodes, servers, databases, players, ranks, sta
 | Reports | Player reports with evidence, assignment and status. |
 | Games | Game templates and maps, matchmaker settings per game, enable or disable a game. |
 | Nodes and servers | Calagopus as is: nodes, long-lived servers, consoles, files, backups, databases. |
+| Fleet | Every node's provider, region, kind, monthly cost and state; add, drain or cancel nodes; approve monthly orders; scaling targets, spend caps and dry run. See [Fleet](FLEET.md). |
 | Stats | Network and per-game dashboards from PostgreSQL. |
 
 ## Short-lived game instances

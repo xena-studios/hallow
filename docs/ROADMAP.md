@@ -23,6 +23,7 @@ Prove the stack before writing games. About two weeks.
 - [ ] Measure how fast Calagopus Wings creates and deletes a server from a template
 - [ ] Check what the Calagopus extension API can add: tables, routes, pages
 - [ ] Bot load test: players per Pumpkin backend and per Vine
+- [ ] Time a Hetzner Cloud node from API call to taking games, and check provider billing terms
 - [ ] Ask the Pumpkin team which changes they would take upstream
 - [ ] Write the Phase 0 report and update [Decisions](DECISIONS.md) and [Risks](RISKS.md)
 
@@ -43,6 +44,7 @@ Prove the stack before writing games. About two weeks.
 - [ ] Panel: Network page and Players page
 - [ ] Panel: punishments and staff roles
 - [ ] Monitoring: Prometheus, Grafana, Loki
+- [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
 
 **Gate:** with two proxies running, a player queues, the matchmaker starts a fresh instance, and the player lands in it; staff see it all in the panel.
 
@@ -54,6 +56,9 @@ Prove the stack before writing games. About two weeks.
 - [ ] Stats, leaderboards and ranks
 - [ ] Player website: profiles and leaderboards
 - [ ] Panel: reports, games and stats pages
+- [ ] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run
+- [ ] Hetzner Cloud provider: burst nodes on demand
+- [ ] Panel: Fleet page
 - [ ] Closed beta with real players
 
 **Gate:** a closed beta runs a week without data loss or a network-wide outage.
@@ -65,6 +70,9 @@ Prove the stack before writing games. About two weeks.
 - [ ] DDoS protection in front of the load balancer
 - [ ] Backups and a restore drill for PostgreSQL
 - [ ] Runbooks: proxy drain, node loss, upstream update
+- [ ] OVHcloud Public Cloud provider
+- [ ] Dedicated ordering with approval: Hetzner Robot and OVHcloud dedicated
+- [ ] Cross-provider private network and multi-region scaling
 - [ ] Public launch
 
 **Gate:** public launch.
