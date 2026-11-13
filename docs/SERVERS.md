@@ -31,6 +31,7 @@ And `hallow.toml` says how Hallow should treat it:
 name = "skywars"
 role = "game"                # "lobby" or "game"
 lobby = "skywars-lobby"      # where players go when a game ends
+base = "^0.3"                # Hallow base image versions this repo works with
 
 [players]
 min = 2                      # start when this many are queued
@@ -39,8 +40,6 @@ max = 12                     # one match per instance
 [scaling]
 warm = 1                     # idle instances kept ready while players are online
 max_instances = 200
-
-base = "^0.3"                # Hallow base image versions this repo works with
 
 [maps]
 pick = "random"              # or "vote"
