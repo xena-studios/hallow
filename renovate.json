@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>xena-studios/.github:renovate-config"],
+  "description": "Shared Xena Studios settings. Submodules in upstream/ are updated by hand, after the version matrix passes, so Renovate leaves them alone.",
+  "git-submodules": { "enabled": false }
+}

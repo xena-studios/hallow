@@ -1,0 +1,33 @@
+name: Check
+
+# Validates the Renovate config and checks the docs for typos and broken
+# relative links. main requires the "check" job. Build and test jobs join
+# it as crates arrive.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Validate the Renovate config
+        run: npx --yes --package renovate -- renovate-config-validator --strict renovate.json
+      - name: Check relative links in the docs
+        run: |
+          status=0
+          for f in $(git ls-files '*.md'); do
+            dir=$(dirname "$f")
+            for link in $(grep -oE '\]\([^)#:]+(#[^)]*)?\)' "$f" | sed -E 's/^\]\(([^)#]+).*/\1/'); do
+              [ -e "$dir/$link" ] || { echo "$f: broken link $link"; status=1; }
+            done
+          done
+          exit $status

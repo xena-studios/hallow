@@ -1,0 +1,70 @@
+# Roadmap
+
+Four phases, each ending at a gate. Nothing in a phase starts until the gate before it passes. Every task below has a matching issue in its [milestone](https://github.com/xena-studios/hallow/milestones).
+
+```mermaid
+flowchart LR
+    p0["Phase 0<br/>Validation spike<br/>~2 weeks"] --> g0{{"1.8, 26.3 and Bedrock<br/>join and switch"}}
+    g0 --> p1["Phase 1<br/>Network core"] --> g1{{"Queue lands players in<br/>a fresh instance, 2 proxies"}}
+    g1 --> p2["Phase 2<br/>First games"] --> g2{{"Closed beta"}}
+    g2 --> p3["Phase 3<br/>Harden and launch"] --> g3{{"Public launch"}}
+```
+
+## Phase 0: validation spike
+
+Prove the stack before writing games. About two weeks.
+
+- [ ] Add Pumpkin, Vine, multiversion and Wings as submodules in `upstream/` at commits that build together
+- [ ] Docker Compose for one Vine and two Pumpkin servers with the multiversion plugin
+- [ ] Run the client version matrix in [Validation](VALIDATION.md)
+- [ ] Test server switching through Vine on 1.8.9, 1.12.2 and 26.3
+- [ ] Check that Vine's own messages render on old clients
+- [ ] Test both Bedrock routes and pick one
+- [ ] Measure how fast Calagopus Wings creates and deletes a server from a template
+- [ ] Check what the Calagopus extension API can add: tables, routes, pages
+- [ ] Bot load test: players per Pumpkin backend and per Vine
+- [ ] Ask the Pumpkin team which changes they would take upstream
+- [ ] Write the Phase 0 report and update [Decisions](DECISIONS.md) and [Risks](RISKS.md)
+
+**Gate:** a 1.8.9, a 26.3 and a Bedrock client each join, play and switch servers twice. If old versions fail, the fallbacks in [Risks](RISKS.md) set the launch scope before Phase 1.
+
+## Phase 1: network core
+
+- [ ] Vine fork: runtime `register-server` / `unregister-server`, drain mode
+- [ ] `crates/proto`: gRPC definitions for the control plane
+- [ ] Control plane: server registry, proxy registry, presence in Redis
+- [ ] Vine plugins: presence, global ping, duplicate-login check, cross-proxy commands
+- [ ] Load balancer with PROXY protocol and health checks
+- [ ] Matchmaker: queues, instance pooling, start and delete through the Wings API
+- [ ] Server templates: proxy, lobby, test game
+- [ ] Parties and friends
+- [ ] PostgreSQL schema: accounts, ranks, sessions, punishments
+- [ ] Panel fork with Hallow branding and the extension scaffold
+- [ ] Panel: Network page and Players page
+- [ ] Panel: punishments and staff roles
+- [ ] Monitoring: Prometheus, Grafana, Loki
+
+**Gate:** with two proxies running, a player queues, the matchmaker starts a fresh instance, and the player lands in it; staff see it all in the panel.
+
+## Phase 2: first games
+
+- [ ] Minigame library: arenas, teams, kits, scoreboards, map reset, spectating, stats
+- [ ] 1.8-style combat module, if [Decisions](DECISIONS.md) keeps it
+- [ ] Two launch games (to be chosen)
+- [ ] Stats, leaderboards and ranks
+- [ ] Player website: profiles and leaderboards
+- [ ] Panel: reports, games and stats pages
+- [ ] Closed beta with real players
+
+**Gate:** a closed beta runs a week without data loss or a network-wide outage.
+
+## Phase 3: harden and launch
+
+- [ ] Anticheat (none found for Pumpkin: build or port)
+- [ ] Load tests at target size across several proxies and nodes
+- [ ] DDoS protection in front of the load balancer
+- [ ] Backups and a restore drill for PostgreSQL
+- [ ] Runbooks: proxy drain, node loss, upstream update
+- [ ] Public launch
+
+**Gate:** public launch.
