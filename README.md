@@ -26,7 +26,7 @@ flowchart TB
     panel["Hallow Panel<br/>Calagopus fork + extensions"] --> cp & wings & pg
 ```
 
-Old Java clients are translated on each backend by [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion). Vine instances share state through the control plane and Redis, so any number of proxies act as one network. The fleet manager adds hourly cloud machines for peaks and returns them when load drops. The full picture is in [Architecture](docs/ARCHITECTURE.md).
+Old Java clients are translated on each backend by [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion). Vine instances share state through the control plane and Redis, so any number of proxies act as one network. The fleet manager adds hourly cloud machines for peaks and returns them when load drops, down to a single machine when nobody is online, all within a set budget. The full picture is in [Architecture](docs/ARCHITECTURE.md).
 
 ## Stack
 

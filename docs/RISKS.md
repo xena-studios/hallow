@@ -12,6 +12,8 @@ The biggest risk is that old-version support turns into a protocol-translation p
 | Bedrock route A bypasses Vine | Two routing paths | Pick the route in Phase 0; the control plane treats both the same |
 | Calagopus extension API too narrow | More core edits, harder upstream merges | Check in Phase 0; keep core edits to hooks and upstream them |
 | Wings too slow for short-lived instances | Long queue times | Measure in Phase 0; pool warm instances; talk to Docker directly as a last resort |
+| The floor node fails while it is the only machine | The whole network is down | Backups and a tested restore; raise the floor to two or more after launch |
+| Cold start after a quiet spell is slow | The first players wait for a game | Measure in Phase 0; prebuilt images; a warm pool of one for the top game |
 | A scaling bug buys machines in a loop | A large bill | Spend caps, node limits, cooldowns, dry run by default, alerts on every order |
 | Provider API keys leak | Someone buys or wipes machines on our account | Keys in the secrets store, scoped to what the fleet manager needs, rotated; audit log of every call |
 | New nodes take too long to be ready | Players wait during a spike | Measure in Phase 0; prebuilt images; scale up early with headroom |

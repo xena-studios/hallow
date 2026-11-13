@@ -58,6 +58,8 @@ Prove the stack before writing games. About two weeks.
 - [ ] Panel: reports, games and stats pages
 - [ ] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run
 - [ ] Hetzner Cloud provider: burst nodes on demand
+- [ ] Scale to one: floor node, per-layer scaling for game instances, lobbies and proxies
+- [ ] Budgets: monthly budget, daily cap, forecast, queueing at the cap
 - [ ] Panel: Fleet page
 - [ ] Closed beta with real players
 
