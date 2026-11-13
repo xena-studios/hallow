@@ -40,6 +40,8 @@ max = 12                     # one match per instance
 warm = 1                     # idle instances kept ready while players are online
 max_instances = 200
 
+base = "^0.3"                # Hallow base image versions this repo works with
+
 [maps]
 pick = "random"              # or "vote"
 ```
@@ -49,9 +51,20 @@ A lobby's file has `role = "lobby"`, a `players.max` per instance, and the games
 ## From repo to running server
 
 1. A push to a server repo's main branch, or a tag, runs its CI. CI builds the plugin to WASM and bakes it, the maps and the config onto Hallow's Pumpkin base image, then publishes the image to GHCR as `ghcr.io/xena-studios/<name>:<version>`.
-2. The panel lists every server kind and its versions. Staff choose which version is live; that's the deploy.
+2. The panel lists every server kind and its versions. Staff choose which version is live; that's the deploy. See [Versions](#versions).
 3. New instances start on the live version. Running games finish on the version they started on, and old lobby instances drain once new ones are up. No restarts and no kicked players.
-4. Rolling back means choosing the previous version.
+4. Rolling back means making the previous version live again.
+
+## Versions
+
+Every server kind is versioned by its own repo, independently of the others and of Hallow.
+
+- **A version is a git tag** on the server repo, `v1.4.0` style. CI turns the tag into the image `ghcr.io/xena-studios/skywars:1.4.0`, labelled with the commit, the base image version and the `hallow-sdk` version it was built with.
+- **Pushes to `main` are dev builds**, tagged with the commit (`skywars:sha-3f2a9c1`). They can be started on a staging network but never go live on production.
+- **Channels per server kind:** `live` is what new instances start on, `canary` optionally takes a share of new instances (say 10 %) before it becomes `live`. Promoting, canarying and rolling back are panel actions, each in the audit log with who did it.
+- **Compatibility is declared, not guessed:** `hallow.toml` names the base image range it supports (`base = "^0.3"`). The panel refuses to make a version live on a network whose base image is outside that range, so a Pumpkin or protocol upgrade can't silently break an old game.
+- **Mixed versions are normal.** During a rollout, old and new instances of the same kind run side by side: running matches finish on their version, new matches start on the new one, and lobbies drain old instances once new ones are up. The panel shows which version every instance runs.
+- **Hallow itself** (base image, SDK, control plane, Vine fork) is versioned the same way from tags on the monorepo; a base image release says which Pumpkin commit and protocol version it carries.
 
 Hallow's base image carries Pumpkin, the multiversion plugin and Hallow's own server plugin (presence, stats, the link to the control plane), so a server repo only holds what's specific to it.
 
