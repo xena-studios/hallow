@@ -1,12 +1,26 @@
 # upstream
 
-Projects Hallow builds on, as git submodules pinned to commits that build together. Vine and multiversion depend on Pumpkin by relative path, so they sit side by side here.
+Projects Hallow builds on, as git submodules pinned to commits that build together. Vine and multiversion depend on Pumpkin by the relative path `../Pumpkin`, so the directory names here matter.
 
-| Directory | Project | Notes |
+| Directory | Project | Pinned to |
 |---|---|---|
-| `pumpkin/` | [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) | Game server |
-| `vine/` | [Pumpkin-MC/Vine](https://github.com/Pumpkin-MC/Vine) | Proxy; points at the Hallow fork once it exists |
-| `multiversion/` | [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) | Old Java clients |
-| `wings/` | [calagopus/wings](https://github.com/calagopus/wings) | Node agent |
+| `Pumpkin/` | [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) | `master` |
+| `Vine/` | [xena-studios/Vine](https://github.com/xena-studios/Vine), our fork of [Pumpkin-MC/Vine](https://github.com/Pumpkin-MC/Vine) | `hallow`: upstream plus fixes we've offered back |
+| `pumpkin-java-multiversion/` | [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) | `master` |
+| `wings/` | [calagopus/wings](https://github.com/calagopus/wings) | `main` |
 
-Added in Phase 0. See [Upstream](../docs/UPSTREAM.md) for what each one does today.
+## Clone and build
+
+```sh
+git clone --recurse-submodules https://github.com/xena-studios/hallow
+cd hallow/upstream
+(cd Vine && cargo build --release)
+(cd pumpkin-java-multiversion && cargo build --release --target wasm32-wasip2)
+(cd Pumpkin && cargo build --release)
+```
+
+Needs stable Rust with the `wasm32-wasip2` target. Wings needs Rust 1.99 or newer.
+
+## Updating
+
+Move a pin only after the [validation matrix](../docs/VALIDATION.md) passes on the new commits. Every change we make to a fork is offered upstream; see [Upstream](../docs/UPSTREAM.md#contributions).

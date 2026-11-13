@@ -1,0 +1,13 @@
+[submodule "upstream/Pumpkin"]
+	path = upstream/Pumpkin
+	url = https://github.com/Pumpkin-MC/Pumpkin
+[submodule "upstream/Vine"]
+	path = upstream/Vine
+	url = https://github.com/xena-studios/Vine
+	branch = hallow
+[submodule "upstream/pumpkin-java-multiversion"]
+	path = upstream/pumpkin-java-multiversion
+	url = https://github.com/Pumpkin-MC/pumpkin-java-multiversion
+[submodule "upstream/wings"]
+	path = upstream/wings
+	url = https://github.com/calagopus/wings
