@@ -1,0 +1,16 @@
+[package]
+name = "netcheck"
+version = "0.1.0"
+description = "Smoke test for a Hallow network: joins through the proxy as a bot and switches servers."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pumpkin-data.workspace = true
+pumpkin-protocol.workspace = true
+pumpkin-util.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+uuid.workspace = true

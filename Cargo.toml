@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/netcheck"]
+# Upstream projects build in their own workspaces.
+exclude = ["upstream"]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/xena-studios/hallow"
+publish = false
+
+[workspace.dependencies]
+pumpkin-data = { path = "upstream/Pumpkin/crates/pumpkin-data", default-features = false }
+pumpkin-protocol = { path = "upstream/Pumpkin/crates/pumpkin-protocol", default-features = false, features = ["serverbound", "clientbound"] }
+pumpkin-util = { path = "upstream/Pumpkin/crates/pumpkin-util", default-features = false }
+tokio = { version = "1.54", features = ["full"] }
+bytes = "1.12"
+uuid = { version = "1.29", features = ["v3", "v4"] }
+
+[profile.release]
+lto = "thin"

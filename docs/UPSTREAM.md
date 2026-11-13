@@ -37,7 +37,7 @@ Fixes and reports we have for upstream projects. Each is offered upstream before
 | Project | What | Kind | Status |
 |---|---|---|---|
 | Vine | Doesn't build against Pumpkin `master`, so Vine's own CI fails: `rsa` pre-release pin, a second `wasmtime` version, `StoreExecutor` API changes, and Pumpkin's removal of RakNet ([Pumpkin-MC/Pumpkin#4427](https://github.com/Pumpkin-MC/Pumpkin/pull/4427)) | Fix | Sent: [Pumpkin-MC/Vine#9](https://github.com/Pumpkin-MC/Vine/pull/9) |
-| Vine | Switching servers disconnects every 1.20.2+ client: Vine relays the client's Configuration Acknowledged to a backend still in the login state, which closes the connection | Fix ready: [xena-studios/Vine `fix/server-switch-login-ack`](https://github.com/xena-studios/Vine/tree/fix/server-switch-login-ack), stacked on #9 | Not yet sent |
+| Vine | Switching servers disconnects every 1.20.2+ client: Vine relays the client's Configuration Acknowledged to a backend still in the login state, which closes the connection | Fix, stacked on #9 | Sent: [Pumpkin-MC/Vine#10](https://github.com/Pumpkin-MC/Vine/pull/10) |
 | Vine | Closes the old backend without a disconnect packet on a switch, so Pumpkin logs "Broken pipe" | Small fix | Not yet written |
 | Vine | Defaults still say 26.2 (protocol 776) while Pumpkin is on 26.3 (777) | Small fix | Not yet written |
 | Vine | No README | Docs | Not yet written |
