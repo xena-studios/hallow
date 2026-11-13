@@ -31,6 +31,8 @@ Old clients matter most because the multiversion plugin rewrites packet bodies o
 | Cold start | Time from the first queue entry after idle to the player in a game, on the floor node | |
 | Cloud node ready time | A Hetzner Cloud machine goes from API call to taking games, with Docker and Wings installed by cloud-init; record the time | |
 | Provider billing | Billing step and minimum term for Hetzner Cloud, Hetzner Robot and OVHcloud, from their current docs | |
+| Pumpkin plugin API | A test plugin creates a world, loads a map from disk, teleports players, shows a scoreboard and fills an inventory | |
+| Bedrock path | How a Bedrock client reaches Pumpkin now that it uses NetherNet, and whether Geyser still fits | |
 | Calagopus extensions | An extension adds a table, an API route and a page | |
 | Pumpkin capacity | Bot players per backend before tick time passes 50 ms | |
 | Vine capacity | Bot players per proxy before latency rises | |

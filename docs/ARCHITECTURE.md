@@ -1,6 +1,6 @@
 # Architecture
 
-Hallow is five layers: players reach a load balancer, the load balancer spreads them over Vine proxies, proxies route them to Pumpkin backends, and a control plane coordinates all of it on nodes run by Calagopus Wings. One panel manages everything.
+Hallow runs two kinds of process: **proxies** (Vine) and **servers** (Pumpkin). Players reach a load balancer, which spreads them over the proxies; proxies route them to servers; a control plane creates, routes and removes both on nodes run by Calagopus Wings. Every lobby and game is a server built from its own git repo ([Servers](SERVERS.md)). One panel manages everything.
 
 ```mermaid
 flowchart TB
@@ -13,9 +13,9 @@ flowchart TB
         geyser["Geyser (option B)"]
         vine["Vine proxies ×N<br/>+ Hallow plugins"]
     end
-    subgraph Backends
-        lobby["Lobbies<br/>Pumpkin + multiversion"]
-        games["Game instances ×N<br/>Pumpkin + multiversion + game"]
+    subgraph Servers["Servers, one image per server repo"]
+        lobby["Lobbies ×N<br/>hub, skywars-lobby, …"]
+        games["Games ×N<br/>skywars, bedwars, …"]
     end
     subgraph Platform
         cp["Control plane"]
@@ -48,10 +48,10 @@ flowchart TB
 | Load balancer | Spreads TCP connections over healthy proxies, passes the real IP with PROXY protocol | HAProxy or a DDoS-protection provider | `deploy/` |
 | Vine proxy | Mojang auth, forwarding to backends, server switching | Vine fork | `upstream/Vine` |
 | Hallow Vine plugins | Presence, global player count, duplicate-login check, parties, queues, cross-proxy commands | Ours, WASM | `crates/vine-plugins` |
-| Pumpkin backend | Runs a lobby or one game instance | Pumpkin | `upstream/Pumpkin` |
-| Multiversion plugin | Translates Java 1.7 – 26.2 clients to 26.3 on each backend | pumpkin-java-multiversion | `upstream/pumpkin-java-multiversion` |
-| Minigame library | Arenas, teams, kits, scoreboards, map reset, stats, optional 1.8 combat | Ours, WASM | `crates/minigame-lib` |
-| Games | One crate per game | Ours, WASM | `crates/games/*` |
+| Server base image | Pumpkin, the multiversion plugin and Hallow's server plugin; every server image builds on it | Pumpkin + ours | `templates/` |
+| Multiversion plugin | Translates Java 1.7 – 26.2 clients to 26.3 on each server | pumpkin-java-multiversion | `upstream/pumpkin-java-multiversion` |
+| Server repos | One per lobby or game (`hub`, `skywars-lobby`, `skywars`, …): plugin, maps, config, `hallow.toml` | Ours, one repo each | separate repos |
+| SDK | Minigame library (arenas, teams, kits, scoreboards, spectating, stats, optional 1.8 combat) and control-plane client for server repos | Ours, WASM | `crates/hallow-sdk` |
 | Control plane | Server registry, matchmaker, instance orchestration, sessions, proxy sync | Ours, Rust | `crates/control-plane` |
 | Protocol | gRPC types shared by the control plane and every plugin | Ours, protobuf | `crates/proto` |
 | Node agent | Creates, starts, stops and deletes server containers from templates | Calagopus Wings | `upstream/wings` |
@@ -66,11 +66,11 @@ flowchart TB
 
 1. The client connects to the load balancer, which picks a healthy Vine proxy.
 2. Vine authenticates with Mojang. The presence plugin asks the control plane whether the player is already online on another proxy and refuses the duplicate.
-3. Vine sends the player to a lobby the control plane picked, with signed (Ed25519) forwarding.
+3. Vine sends the player to a `hub` instance the control plane picked, with signed (Ed25519) forwarding.
 4. For any client older than 26.3, the multiversion plugin on the lobby translates every packet both ways.
-5. The player queues for a game. The queue plugin hands the entry to the control plane.
-6. The matchmaker fills a game: it reuses a waiting instance or asks Wings to start one from the game's template, registers it with every Vine, then tells the player's proxy to move them.
-7. When the game ends the instance reports results, players go back to a lobby, and the matchmaker deletes or recycles the instance.
+5. The player moves to a gamemode lobby such as `skywars-lobby` and queues. The queue plugin hands the entry to the control plane.
+6. The matchmaker fills a game: it uses a warm instance or asks Wings to start one from the game's image, registers it with every Vine, then tells the player's proxy to move them.
+7. When the game ends the instance reports results, players go back to the lobby named in its `hallow.toml`, and the instance is deleted. The next match gets a fresh one.
 
 ## Bedrock
 
@@ -81,10 +81,11 @@ Two routes; [Phase 0](ROADMAP.md#phase-0-validation-spike) picks one.
 
 Vine's Bedrock listener only answers server-list pings today (`src/bedrock/listener.rs`), so it does not carry Bedrock play traffic for either route.
 
-## Servers that live and servers that don't
+## Who owns what
 
-- **Long-lived** (proxies, lobbies, limbo) are normal Calagopus servers. Staff see their consoles, logs and files in the panel.
-- **Short-lived** game instances are created and deleted by the matchmaker through the Wings API, never one panel record each. The panel shows them in a live view read from the control plane.
+- **The control plane** owns every proxy and server instance: it creates them through Wings, scales them per server kind, and deletes them. The panel shows them all live, with consoles and logs through Wings, but never keeps one panel record per instance.
+- **Docker Compose on the floor node** runs the platform services: PostgreSQL, Redis, the control plane, the panel and the load balancer.
+- **Server repos** own what a server kind is. Deploying is choosing which image version is live; see [Servers](SERVERS.md#from-repo-to-running-server).
 
 ## Fleet
 

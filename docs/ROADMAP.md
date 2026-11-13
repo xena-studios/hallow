@@ -14,12 +14,14 @@ flowchart LR
 
 Prove the stack before writing games. About two weeks.
 
-- [ ] Add Pumpkin, Vine, multiversion and Wings as submodules in `upstream/` at commits that build together
+- [x] Add Pumpkin, Vine, multiversion and Wings as submodules in `upstream/` at commits that build together
 - [ ] Docker Compose for one Vine and two Pumpkin servers with the multiversion plugin
+- [ ] `netcheck` smoke test (join through Vine, switch servers) running in CI against the Compose network
+- [ ] Test plugin against Pumpkin's WASM API: create a world, load a map, teleport, scoreboard, inventory
 - [ ] Run the client version matrix in [Validation](VALIDATION.md)
 - [ ] Test server switching through Vine on 1.8.9, 1.12.2 and 26.3
 - [ ] Check that Vine's own messages render on old clients
-- [ ] Test both Bedrock routes and pick one
+- [ ] Find out how Bedrock clients reach Pumpkin now that it uses NetherNet, then test both routes and pick one
 - [ ] Measure how fast Calagopus Wings creates and deletes a server from a template
 - [ ] Check what the Calagopus extension API can add: tables, routes, pages
 - [ ] Bot load test: players per Pumpkin backend and per Vine
@@ -27,7 +29,7 @@ Prove the stack before writing games. About two weeks.
 - [ ] Ask the Pumpkin team which changes they would take upstream
 - [ ] Write the Phase 0 report and update [Decisions](DECISIONS.md) and [Risks](RISKS.md)
 
-**Gate:** a 1.8.9, a 26.3 and a Bedrock client each join, play and switch servers twice. If old versions fail, the fallbacks in [Risks](RISKS.md) set the launch scope before Phase 1.
+**Gate:** a 26.3 and a Bedrock client each join, play and switch servers twice, and the version matrix is filled in. The matrix sets the launch version range (1.8 is a goal, not a gate; see [Decisions](DECISIONS.md) 3).
 
 ## Phase 1: network core
 
@@ -36,8 +38,10 @@ Prove the stack before writing games. About two weeks.
 - [ ] Control plane: server registry, proxy registry, presence in Redis
 - [ ] Vine plugins: presence, global ping, duplicate-login check, cross-proxy commands
 - [ ] Load balancer with PROXY protocol and health checks
-- [ ] Matchmaker: queues, instance pooling, start and delete through the Wings API
-- [ ] Server templates: proxy, lobby, test game
+- [ ] Matchmaker: queues, warm instances, start and delete server images through the Wings API
+- [ ] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow
+- [ ] Hallow server plugin: presence, stats and the link to the control plane, in the base image
+- [ ] `hub` server repo
 - [ ] Parties and friends
 - [ ] PostgreSQL schema: accounts, ranks, sessions, punishments
 - [ ] Panel fork with Hallow branding and the extension scaffold
@@ -46,13 +50,13 @@ Prove the stack before writing games. About two weeks.
 - [ ] Monitoring: Prometheus, Grafana, Loki
 - [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
 
-**Gate:** with two proxies running, a player queues, the matchmaker starts a fresh instance, and the player lands in it; staff see it all in the panel.
+**Gate:** with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.
 
 ## Phase 2: first games
 
-- [ ] Minigame library: arenas, teams, kits, scoreboards, map reset, spectating, stats
+- [ ] `hallow-sdk`: minigame library (arenas, teams, kits, scoreboards, spectating, stats) for server repos
 - [ ] 1.8-style combat module, if [Decisions](DECISIONS.md) keeps it
-- [ ] Two launch games (to be chosen)
+- [ ] Two launch games (to be chosen), each with its lobby, as server repos
 - [ ] Stats, leaderboards and ranks
 - [ ] Player website: profiles and leaderboards
 - [ ] Panel: reports, games and stats pages

@@ -37,7 +37,8 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 | Bedrock | Pumpkin native, or [Geyser](https://geysermc.org) (decided in Phase 0) | Rust / Java |
 | Proxy | [Vine](https://github.com/Pumpkin-MC/Vine), forked for a runtime server registry | Rust |
 | Proxy plugins | presence, parties, queues, cross-proxy commands | Rust → WASM |
-| Minigame library and games | arenas, kits, scoreboards, map reset, stats | Rust → WASM |
+| Servers | Every lobby and game is a server repo (`hub`, `skywars-lobby`, `skywars`, …) built into an image on Hallow's Pumpkin base image | Rust → WASM |
+| SDK | `hallow-sdk`: minigame library and control-plane client for server repos | Rust → WASM |
 | Control plane | matchmaker, registry, sessions, orchestration | Rust (tokio, tonic) |
 | Node agent | [Calagopus Wings](https://github.com/calagopus/wings) + Docker | Rust |
 | Fleet | Fleet manager in the control plane; Hetzner Cloud, Hetzner Robot, OVHcloud provider crates; cloud-init; WireGuard | Rust |
@@ -53,7 +54,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 | [`panel/`](panel/) | The Hallow Panel: the Calagopus Panel fork and its extensions |
 | [`crates/`](crates/) | Our Cargo workspace: control plane, shared protocol, Vine plugins, minigame library, games |
 | [`web/`](web/) | The player website |
-| [`templates/`](templates/) | Server templates: proxy, lobby, each game |
+| [`templates/`](templates/) | The server base image and `hallow.toml` format; each lobby and game lives in its own server repo |
 | [`deploy/`](deploy/) | Docker Compose for a full local network, production configs |
 
 ## Documentation
@@ -61,6 +62,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 - [Architecture](docs/ARCHITECTURE.md): every component and how players move through the network
 - [Multi-proxy](docs/MULTI-PROXY.md): how several Vine proxies act as one
 - [Fleet](docs/FLEET.md): buying, setting up and returning machines on demand
+- [Servers](docs/SERVERS.md): proxies and servers, and how lobbies and games are built from their own repos
 - [Panel](docs/PANEL.md): one panel for nodes, servers, players, staff and bans
 - [Upstream](docs/UPSTREAM.md): what Pumpkin, Vine, multiversion and Calagopus do today, from their source
 - [Roadmap](docs/ROADMAP.md): phases, gates and every task

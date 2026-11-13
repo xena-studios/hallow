@@ -18,7 +18,7 @@ With nobody online, the whole network runs on one machine: the **floor node**. E
 
 | Players online | Machines | What runs |
 |---|---|---|
-| 0 | 1, the floor node | Load balancer, control plane, Redis, PostgreSQL, panel, one Vine, one lobby. No game instances. |
+| 0 | 1, the floor node | Load balancer, control plane, Redis, PostgreSQL, panel, one Vine, one `hub`. No game or gamemode-lobby instances. |
 | A few | 1 | Game instances start on the floor node as players queue. |
 | The floor node fills up | 1 + burst nodes | New game instances, then extra lobbies and proxies, go to burst nodes. |
 | Peak | Floor + base + burst | Proxies, lobbies and game instances spread over every node. |
@@ -27,8 +27,8 @@ Every layer scales on its own signal, down to its minimum:
 
 | Layer | Scales on | Minimum |
 |---|---|---|
-| Game instances | Players queued, warm-pool target per game | 0 |
-| Lobbies | Players per lobby | 1 |
+| Game servers, per kind | Players queued, `warm` in its `hallow.toml` | 0 |
+| Lobby servers, per kind | Players per instance (`players.max`) | 1 for `hub`, 0 for gamemode lobbies |
 | Proxies | Players and CPU per proxy | 1 |
 | Nodes | Free slots left after the layers above | 1, the floor node |
 
