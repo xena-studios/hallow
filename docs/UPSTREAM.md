@@ -34,7 +34,7 @@ Fixes and reports we have for upstream projects. Each is offered upstream before
 
 | Project | What | Kind | Status |
 |---|---|---|---|
-| Vine | Doesn't build against Pumpkin `main`, so Vine's own CI fails: `rsa` pre-release pin, a second `wasmtime` version, `StoreExecutor` API changes, and Pumpkin's removal of RakNet ([Pumpkin-MC/Pumpkin#4427](https://github.com/Pumpkin-MC/Pumpkin/pull/4427)) | Fix ready: [xena-studios/Vine `fix/build-against-pumpkin-main`](https://github.com/xena-studios/Vine/tree/fix/build-against-pumpkin-main) | Not yet sent |
+| Vine | Doesn't build against Pumpkin `master`, so Vine's own CI fails: `rsa` pre-release pin, a second `wasmtime` version, `StoreExecutor` API changes, and Pumpkin's removal of RakNet ([Pumpkin-MC/Pumpkin#4427](https://github.com/Pumpkin-MC/Pumpkin/pull/4427)) | Fix ready: [xena-studios/Vine `fix/build-against-current-pumpkin`](https://github.com/xena-studios/Vine/tree/fix/build-against-current-pumpkin) | Not yet sent |
 | Vine | Defaults still say 26.2 (protocol 776) while Pumpkin is on 26.3 (777) | Small fix | Not yet written |
 | Vine | No README | Docs | Not yet written |
 | pumpkin-java-multiversion | No LICENSE file, though `Cargo.toml` says MIT OR Apache-2.0; it bundles ViaBackwards and ViaRewind data, both GPL-3.0 | Issue for the maintainers to decide | Not yet sent |

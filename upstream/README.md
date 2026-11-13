@@ -4,9 +4,9 @@ Projects Hallow builds on, as git submodules pinned to commits that build togeth
 
 | Directory | Project | Pinned to |
 |---|---|---|
-| `Pumpkin/` | [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) | `main` |
+| `Pumpkin/` | [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) | `master` |
 | `Vine/` | [xena-studios/Vine](https://github.com/xena-studios/Vine), our fork of [Pumpkin-MC/Vine](https://github.com/Pumpkin-MC/Vine) | `hallow`: upstream plus fixes we've offered back |
-| `pumpkin-java-multiversion/` | [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) | `main` |
+| `pumpkin-java-multiversion/` | [Pumpkin-MC/pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) | `master` |
 | `wings/` | [calagopus/wings](https://github.com/calagopus/wings) | `main` |
 
 ## Clone and build
