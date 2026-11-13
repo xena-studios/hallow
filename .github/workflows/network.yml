@@ -48,8 +48,11 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
+          # Bake resolves the compose file's build contexts from its working
+          # directory, so run it where compose.yaml lives.
           source: .
-          files: deploy/compose/compose.yaml
+          workdir: deploy/compose
+          files: compose.yaml
           targets: proxy,lobby
           load: true
           set: |
