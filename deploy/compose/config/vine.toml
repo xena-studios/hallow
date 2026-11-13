@@ -1,0 +1,60 @@
+# Hallow dev network: the proxy. Server addresses are Compose service names.
+# The secret must match HALLOW_VINE_SECRET in compose.yaml.
+
+[server]
+bind_address = "0.0.0.0:25565"
+# false lets offline (cracked) and bot clients join for local testing. Set
+# true to require Mojang accounts; backends trust Vine either way.
+online_mode = false
+prevent_proxy_connections = true
+compression_threshold = 256
+compression_level = 6
+shutdown_timeout_secs = 10
+
+[network]
+proxy_protocol = false
+log_pings = false
+
+[motd]
+line1 = "§6§lHallow §7» §fdev network"
+line2 = "§7Vine + Pumpkin"
+max_players = 100
+version_name = "Hallow dev"
+protocol_version = 777
+sample_players = []
+show_sample_players = false
+
+[security]
+rate_limit_enabled = true
+max_connections_per_sec = 20
+connection_burst = 40
+max_packets_per_sec = 500
+max_packet_size = 2097152
+validate_usernames = true
+
+[routing]
+default_server = "lobby"
+fallback_server = "lobby"
+try_fallback_on_connect_failure = true
+
+[routing.forced_hosts]
+
+[servers.lobby]
+address = "lobby:25565"
+forwarding = "vine"
+secret = "hallow-dev-secret-not-for-production"
+
+[servers.game-1]
+address = "game-1:25565"
+forwarding = "vine"
+secret = "hallow-dev-secret-not-for-production"
+
+[telemetry]
+enabled = false
+
+[bedrock]
+enabled = false
+
+[plugins]
+enabled = true
+plugin_dir = "./plugins"

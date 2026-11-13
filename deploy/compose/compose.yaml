@@ -1,0 +1,48 @@
+# Hallow dev network: one proxy and two servers on one machine.
+#
+#   docker compose -f deploy/compose/compose.yaml up --build
+#   cargo run --release -p netcheck        # join through the proxy and switch servers
+#
+# Connect a 26.3 client to localhost:25565. The proxy runs in offline mode, so
+# any username works. Lobbies and games use the same server image; only the
+# name differs here.
+
+x-server: &server
+  build:
+    context: ../..
+    dockerfile: templates/server/Dockerfile
+  image: hallow-server:dev
+  environment:
+    HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
+  restart: unless-stopped
+  tty: true
+
+services:
+  proxy:
+    build:
+      context: ../..
+      dockerfile: templates/proxy/Dockerfile
+    image: hallow-proxy:dev
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./config/vine.toml:/proxy/vine.toml:ro
+    depends_on:
+      lobby:
+        condition: service_healthy
+      game-1:
+        condition: service_healthy
+    restart: unless-stopped
+    tty: true
+
+  lobby:
+    <<: *server
+    environment:
+      HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
+      HALLOW_SERVER_NAME: lobby
+
+  game-1:
+    <<: *server
+    environment:
+      HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
+      HALLOW_SERVER_NAME: game-1

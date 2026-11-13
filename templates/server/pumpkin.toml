@@ -1,0 +1,31 @@
+# Hallow server base config. Every lobby and game starts from this; a server
+# repo's config/pumpkin.toml is layered on top. ${HALLOW_*} values are filled
+# in from the environment when the container starts.
+
+[networking.java]
+address = "0.0.0.0:25565"
+# The proxy authenticates players and forwards their identity.
+online_mode = false
+motd = "${HALLOW_SERVER_NAME}"
+
+[networking.bedrock]
+enabled = false
+
+[networking.lan_broadcast]
+enabled = false
+
+[networking.proxy]
+enabled = true
+
+[networking.proxy.vine]
+enabled = true
+secret = "${HALLOW_VINE_SECRET}"
+
+[telemetry]
+enabled = false
+
+[update_checker]
+enabled = false
+
+[logging]
+color = false
