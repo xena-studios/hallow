@@ -2,7 +2,7 @@
 //! switches servers with `/server` and checks it lands each time.
 //!
 //! ```text
-//! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby]
+//! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby] [--stay 0]
 //! ```
 //!
 //! The proxy must allow offline players (`online_mode = false` in Vine).
@@ -217,6 +217,37 @@ impl Bot {
         self.spawn().await
     }
 
+    /// Stays in play for `seconds`, answering keep-alives and confirming any
+    /// teleport the server sends, so plugins can act on the player.
+    async fn stay(&mut self, seconds: u64) -> Result<(), String> {
+        let until = Instant::now() + Duration::from_secs(seconds);
+        let position = CPlayerPosition::to_id(CURRENT_MC_VERSION);
+        while Instant::now() < until {
+            let remaining = until - Instant::now();
+            let packet = match timeout(remaining, self.reader.get_raw_packet()).await {
+                Ok(Ok(packet)) => packet,
+                Ok(Err(err)) => return Err(format!("connection closed or bad packet: {err}")),
+                Err(_) => break,
+            };
+            if self.answer_play(&packet).await? {
+                continue;
+            }
+            if packet.id == position {
+                let mut slice = &packet.payload[..];
+                let teleport = CPlayerPosition::read(&mut slice, &CURRENT_MC_VERSION)
+                    .map_err(|err| format!("reading position: {err}"))?;
+                self.send(&SConfirmTeleport {
+                    teleport_id: teleport.teleport_id,
+                    position: teleport.position,
+                    yaw: teleport.yaw,
+                    pitch: teleport.pitch,
+                })
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Answers keep-alives and pings, reports chat and kicks. Returns true
     /// when the packet was handled here.
     async fn answer_play(&mut self, packet: &RawPacket) -> Result<bool, String> {
@@ -271,6 +302,7 @@ struct Args {
     proxy: SocketAddr,
     name: String,
     route: Vec<String>,
+    stay: u64,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -278,6 +310,7 @@ fn parse_args() -> Result<Args, String> {
         proxy: "127.0.0.1:25565".parse().expect("valid default"),
         name: "netcheck".to_string(),
         route: vec!["game-1".to_string(), "lobby".to_string()],
+        stay: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -295,6 +328,11 @@ fn parse_args() -> Result<Args, String> {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)
                     .collect();
+            }
+            "--stay" => {
+                args.stay = value
+                    .parse()
+                    .map_err(|err| format!("--stay {value}: {err}"))?;
             }
             _ => return Err(format!("unknown flag {flag}")),
         }
@@ -325,6 +363,12 @@ async fn run(args: &Args) -> Result<(), String> {
             .await
             .map_err(|err| format!("switch to {server}: {err}"))?;
         println!("  ok  switched to {server} ({} ms)", step.elapsed().as_millis());
+    }
+    if args.stay > 0 {
+        bot.stay(args.stay)
+            .await
+            .map_err(|err| format!("staying {}s: {err}", args.stay))?;
+        println!("  ok  stayed {}s", args.stay);
     }
     println!("netcheck: passed in {} ms", started.elapsed().as_millis());
     Ok(())
