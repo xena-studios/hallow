@@ -46,10 +46,10 @@ flowchart TB
 | Component | Job | Built from | Path |
 |---|---|---|---|
 | Load balancer | Spreads TCP connections over healthy proxies, passes the real IP with PROXY protocol | HAProxy or a DDoS-protection provider | `deploy/` |
-| Vine proxy | Mojang auth, forwarding to backends, server switching | Vine fork | `upstream/vine` |
+| Vine proxy | Mojang auth, forwarding to backends, server switching | Vine fork | `upstream/Vine` |
 | Hallow Vine plugins | Presence, global player count, duplicate-login check, parties, queues, cross-proxy commands | Ours, WASM | `crates/vine-plugins` |
-| Pumpkin backend | Runs a lobby or one game instance | Pumpkin | `upstream/pumpkin` |
-| Multiversion plugin | Translates Java 1.7 – 26.2 clients to 26.3 on each backend | pumpkin-java-multiversion | `upstream/multiversion` |
+| Pumpkin backend | Runs a lobby or one game instance | Pumpkin | `upstream/Pumpkin` |
+| Multiversion plugin | Translates Java 1.7 – 26.2 clients to 26.3 on each backend | pumpkin-java-multiversion | `upstream/pumpkin-java-multiversion` |
 | Minigame library | Arenas, teams, kits, scoreboards, map reset, stats, optional 1.8 combat | Ours, WASM | `crates/minigame-lib` |
 | Games | One crate per game | Ours, WASM | `crates/games/*` |
 | Control plane | Server registry, matchmaker, instance orchestration, sessions, proxy sync | Ours, Rust | `crates/control-plane` |

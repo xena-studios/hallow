@@ -27,3 +27,15 @@ Vine and multiversion depend on Pumpkin crates by relative path (`../Pumpkin/cra
 ### Rejected: Raptor
 
 [Raptor](https://github.com/xena-studios/raptor), our own panel, is SaaS-only and its Wings runs no HTTP server, so a matchmaker can't drive it. It stays the product for people running their own servers. See [Decisions](DECISIONS.md).
+
+## Contributions
+
+Fixes and reports we have for upstream projects. Each is offered upstream before or alongside using it in a fork.
+
+| Project | What | Kind | Status |
+|---|---|---|---|
+| Vine | Doesn't build against Pumpkin `main`, so Vine's own CI fails: `rsa` pre-release pin, a second `wasmtime` version, `StoreExecutor` API changes, and Pumpkin's removal of RakNet ([Pumpkin-MC/Pumpkin#4427](https://github.com/Pumpkin-MC/Pumpkin/pull/4427)) | Fix ready: [xena-studios/Vine `fix/build-against-pumpkin-main`](https://github.com/xena-studios/Vine/tree/fix/build-against-pumpkin-main) | Not yet sent |
+| Vine | Defaults still say 26.2 (protocol 776) while Pumpkin is on 26.3 (777) | Small fix | Not yet written |
+| Vine | No README | Docs | Not yet written |
+| pumpkin-java-multiversion | No LICENSE file, though `Cargo.toml` says MIT OR Apache-2.0; it bundles ViaBackwards and ViaRewind data, both GPL-3.0 | Issue for the maintainers to decide | Not yet sent |
+| pumpkin-java-multiversion | README says chunks are adapted for 1.7, 1.8, 1.9 and 1.18, but `src/chunk/` is left out of the WASM build and never called | Issue | Not yet sent |
