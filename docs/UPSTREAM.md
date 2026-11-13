@@ -41,5 +41,8 @@ Fixes and reports we have for upstream projects. Each is offered upstream before
 | Vine | Closes the old backend without a disconnect packet on a switch, so Pumpkin logs "Broken pipe" | Small fix | Not yet written |
 | Vine | Defaults still say 26.2 (protocol 776) while Pumpkin is on 26.3 (777) | Small fix | Not yet written |
 | Vine | No README | Docs | Not yet written |
+| Pumpkin | Kicks a client for confirming a stale teleport; vanilla ignores it. A plugin teleporting a player on join kicks them | Already fixed upstream in [Pumpkin-MC/Pumpkin#4540](https://github.com/Pumpkin-MC/Pumpkin/pull/4540) (our equivalent: [xena-studios/Pumpkin `fix/teleport-confirm-vanilla`](https://github.com/xena-studios/Pumpkin/tree/fix/teleport-confirm-vanilla)) | Support #4540 with our reproduction |
+| Pumpkin | `World::set_block_state` silently drops writes to unloaded chunks; vanilla loads the chunk | Issue | Not yet sent |
+| Pumpkin | `pumpkin-plugin-api` (Rust) only targets the v0.1 WIT, so Rust plugins can't use v0.2 | Question | Not yet sent |
 | pumpkin-java-multiversion | No LICENSE file, though `Cargo.toml` says MIT OR Apache-2.0; it bundles ViaBackwards and ViaRewind data, both GPL-3.0 | Issue | Sent: [#10](https://github.com/Pumpkin-MC/pumpkin-java-multiversion/issues/10) |
 | pumpkin-java-multiversion | README says chunks are adapted for 1.7, 1.8, 1.9 and 1.18, but `src/chunk/` is left out of the WASM build and never called | Issue | Sent: [#11](https://github.com/Pumpkin-MC/pumpkin-java-multiversion/issues/11) |
