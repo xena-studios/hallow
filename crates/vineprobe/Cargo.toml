@@ -1,7 +1,7 @@
 [package]
 name = "vineprobe"
 version = "0.1.0"
-description = "Vine plugin for tests: commands that register and unregister backend servers and drain the proxy at runtime."
+description = "Vine plugin for tests: commands that register and unregister backend servers, drain the proxy, and make a wasi:http request."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -11,4 +11,5 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+wasip2 = { version = "2.0.1", default-features = false }
 wit-bindgen.workspace = true

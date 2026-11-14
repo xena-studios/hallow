@@ -12,7 +12,7 @@ Hallow's Cargo workspace.
 | `server-plugin/` | Hallow's plugin in every server image: presence, stats, the link to the control plane (WASM) |
 | `netcheck/` | Smoke test and load test: joins through the proxy as a bot and switches servers; `--stay` keeps it connected; `--bots N` runs N wandering bots and reports join times |
 | `tickwatch/` | Pumpkin plugin that logs tick time, TPS and players once a second, for load tests |
-| `vineprobe/` | Vine plugin for tests: commands that register and unregister servers and drain the proxy at runtime |
+| `vineprobe/` | Vine plugin for tests: commands that register and unregister servers, drain the proxy, and make a `wasi:http` request (to check plugin permissions) |
 | `apiprobe/` | Pumpkin plugin that checks the plugin API calls every game needs; see [Validation](../docs/VALIDATION.md#plugin-api-findings) |
 
 Games and lobbies are not crates here; each is its own server repo (see [Servers](../docs/SERVERS.md)).
