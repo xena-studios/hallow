@@ -67,6 +67,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 - [Upstream](docs/UPSTREAM.md): what Pumpkin, Vine, multiversion and Calagopus do today, from their source
 - [Roadmap](docs/ROADMAP.md): phases, gates and every task
 - [Validation](docs/VALIDATION.md): the Phase 0 test matrix
+- [Phase 0 report](docs/PHASE0.md): what Phase 0 proved, the gaps, and whether Phase 1 can start
 - [Risks](docs/RISKS.md): what could go wrong and the fallback for each
 - [Decisions](docs/DECISIONS.md): every locked decision and why
 - [Anticheat](docs/ANTICHEAT.md): where checks run, how verdicts are made, and when each part lands
