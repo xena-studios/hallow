@@ -26,14 +26,14 @@ Old clients matter most because the multiversion plugin rewrites packet bodies o
 | Test | Pass when | Result |
 |---|---|---|
 | Vine messages on old clients | `/server`, chat and tab completion render on 1.8.9 | |
-| Wings create from template | A game instance is up and joinable in under 10 s | |
-| Wings churn | 200 create and delete cycles on one node with no leaks | |
+| Wings create from template | A game instance is up and joinable in under 10 s | **Container floor: 0.35 s** from `docker run` to accepting players, 0.19 s to delete (Hallow server image, M1 Pro, 2026-11-14). Wings' own overhead is measured with the panel in Phase 1 |
+| Wings churn | 200 create and delete cycles on one node with no leaks | **Pass at the container level:** 200 cycles in 99 s, 0 failures, no leftover containers, volumes or disk. Repeat through Wings in Phase 1 |
 | Cold start | Time from the first queue entry after idle to the player in a game, on the floor node | |
 | Cloud node ready time | A Hetzner Cloud machine goes from API call to taking games, with Docker and Wings installed by cloud-init; record the time | |
 | Provider billing | Billing step and minimum term for Hetzner Cloud, Hetzner Robot and OVHcloud, from their current docs | |
 | Pumpkin plugin API | A test plugin creates a world, loads a map from disk, teleports players, shows a scoreboard and fills an inventory | **Pass, 10/10** (2026-11-13, Pumpkin `058f7ec6f`, `crates/apiprobe`). Three things to design around: see [Plugin API findings](#plugin-api-findings) |
 | Bedrock path | How a Bedrock client reaches Pumpkin now that it uses NetherNet, and whether Geyser still fits | |
-| Calagopus extensions | An extension adds a table, an API route and a page | |
+| Calagopus extensions | An extension adds a table, an API route and a page | **Yes, from the source:** extensions ship their own `migrations/`, routes (`initialize_router`), background tasks, permissions and settings; the frontend adds admin, account and server pages, navigation, forms and overrides. Building the first one is Phase 1 (#23) |
 | Pumpkin capacity | Bot players per backend before tick time passes 50 ms | **200 to 300** crowded, moving players per server on an M1 Pro (2026-11-14); see [Load test](#load-test). With the multiversion plugin loaded it **deadlocks at about 50** |
 | Vine capacity | Bot players per proxy before latency rises | 400 held, but Vine used about 8 cores from 200 crowded players on; see [Load test](#load-test) |
 
