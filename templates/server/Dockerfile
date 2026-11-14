@@ -4,6 +4,10 @@
 
 FROM rust:1.98-trixie AS build
 RUN rustup target add wasm32-wasip2
+# The multiversion plugin's build runs Mojang's data generator for older versions (Java 17+).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-21-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
 COPY upstream/pumpkin-java-multiversion upstream/pumpkin-java-multiversion
