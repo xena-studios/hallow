@@ -74,12 +74,15 @@ flowchart TB
 
 ## Bedrock
 
-Two routes; [Phase 0](ROADMAP.md#phase-0-validation-spike) picks one.
+Since Bedrock 26.60 (27 October 2026) clients connect over **NetherNet**, not RakNet: the client first asks the server how to connect over HTTP(S) on TCP ("signaling"), then plays over WebRTC on UDP. A good implementation multiplexes every player on one UDP port. Plain-HTTP signaling shows players a "Trust on First Use?" prompt; HTTPS needs a domain and a certificate.
 
-- **A, native:** Bedrock players connect straight to a Pumpkin backend with its built-in Bedrock listener and Xbox auth. They move between backends with Bedrock's Transfer packet, coordinated by the control plane. Every backend needs a public UDP port, and these players never pass through Vine.
-- **B, Geyser:** Geyser instances behind a UDP load balancer turn Bedrock into Java before Vine. One routing path for everyone, at the cost of a Java dependency.
+**Launch route: Geyser in front of Vine** ([Decisions](DECISIONS.md) 4). Geyser (2.12.1 build 1273 or newer, NetherNet) turns Bedrock players into Java players before Vine, so there is one routing path, one multi-proxy setup and one anticheat for everyone, and only proxies are public. Geyser normally hands Bedrock identities to the proxy through Floodgate, a Java plugin Vine can't run, so Vine verifies Floodgate's encrypted handoff natively (a contribution to Vine).
 
-Vine's Bedrock listener only answers server-list pings today (`src/bedrock/listener.rs`), so it does not carry Bedrock play traffic for either route.
+**Long-term: Vine speaks Bedrock itself**, terminating NetherNet with Pumpkin's own crates and relaying Bedrock to Pumpkin's Bedrock support. All Rust, and it shows off Pumpkin's Bedrock work, once that work is further along.
+
+**Not used: Bedrock players straight to each Pumpkin server.** Every server would need public TCP and UDP and its own TLS certificate, and players would move between servers with Bedrock's transfer packet.
+
+Vine's Bedrock listener answers RakNet pings (`src/bedrock/listener.rs`), which current clients no longer send.
 
 ## Who owns what
 
