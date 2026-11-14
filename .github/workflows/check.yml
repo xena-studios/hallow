@@ -1,8 +1,8 @@
 name: Check
 
-# Validates the Renovate config and checks the docs for typos and broken
-# relative links. main requires the "check" job. Build and test jobs join
-# it as crates arrive.
+# Validates the Renovate config, checks the docs for broken relative links,
+# and formats, lints, tests and builds the Rust crates. main requires the
+# "check" and "rust" jobs.
 on:
   push:
     branches: [main]
@@ -31,3 +31,26 @@ jobs:
             done
           done
           exit $status
+
+  rust:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # netcheck and the plugins build against Pumpkin; vineprobe reads Vine's WIT.
+          submodules: true
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-wasip2
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint and test netcheck
+        run: |
+          cargo clippy -p netcheck --all-targets -- -D warnings
+          cargo test -p netcheck
+      - name: Lint and build the plugins
+        run: |
+          cargo clippy --target wasm32-wasip2 -p apiprobe -p tickwatch -p vineprobe -- -D warnings
+          cargo build --release --target wasm32-wasip2 -p apiprobe -p tickwatch -p vineprobe
