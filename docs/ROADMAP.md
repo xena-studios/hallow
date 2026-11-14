@@ -15,21 +15,23 @@ flowchart LR
 Prove the stack before writing games. About two weeks.
 
 - [x] Add Pumpkin, Vine, multiversion and Wings as submodules in `upstream/` at commits that build together
-- [ ] Docker Compose for one Vine and two Pumpkin servers with the multiversion plugin
-- [ ] `netcheck` smoke test (join through Vine, switch servers) running in CI against the Compose network
-- [ ] Test plugin against Pumpkin's WASM API: create a world, load a map, teleport, scoreboard, inventory
-- [ ] Run the client version matrix in [Validation](VALIDATION.md)
-- [ ] Test server switching through Vine on 1.8.9, 1.12.2 and 26.3
-- [ ] Check that Vine's own messages render on old clients
-- [ ] Find out how Bedrock clients reach Pumpkin now that it uses NetherNet, then test both routes and pick one
-- [ ] Measure how fast Calagopus Wings creates and deletes a server from a template
-- [ ] Check what the Calagopus extension API can add: tables, routes, pages
-- [ ] Bot load test: players per Pumpkin backend and per Vine
-- [ ] Time a Hetzner Cloud node from API call to taking games, and check provider billing terms
-- [ ] Ask the Pumpkin team which changes they would take upstream
-- [ ] Write the Phase 0 report and update [Decisions](DECISIONS.md) and [Risks](RISKS.md)
+- [x] Docker Compose for one Vine and two Pumpkin servers with the multiversion plugin
+- [x] `netcheck` smoke test (join through Vine, switch servers) running in CI against the Compose network
+- [x] Test plugin against Pumpkin's WASM API: create a world, load a map, teleport, scoreboard, inventory
+- [x] Run the client version matrix in [Validation](VALIDATION.md)
+- [x] Test server switching through Vine on 1.8.9, 1.12.2 and 26.3
+- [x] Check that Vine's own messages render on old clients
+- [x] Find out how Bedrock clients reach Pumpkin now that it uses NetherNet, then test both routes and pick one (Geyser in front of Vine)
+- [x] Measure how fast Calagopus Wings creates and deletes a server from a template
+- [x] Check what the Calagopus extension API can add: tables, routes, pages
+- [x] Bot load test: players per Pumpkin backend and per Vine
+- [x] Time a Hetzner Cloud node from API call to taking games, and check provider billing terms (estimated from published measurements; timed for real with the provider in Phase 2)
+- [x] Ask the Pumpkin team which changes they would take upstream (asked; answers tracked in [Upstream](UPSTREAM.md))
+- [x] Write the Phase 0 report and update [Decisions](DECISIONS.md) and [Risks](RISKS.md)
 
-**Gate:** a 26.3 and a Bedrock client each join, play and switch servers twice, and the version matrix is filled in. The matrix sets the launch version range (1.8 is a goal, not a gate; see [Decisions](DECISIONS.md) 3).
+**Gate: passed 2026-11-14** for 26.3 and Bedrock (bots; real clients confirm in Phase 1). Old versions fail in Vine and move to #66. See the [Phase 0 report](PHASE0.md).
+
+Original gate: a 26.3 and a Bedrock client each join, play and switch servers twice, and the version matrix is filled in. The matrix sets the launch version range (1.8 is a goal, not a gate; see [Decisions](DECISIONS.md) 3).
 
 ## Phase 1: network core
 
