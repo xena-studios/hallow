@@ -83,3 +83,19 @@ With `pumpkin-java-multiversion` loaded, 50 moving players froze the server in 3
 When any plugin handles `PacketSentEvent`, Pumpkin's `JavaClient::translate_outgoing` fires it for every outgoing play packet, for 26.3 clients too (as an observation), through `fire_blocking`, which `block_on`s the async runtime. It does so from the tick's worker threads, inside `World::broadcast_java_grouped`, while holding locks the async runtime's threads need (thread samples show them blocked in `EntityTracker::remove_entity` and `broadcast_client_move`). The plugin call can't run and the tick can't finish. It's also N squared plugin calls per tick in a crowded area, which is why the server falls 55 ticks behind first.
 
 Until Pumpkin fixes it, the server base image ships the plugin off (`HALLOW_MULTIVERSION=1` loads it), so the launch version range is 26.3 unless the fix lands; see [Decisions](DECISIONS.md) 28.
+
+### Fixing it
+
+Two separate problems, measured with the plugin loaded, through Vine, same machine:
+
+| Pumpkin build | 50 bots | 100 bots, join p95 | 200 bots, join p95 |
+|---|---|---|---|
+| master `058f7ec6f` | **froze 3/3 runs** | n/a | n/a |
+| Writer fix (below) | no freeze 3/3, tick ~9 ms | 69 s | 166 s |
+| Writer fix, and no observation for 26.3 clients | no freeze | **224 ms** | **226 ms** |
+| No plugin loaded, for reference | | 112 ms | 197 ms |
+
+1. **The freeze.** Our fix moves `PacketSentEvent` from enqueue to the connection's outgoing writer task, which awaits it before framing, so the tick never blocks on a plugin. Branch: [xena-studios/Pumpkin `fix/defer-packet-sent-event`](https://github.com/xena-studios/Pumpkin/tree/fix/defer-packet-sent-event), to be offered upstream after the issue.
+2. **The slowness.** With the freeze gone, every packet to every 26.3 player still goes through the plugin as an observation, one call at a time. Skipping that observation for 26.3 clients brings joins back to normal. That changes what Pumpkin promises packet plugins, so it's proposed upstream as an option a plugin opts into (for example "only clients below the current version"), not done in the fix.
+
+Plan: launch on 26.3. Old clients come back once both land upstream, or, if they don't, by translating in our Vine fork instead of in a server plugin: proxies already read every packet, scale out, and would only pay for old clients. See [Decisions](DECISIONS.md) 29.
