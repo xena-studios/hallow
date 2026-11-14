@@ -50,12 +50,15 @@ Prove the stack before writing games. About two weeks.
 - [ ] Panel: punishments and staff roles
 - [ ] Monitoring: Prometheus, Grafana, Loki
 - [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
+- [ ] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md))
 
 **Gate:** with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.
 
 ## Phase 2: first games
 
 - [ ] `hallow-sdk`: minigame library (arenas, teams, kits, scoreboards, spectating, stats) for server repos
+- [ ] Anticheat core checks (movement, reach, click rate, timer) in observe-only mode, panel review page
+- [ ] Cheating bots in `netcheck` (speed, fly, reach, auto-clicker, timer) as a CI suite
 - [ ] 1.8-style combat module, if [Decisions](DECISIONS.md) keeps it
 - [ ] Two launch games (to be chosen), each with its lobby, as server repos
 - [ ] Stats, leaderboards and ranks
@@ -72,7 +75,7 @@ Prove the stack before writing games. About two weeks.
 
 ## Phase 3: harden and launch
 
-- [ ] Anticheat (none found for Pumpkin: build or port)
+- [ ] Anticheat actions on: setbacks, kicks, bans with review; thresholds tuned from beta data
 - [ ] Load tests at target size across several proxies and nodes
 - [ ] DDoS protection in front of the load balancer
 - [ ] Backups and a restore drill for PostgreSQL

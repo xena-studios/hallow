@@ -69,6 +69,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 - [Validation](docs/VALIDATION.md): the Phase 0 test matrix
 - [Risks](docs/RISKS.md): what could go wrong and the fallback for each
 - [Decisions](docs/DECISIONS.md): every locked decision and why
+- [Anticheat](docs/ANTICHEAT.md): where checks run, how verdicts are made, and when each part lands
 - [Alternatives](docs/ALTERNATIVES.md): other servers, proxies and panels, and why Hallow stays on Pumpkin and Vine
 
 ## Contributing

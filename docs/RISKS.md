@@ -12,6 +12,8 @@ The biggest risk is that old-version support turns into a protocol-translation p
 | Upstream churn: young repos linked by relative paths | Breakage on every Minecraft update | Pin submodules, update deliberately, run the version matrix in CI |
 | Vine has more bugs like the two found on day one | Players can't move between servers, or worse, in production | `netcheck` in CI on every change; our fork fixes and upstreams them; servers stay proxy-agnostic so Velocity remains a fallback |
 | Pumpkin's WASM plugin API can't do something a game needs | A game can't be built | v0.2 already covers worlds, teleport, blocks, scoreboards, inventories and GUIs; Phase 0 builds a test plugin against it; gaps go upstream |
+| Cheating on a server whose movement is client-authoritative | Fly and speed hacks go unchecked until our checks exist | Anticheat designed now ([Anticheat](ANTICHEAT.md)); signals from Phase 1; offer server-side movement validation upstream |
+| Anticheat false positives | Honest players kicked or banned | Checks report, the verdict service decides; observe-only through the beta; honest bots and beta recordings as a false-positive suite |
 | Missing vanilla features in Pumpkin | Some mechanics unavailable | Design games around what exists; build mechanics in the minigame library; contribute upstream |
 | Bedrock route A bypasses Vine | Two routing paths | Pick the route in Phase 0; the control plane treats both the same |
 | Pumpkin moved Bedrock to NetherNet and removed RakNet (Pumpkin-MC/Pumpkin#4427) | Geyser, Vine's Bedrock ping and our assumptions about how Bedrock clients connect may not hold | Phase 0 finds out how a Bedrock client reaches Pumpkin today, before picking a route |
