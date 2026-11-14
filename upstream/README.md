@@ -21,6 +21,10 @@ cd hallow/upstream
 
 Needs stable Rust with the `wasm32-wasip2` target. Wings needs Rust 1.99 or newer.
 
+## Current pins
+
+Pumpkin is held at `bc5f7e7bd`, not the newest master: `7df7220e9` reverted the multiversion hooks in the v0.1 plugin API, and pumpkin-java-multiversion `f750eeba` still uses them. Move both forward together once the plugin catches up.
+
 ## Updating
 
 Move a pin only after the [validation matrix](../docs/VALIDATION.md) passes on the new commits. Every change we make to a fork is offered upstream; see [Upstream](../docs/UPSTREAM.md#contributions).
