@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby] [--stay 0]
+//! netcheck --route "/some-command arg,game-1"   # steps starting with / run a command
 //! netcheck --bots 100 [--ramp 10] [--stay 60]      # load test
 //! ```
 //!
@@ -56,6 +57,9 @@ use tokio::{
 use uuid::Uuid;
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
+const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// What Vine says when it won't move a player.
+const REFUSALS: [&str; 3] = ["Unknown server", "does not exist", "Failed to connect"];
 const COMPRESSION_LEVEL: u32 = 6;
 
 type Reader = TCPNetworkDecoder<BufReader<OwnedReadHalf>>;
@@ -233,8 +237,19 @@ impl Bot {
         })
         .await?;
         let start_config = CStartConfiguration::to_id(CURRENT_MC_VERSION);
+        // Keep-alives keep the connection busy, so a refused switch needs its own limit.
+        let deadline = Instant::now() + SWITCH_TIMEOUT;
         loop {
+            if Instant::now() >= deadline {
+                return Err(format!("no switch within {}s", SWITCH_TIMEOUT.as_secs()));
+            }
             let packet = self.next().await?;
+            if packet.id == clientbound::play::SYSTEM_CHAT {
+                let text = text_of(&packet.payload);
+                if REFUSALS.iter().any(|refusal| text.contains(refusal)) {
+                    return Err(format!("refused: {text}"));
+                }
+            }
             if self.answer_play(&packet).await? {
                 continue;
             }
@@ -499,6 +514,17 @@ async fn run(args: &Args) -> Result<(), String> {
 
     for server in &args.route {
         let step = Instant::now();
+        // A step starting with `/` runs that command; anything else is a server to switch to.
+        if let Some(command) = server.strip_prefix('/') {
+            bot.send(&SChatCommand { command })
+                .await
+                .map_err(|err| format!("run /{command}: {err}"))?;
+            bot.stay(1)
+                .await
+                .map_err(|err| format!("after /{command}: {err}"))?;
+            println!("  ok  ran /{command}");
+            continue;
+        }
         bot.switch(server)
             .await
             .map_err(|err| format!("switch to {server}: {err}"))?;
