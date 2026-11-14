@@ -8,7 +8,7 @@ Hallow runs any number of Vine proxies as one network from the first release. Vi
 | Global player count and list | Each proxy reports joins and leaves to the control plane, kept in Redis. A Vine plugin answers pings with the network-wide count. |
 | One login per account | On pre-login, the presence plugin asks the control plane; a second login is refused or the old session is kicked (configurable). |
 | The same server list everywhere | The control plane pushes registry changes to every proxy through the runtime registry added in our Vine fork. |
-| Cross-proxy actions | Party warp, `/find`, private messages, staff broadcasts and bans go to the control plane, which tells the proxy holding the player to act (gRPC stream per proxy, Redis pub/sub for fan-out). |
+| Cross-proxy actions | Party warp, `/find`, private messages, staff broadcasts and bans go to the control plane, which tells the proxy holding the player to act (a command long poll per proxy over HTTP, Redis pub/sub between control plane instances). |
 | Updating or losing a proxy | Draining: the proxy stops taking logins and the load balancer health check drops it; players finish or move. A dead proxy's players reconnect through the load balancer. |
 | Scaling | A proxy is a Wings server template, so the control plane can add proxies as load rises. |
 

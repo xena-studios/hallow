@@ -53,7 +53,7 @@ flowchart TB
 | Server repos | One per lobby or game (`hub`, `skywars-lobby`, `skywars`, …): plugin, maps, config, `hallow.toml` | Ours, one repo each | separate repos |
 | SDK | Minigame library (arenas, teams, kits, scoreboards, spectating, stats, optional 1.8 combat) and control-plane client for server repos | Ours, WASM | `crates/hallow-sdk` |
 | Control plane | Server registry, matchmaker, instance orchestration, sessions, proxy sync | Ours, Rust | `crates/control-plane` |
-| Protocol | gRPC types shared by the control plane and every plugin | Ours, protobuf | `crates/proto` |
+| Protocol | HTTP/JSON API types shared by the control plane and every plugin | Ours, Rust (serde) | `crates/proto` |
 | Node agent | Creates, starts, stops and deletes server containers from templates | Calagopus Wings | `upstream/wings` |
 | Fleet manager | Buys machines from providers when capacity runs low, sets them up, drains and cancels them when it doesn't | Ours, part of the control plane | `crates/control-plane`, `crates/providers/*` |
 | Hallow Panel | One panel for nodes, servers, players, staff, bans, games and stats | Calagopus Panel fork + extensions | `panel/` |

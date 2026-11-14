@@ -1,0 +1,15 @@
+[package]
+name = "hallow-proto"
+version = "0.1.0"
+description = "Types for the Hallow control plane's HTTP/JSON API, shared by the control plane and every plugin."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+uuid = { version = "1.29", default-features = false, features = ["serde"] }
+
+[dev-dependencies]
+serde_json = "1.0.154"
