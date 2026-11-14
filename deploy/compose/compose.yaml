@@ -40,9 +40,11 @@ services:
     environment:
       HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
       HALLOW_SERVER_NAME: lobby
+      HALLOW_MULTIVERSION: ${HALLOW_MULTIVERSION:-0}
 
   game-1:
     <<: *server
     environment:
       HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
       HALLOW_SERVER_NAME: game-1
+      HALLOW_MULTIVERSION: ${HALLOW_MULTIVERSION:-0}

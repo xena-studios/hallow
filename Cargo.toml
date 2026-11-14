@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/netcheck", "crates/apiprobe"]
+members = ["crates/netcheck", "crates/apiprobe", "crates/tickwatch"]
 # Upstream projects build in their own workspaces.
 exclude = ["upstream"]
 

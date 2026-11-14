@@ -20,12 +20,16 @@ netcheck: passed in 292 ms
 
 Options: `--proxy <addr>`, `--name <player>`, `--route game-1,lobby,…`.
 
+Load test: `netcheck --bots 100 --ramp 20 --stay 40` (raise Vine's `max_connections_per_sec`, `connection_burst` and `max_players` first; every bot connects from one IP).
+
+Older Java clients need the multiversion plugin: `HALLOW_MULTIVERSION=1 docker compose ... up`. It deadlocks the server at about 50 moving players today, so keep it to small tests; see [Validation](../../docs/VALIDATION.md#load-test).
+
 To play, connect a 26.3 client to `localhost:25565` and use `/server game-1` or `/server lobby`. The proxy runs in offline mode, so any username works.
 
 | Service | Image | What it is |
 |---|---|---|
 | `proxy` | `hallow-proxy:dev` from `templates/proxy` | Vine from our fork, config in `config/vine.toml` |
-| `lobby`, `game-1` | `hallow-server:dev` from `templates/server` | The server base image: Pumpkin with the multiversion plugin |
+| `lobby`, `game-1` | `hallow-server:dev` from `templates/server` | The server base image: Pumpkin, with the multiversion plugin available but off |
 
 Lobbies and games run the same image; only `HALLOW_SERVER_NAME` differs. The forwarding secret is a dev default; set `HALLOW_VINE_SECRET` and change it in `config/vine.toml` for anything reachable from outside.
 

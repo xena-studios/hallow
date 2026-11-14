@@ -3,12 +3,17 @@
 //!
 //! ```text
 //! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby] [--stay 0]
+//! netcheck --bots 100 [--ramp 10] [--stay 60]      # load test
 //! ```
 //!
+//! With `--bots`, that many bots join (`--ramp` per second), walk around spawn
+//! like idle players for `--stay` seconds, and a summary reports how many
+//! joined, their join times and how many were still connected at the end.
+//!
 //! The proxy must allow offline players (`online_mode = false` in Vine).
-//! Exits non-zero on the first step that fails.
+//! Exits non-zero on the first step that fails, or if any bot fails.
 
-use std::{net::SocketAddr, process::ExitCode, time::Duration};
+use std::{collections::BTreeMap, net::SocketAddr, process::ExitCode, time::Duration};
 
 use bytes::Bytes;
 use pumpkin_data::packet::{CURRENT_MC_VERSION, clientbound};
@@ -25,26 +30,28 @@ use pumpkin_protocol::{
         packet_encoder::TCPNetworkEncoder,
         server::{
             config::{
-                SAcknowledgeFinishConfig, SClientInformationConfig, SConfigPong, SKnownPacks,
-                SKeepAlive as SConfigKeepAlive,
+                SAcknowledgeFinishConfig, SClientInformationConfig, SConfigPong,
+                SKeepAlive as SConfigKeepAlive, SKnownPacks,
             },
             handshake::SHandShake,
             login::{SLoginAcknowledged, SLoginStart},
             play::{
-                SChatCommand, SConfigurationAcknowledged, SConfirmTeleport, SKeepAlive,
-                SPlayPong, SPlayerLoaded,
+                SChatCommand, SConfigurationAcknowledged, SConfirmTeleport, SKeepAlive, SPlayPong,
+                SPlayerLoaded, SPlayerPosition,
             },
         },
     },
     ser::NetworkWriteExt,
 };
+use pumpkin_util::math::vector3::Vector3;
 use tokio::{
     io::{BufReader, BufWriter},
     net::{
         TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
-    time::{Instant, timeout},
+    sync::mpsc,
+    time::{Instant, interval, sleep, timeout},
 };
 use uuid::Uuid;
 
@@ -58,22 +65,39 @@ struct Bot {
     name: String,
     reader: Reader,
     writer: Writer,
+    /// Where the server last put this player.
+    position: Vector3<f64>,
+    /// Print chat the player receives.
+    verbose: bool,
+}
+
+async fn send_to<P: ClientPacket + MultiVersionJavaPacket>(
+    writer: &mut Writer,
+    packet: &P,
+) -> Result<(), String> {
+    let id = P::to_id(CURRENT_MC_VERSION);
+    let mut buf = Vec::new();
+    buf.write_var_int(&VarInt(id))
+        .map_err(|err| format!("writing packet id {id}: {err:?}"))?;
+    packet
+        .write_packet_data(&mut buf, &CURRENT_MC_VERSION)
+        .map_err(|err| format!("serializing packet {id}: {err:?}"))?;
+    writer
+        .write_packet(Bytes::from(buf))
+        .await
+        .map_err(|err| format!("writing packet {id}: {err}"))?;
+    writer
+        .flush()
+        .await
+        .map_err(|err| format!("flushing: {err}"))
 }
 
 impl Bot {
-    async fn send<P: ClientPacket + MultiVersionJavaPacket>(&mut self, packet: &P) -> Result<(), String> {
-        let id = P::to_id(CURRENT_MC_VERSION);
-        let mut buf = Vec::new();
-        buf.write_var_int(&VarInt(id))
-            .map_err(|err| format!("writing packet id {id}: {err:?}"))?;
-        packet
-            .write_packet_data(&mut buf, &CURRENT_MC_VERSION)
-            .map_err(|err| format!("serializing packet {id}: {err:?}"))?;
-        self.writer
-            .write_packet(Bytes::from(buf))
-            .await
-            .map_err(|err| format!("writing packet {id}: {err}"))?;
-        self.writer.flush().await.map_err(|err| format!("flushing: {err}"))
+    async fn send<P: ClientPacket + MultiVersionJavaPacket>(
+        &mut self,
+        packet: &P,
+    ) -> Result<(), String> {
+        send_to(&mut self.writer, packet).await
     }
 
     async fn next(&mut self) -> Result<RawPacket, String> {
@@ -95,6 +119,8 @@ impl Bot {
             name: name.to_string(),
             reader: TCPNetworkDecoder::new(BufReader::new(read)),
             writer: TCPNetworkEncoder::new(BufWriter::new(write)),
+            position: Vector3::new(0.0, 0.0, 0.0),
+            verbose: true,
         };
 
         bot.send(&SHandShake {
@@ -114,8 +140,8 @@ impl Bot {
         loop {
             let packet = bot.next().await?;
             if packet.id == clientbound::login::LOGIN_COMPRESSION {
-                let threshold = read_var_int(&packet.payload)
-                    .ok_or("bad Set Compression packet")?;
+                let threshold =
+                    read_var_int(&packet.payload).ok_or("bad Set Compression packet")?;
                 if let Ok(threshold) = usize::try_from(threshold) {
                     bot.reader.set_compression(threshold);
                     bot.writer.set_compression((threshold, COMPRESSION_LEVEL));
@@ -159,7 +185,10 @@ impl Bot {
                 let id = read_i32(&packet.payload).ok_or("bad ping")?;
                 self.send(&SConfigPong { id }).await?;
             } else if packet.id == clientbound::config::DISCONNECT {
-                return Err(format!("kicked in configuration: {}", text_of(&packet.payload)));
+                return Err(format!(
+                    "kicked in configuration: {}",
+                    text_of(&packet.payload)
+                ));
             } else if packet.id == finish {
                 self.send(&SAcknowledgeFinishConfig).await?;
                 return Ok(());
@@ -189,6 +218,7 @@ impl Bot {
                 })
                 .await?;
                 self.send(&SPlayerLoaded).await?;
+                self.position = position.position;
                 placed = true;
             }
         }
@@ -248,6 +278,90 @@ impl Bot {
         Ok(())
     }
 
+    /// Walks a 4-block circle around where it spawned for `seconds`, sending a
+    /// position four times a second like an idle player, while answering the
+    /// server. Packets are read on their own task: a read cut off halfway
+    /// would desync the stream.
+    async fn wander(self, seconds: u64) -> Result<(), String> {
+        let Self {
+            reader,
+            mut writer,
+            position: home,
+            ..
+        } = self;
+        let (tx, mut rx) = mpsc::channel::<Result<RawPacket, String>>(64);
+        let reading = tokio::spawn(async move {
+            let mut reader = reader;
+            loop {
+                let packet = reader
+                    .get_raw_packet()
+                    .await
+                    .map_err(|err| format!("connection closed or bad packet: {err}"));
+                let failed = packet.is_err();
+                if tx.send(packet).await.is_err() || failed {
+                    break;
+                }
+            }
+        });
+
+        let until = Instant::now() + Duration::from_secs(seconds);
+        let mut steps = interval(Duration::from_millis(250));
+        let mut angle: f64 = 0.0;
+        let teleport = CPlayerPosition::to_id(CURRENT_MC_VERSION);
+        let result = loop {
+            if Instant::now() >= until {
+                break Ok(());
+            }
+            tokio::select! {
+                _ = steps.tick() => {
+                    angle += 0.25;
+                    let at = Vector3::new(home.x + 4.0 * angle.cos(), home.y, home.z + 4.0 * angle.sin());
+                    if let Err(err) = send_to(&mut writer, &SPlayerPosition { position: at, collision: 1 }).await {
+                        break Err(err);
+                    }
+                }
+                packet = rx.recv() => {
+                    let packet = match packet {
+                        Some(Ok(packet)) => packet,
+                        Some(Err(err)) => break Err(err),
+                        None => break Err("reader stopped".into()),
+                    };
+                    let answered = if packet.id == clientbound::play::KEEP_ALIVE {
+                        match read_i64(&packet.payload) {
+                            Some(keep_alive_id) => send_to(&mut writer, &SKeepAlive { keep_alive_id }).await,
+                            None => Err("bad keep-alive".into()),
+                        }
+                    } else if packet.id == clientbound::play::PING {
+                        match read_i32(&packet.payload) {
+                            Some(id) => send_to(&mut writer, &SPlayPong { id }).await,
+                            None => Err("bad ping".into()),
+                        }
+                    } else if packet.id == clientbound::play::DISCONNECT {
+                        Err(format!("kicked: {}", text_of(&packet.payload)))
+                    } else if packet.id == teleport {
+                        let mut slice = &packet.payload[..];
+                        match CPlayerPosition::read(&mut slice, &CURRENT_MC_VERSION) {
+                            Ok(moved) => send_to(&mut writer, &SConfirmTeleport {
+                                teleport_id: moved.teleport_id,
+                                position: moved.position,
+                                yaw: moved.yaw,
+                                pitch: moved.pitch,
+                            }).await,
+                            Err(err) => Err(format!("reading position: {err}")),
+                        }
+                    } else {
+                        Ok(())
+                    };
+                    if let Err(err) = answered {
+                        break Err(err);
+                    }
+                }
+            }
+        };
+        reading.abort();
+        result
+    }
+
     /// Answers keep-alives and pings, reports chat and kicks. Returns true
     /// when the packet was handled here.
     async fn answer_play(&mut self, packet: &RawPacket) -> Result<bool, String> {
@@ -260,7 +374,9 @@ impl Bot {
             self.send(&SPlayPong { id }).await?;
             Ok(true)
         } else if packet.id == clientbound::play::SYSTEM_CHAT {
-            println!("    {} sees: {}", self.name, text_of(&packet.payload));
+            if self.verbose {
+                println!("    {} sees: {}", self.name, text_of(&packet.payload));
+            }
             Ok(true)
         } else if packet.id == clientbound::play::DISCONNECT {
             Err(format!("kicked: {}", text_of(&packet.payload)))
@@ -293,7 +409,13 @@ fn read_i32(bytes: &[u8]) -> Option<i32> {
 fn text_of(payload: &[u8]) -> String {
     let text: String = String::from_utf8_lossy(payload)
         .chars()
-        .map(|c| if c.is_control() || c == '\u{fffd}' { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() || c == '\u{fffd}' {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -303,6 +425,8 @@ struct Args {
     name: String,
     route: Vec<String>,
     stay: u64,
+    bots: u32,
+    ramp: u32,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -311,6 +435,8 @@ fn parse_args() -> Result<Args, String> {
         name: "netcheck".to_string(),
         route: vec!["game-1".to_string(), "lobby".to_string()],
         stay: 0,
+        bots: 0,
+        ramp: 10,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -334,6 +460,17 @@ fn parse_args() -> Result<Args, String> {
                     .parse()
                     .map_err(|err| format!("--stay {value}: {err}"))?;
             }
+            "--bots" => {
+                args.bots = value
+                    .parse()
+                    .map_err(|err| format!("--bots {value}: {err}"))?;
+            }
+            "--ramp" => {
+                args.ramp = value
+                    .parse::<u32>()
+                    .map_err(|err| format!("--ramp {value}: {err}"))?
+                    .max(1);
+            }
             _ => return Err(format!("unknown flag {flag}")),
         }
     }
@@ -355,14 +492,20 @@ async fn run(args: &Args) -> Result<(), String> {
         .await
         .map_err(|err| format!("configuration: {err}"))?;
     bot.spawn().await.map_err(|err| format!("spawn: {err}"))?;
-    println!("  ok  joined the default server ({} ms)", started.elapsed().as_millis());
+    println!(
+        "  ok  joined the default server ({} ms)",
+        started.elapsed().as_millis()
+    );
 
     for server in &args.route {
         let step = Instant::now();
         bot.switch(server)
             .await
             .map_err(|err| format!("switch to {server}: {err}"))?;
-        println!("  ok  switched to {server} ({} ms)", step.elapsed().as_millis());
+        println!(
+            "  ok  switched to {server} ({} ms)",
+            step.elapsed().as_millis()
+        );
     }
     if args.stay > 0 {
         bot.stay(args.stay)
@@ -374,6 +517,95 @@ async fn run(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// One load-test bot: join, then wander. Returns the join time.
+async fn load_bot(
+    proxy: SocketAddr,
+    name: String,
+    stay: u64,
+) -> (String, Result<Duration, (&'static str, String)>) {
+    let started = Instant::now();
+    let joined = async {
+        let mut bot = Bot::login(proxy, &name).await?;
+        bot.verbose = false;
+        bot.configure().await?;
+        bot.spawn().await?;
+        Ok::<Bot, String>(bot)
+    }
+    .await;
+    let bot = match joined {
+        Ok(bot) => bot,
+        Err(err) => return (name, Err(("join", err))),
+    };
+    let join_time = started.elapsed();
+    match bot.wander(stay).await {
+        Ok(()) => (name, Ok(join_time)),
+        Err(err) => (name, Err(("while playing", err))),
+    }
+}
+
+fn percentile(sorted: &[Duration], p: f64) -> u128 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let rank = ((sorted.len() - 1) as f64 * p).round() as usize;
+    sorted[rank].as_millis()
+}
+
+async fn load_test(args: &Args) -> Result<(), String> {
+    println!(
+        "netcheck: {} bots joining {} at {}/s, staying {}s (Java {})",
+        args.bots,
+        args.proxy,
+        args.ramp,
+        args.stay,
+        CURRENT_MC_VERSION.protocol_version()
+    );
+    let started = Instant::now();
+    let mut tasks = Vec::new();
+    for i in 0..args.bots {
+        if i > 0 && i % args.ramp == 0 {
+            sleep(Duration::from_secs(1)).await;
+        }
+        let name = format!("load{i:04}");
+        tasks.push(tokio::spawn(load_bot(args.proxy, name, args.stay)));
+    }
+
+    let mut join_times = Vec::new();
+    let mut failures: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for task in tasks {
+        match task.await {
+            Ok((_, Ok(join))) => join_times.push(join),
+            Ok((name, Err((when, err)))) => failures
+                .entry(format!("{when}: {err}"))
+                .or_default()
+                .push(name),
+            Err(err) => failures
+                .entry(format!("task: {err}"))
+                .or_default()
+                .push("?".into()),
+        }
+    }
+    join_times.sort();
+    let failed: usize = failures.values().map(Vec::len).sum();
+    println!(
+        "  stayed connected: {}/{}  join p50 {} ms  p95 {} ms  max {} ms  ({} s total)",
+        join_times.len(),
+        args.bots,
+        percentile(&join_times, 0.5),
+        percentile(&join_times, 0.95),
+        percentile(&join_times, 1.0),
+        started.elapsed().as_secs()
+    );
+    for (reason, names) in &failures {
+        println!("  FAIL {} bots, {reason} (e.g. {})", names.len(), names[0]);
+    }
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(format!("{failed} of {} bots failed", args.bots))
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = match parse_args() {
@@ -383,7 +615,12 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(&args).await {
+    let outcome = if args.bots > 0 {
+        load_test(&args).await
+    } else {
+        run(&args).await
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("  FAIL {err}");

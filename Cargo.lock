@@ -1588,6 +1588,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tickwatch"
+version = "0.1.0"
+dependencies = [
+ "pumpkin-plugin-api",
+ "tracing",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
