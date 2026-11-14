@@ -5,6 +5,8 @@ The biggest risk is that old-version support turns into a protocol-translation p
 | Risk | Impact | Mitigation |
 |---|---|---|
 | The multiversion plugin can't play 1.7 or 1.8 correctly | Loses the classic PvP audience | Test in Phase 0. Fallbacks: contribute payload translators upstream, put ViaProxy in front of Vine, or launch with 1.20.5+ only |
+| **Confirmed:** with the multiversion plugin loaded, Pumpkin deadlocks at about 50 moving players (blocking `PacketSentEvent` fired from the tick) | No old clients until fixed; a server with it loaded can freeze | Plugin off by default in the base image; report upstream with a reproduction; ViaProxy in front of Vine is the fallback for old clients |
+| Vine's CPU per player is high in crowded areas (about 8 cores at 200 crowded players) | More proxies, higher cost | Cap lobby density; profile Vine and send fixes upstream |
 | Old-client server switching breaks (Vine resets the config phase only on 1.20.2+) | Old clients disconnect or glitch when moving | Test in Phase 0; add a respawn-based switch for old clients in the Vine fork |
 | Vine's own packets skip backend translation | Broken proxy messages on old clients | Check in Phase 0; patch Vine if needed |
 | Upstream churn: young repos linked by relative paths | Breakage on every Minecraft update | Pin submodules, update deliberately, run the version matrix in CI |

@@ -22,9 +22,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -u 2613 -m -d /server hallow
 COPY --from=build /pumpkin /usr/local/bin/pumpkin
-COPY --from=build --chown=hallow:hallow /multiversion.wasm /server/plugins/pumpkin_java_multiversion.wasm
+# Off by default: see HALLOW_MULTIVERSION in entrypoint.sh.
+COPY --from=build /multiversion.wasm /opt/hallow/plugins/pumpkin_java_multiversion.wasm
 COPY templates/server/pumpkin.toml /etc/hallow/pumpkin.toml
 COPY templates/server/entrypoint.sh /usr/local/bin/hallow-entrypoint
+RUN install -d -o hallow -g hallow /server/plugins
 WORKDIR /server
 USER hallow
 EXPOSE 25565

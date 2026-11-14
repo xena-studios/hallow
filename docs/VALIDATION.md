@@ -34,8 +34,8 @@ Old clients matter most because the multiversion plugin rewrites packet bodies o
 | Pumpkin plugin API | A test plugin creates a world, loads a map from disk, teleports players, shows a scoreboard and fills an inventory | **Pass, 10/10** (2026-11-13, Pumpkin `058f7ec6f`, `crates/apiprobe`). Three things to design around: see [Plugin API findings](#plugin-api-findings) |
 | Bedrock path | How a Bedrock client reaches Pumpkin now that it uses NetherNet, and whether Geyser still fits | |
 | Calagopus extensions | An extension adds a table, an API route and a page | |
-| Pumpkin capacity | Bot players per backend before tick time passes 50 ms | |
-| Vine capacity | Bot players per proxy before latency rises | |
+| Pumpkin capacity | Bot players per backend before tick time passes 50 ms | **200 to 300** crowded, moving players per server on an M1 Pro (2026-11-14); see [Load test](#load-test). With the multiversion plugin loaded it **deadlocks at about 50** |
+| Vine capacity | Bot players per proxy before latency rises | 400 held, but Vine used about 8 cores from 200 crowded players on; see [Load test](#load-test) |
 
 The 10 s and 200-cycle targets are starting points; adjust them once there are real numbers.
 
@@ -61,3 +61,25 @@ What to design around:
 3. **Don't teleport a player during the join event.** Pumpkin kicks a client that confirms a teleport other than the latest one ("Wrong teleport id"), and a teleport during join gives the client two in a row. Vanilla ignores stale confirmations. Pumpkin-MC/Pumpkin#4540 fixes this; until it lands, the SDK delays the first teleport until the client has confirmed its spawn.
 
 Minor: an `ItemStack` made with `minecraft:diamond_sword` reads its key back as `diamond_sword`, so compare keys without the namespace.
+
+## Load test
+
+`netcheck --bots N --ramp 20 --stay 40` against Vine and one Pumpkin server, with `crates/tickwatch` logging tick time once a second. Every bot stands near spawn and walks a small circle, sending a position four times a second, so each one sees every other: a crowded lobby, close to the worst case. Bots, Vine and Pumpkin all ran on one Apple M1 Pro (10 cores, 32 GB), Pumpkin `058f7ec6f`, Vine `408125e`, without the multiversion plugin. Relative numbers, not production capacity.
+
+| Bots | Stayed connected | Join p50 / p95 | Tick median (budget 50 ms) | Peak CPU Pumpkin / Vine | Peak memory Pumpkin / Vine |
+|---|---|---|---|---|---|
+| 50 | 50/50 | 96 / 220 ms | 5.1 ms | 164 % / 174 % | 307 / 57 MB |
+| 100 | 100/100 | 77 / 112 ms | 7.8 ms | 99 % / 355 % | 519 / 99 MB |
+| 200 | 200/200 | 86 / 197 ms | 25.4 ms | 155 % / 784 % | 730 / 237 MB |
+| 400 | 400/400 | 190 / 461 ms | 88.2 ms, over budget | 292 % / 770 % | 1193 / 451 MB |
+
+- **A server holds 200 to 300 crowded players** before its tick passes 50 ms. Games with 2 to 16 players per instance are far below that; lobbies should cap well under it.
+- **Vine costs more CPU than Pumpkin** in a crowded lobby: it relays and compresses every movement update to every player. Plan on more proxies than the player count alone suggests, and profile Vine before launch.
+
+### The multiversion plugin deadlocks the server
+
+With `pumpkin-java-multiversion` loaded, 50 moving players froze the server in 3 of 3 runs (0 of 3 without it): all joined, none was ever seen leaving, CPU near zero.
+
+When any plugin handles `PacketSentEvent`, Pumpkin's `JavaClient::translate_outgoing` fires it for every outgoing play packet, for 26.3 clients too (as an observation), through `fire_blocking`, which `block_on`s the async runtime. It does so from the tick's worker threads, inside `World::broadcast_java_grouped`, while holding locks the async runtime's threads need (thread samples show them blocked in `EntityTracker::remove_entity` and `broadcast_client_move`). The plugin call can't run and the tick can't finish. It's also N squared plugin calls per tick in a crowded area, which is why the server falls 55 ticks behind first.
+
+Until Pumpkin fixes it, the server base image ships the plugin off (`HALLOW_MULTIVERSION=1` loads it), so the launch version range is 26.3 unless the fix lands; see [Decisions](DECISIONS.md) 28.

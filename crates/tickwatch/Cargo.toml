@@ -1,0 +1,15 @@
+[package]
+name = "tickwatch"
+version = "0.1.0"
+description = "Pumpkin plugin that logs tick time, TPS and player count once a second, for load tests."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pumpkin-plugin-api.workspace = true
+tracing.workspace = true
