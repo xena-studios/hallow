@@ -6,33 +6,38 @@ The Phase 0 test matrix. Each row gets a result and a note before the Phase 0 ga
 
 Each client joins through Vine, then plays 10 minutes: loads chunks, moves, breaks and places blocks, chats, opens an inventory, fights a mob and a player, and switches servers twice.
 
+**Run 2026-11-14** with headless clients, not real game clients: mineflayer 4.39 (1.8.9 to 26.1), minecraft-protocol 1.68 (1.7.10), `netcheck` (26.3) and bedrock-protocol 3.61 through Geyser 2.12.1-b1302. Backends ran Pumpkin `bc5f7e7bd` with the multiversion plugin `f750eeba` loaded; the proxy was Vine `hallow` `a6f3630`. Bots join, load chunks, chat, get an inventory, try Vine's tab completion and switch servers twice; they don't fight or build. Scripts: [`tools/matrix`](../tools/matrix).
+
 | Client | Join | Chunks | Chat | Inventory | Combat | Switch ×2 | Notes |
 |---|---|---|---|---|---|---|---|
-| 1.7.10 | | | | | | | |
-| 1.8.9 | | | | | | | |
-| 1.12.2 | | | | | | | |
-| 1.16.5 | | | | | | | |
-| 1.20.1 | | | | | | | |
-| 1.20.4 | | | | | | | |
-| 1.21.11 | | | | | | | |
-| 26.3 | | | | | | | |
-| Bedrock, route A (native) | | | | | | | |
-| Bedrock, route B (Geyser) | | | | | | | |
+| 1.7.10 | **Fail** | | | | | | Vine turns on compression, which 1.7 doesn't have, and the client can't read anything after login (`CompressionFailed`) |
+| 1.8.9 | Pass | Pass (638) | No echo | Pass | not tested | **Fail** | Disconnected after joining: a play packet the client can't parse ("array size is abnormally large"). Vine's `/server` not intercepted |
+| 1.12.2 | **Fail** | | | | | | Vine reads a chunk packet from the backend as a disconnect and drops the player: its packet ids for this version are wrong |
+| 1.16.5 | **Fail** | | | | | | Same as 1.12.2 |
+| 1.20.1 | Pass | Pass (638) | No echo | Pass | not tested | **Fail** | `/server` reaches Pumpkin ("Unknown or incomplete command"): Vine looks for the wrong packet id on this version |
+| 1.20.4 | **Fail** | | | | | | Same as 1.12.2 |
+| 1.21.11 | Pass | Pass (638) | Pass | Pass | not tested | **Fail** | Same `/server` problem as 1.20.1 |
+| 26.1 | Pass | Pass | Pass | Pass | not tested | **Fail** | Tab completion shows Vine's `/server`; the switch starts but the client never finishes reconfiguring. Not yet known whether the bot or the translation is at fault |
+| 26.3 | Pass | Pass | Pass | Pass | not tested | Pass | `netcheck`, also in CI on every PR. A real 26.3 client joined earlier |
+| Bedrock, route A (native) | not used | | | | | | Not used: see [Decisions](DECISIONS.md) 4 |
+| Bedrock, route B (Geyser) | Pass | Pass (3797) | Pass | not checked | not tested | **Pass** | 1.26.60 bot over RakNet → Geyser → Vine → Pumpkin. Needed a Vine fix: Geyser sends every command as `chat_command_signed`, which Vine didn't intercept, so `/server` did nothing (fixed in our fork). A real NetherNet client is still to try |
 
 Old clients matter most because the multiversion plugin rewrites packet bodies only for entity spawns. Chunks, chat, join and inventory packets are where it is expected to break first.
+
+**What the run showed:** every old-version failure except 1.8.9's parse error is in Vine, not the plugin. Vine uses one packet id table for every client, enables compression for 1.7, and only re-enters configuration on 1.20.2+. This is the work in #66 (translate old clients in Vine, [Decisions](DECISIONS.md) 29); launch stays 26.3 and Bedrock.
 
 ## Platform
 
 | Test | Pass when | Result |
 |---|---|---|
-| Vine messages on old clients | `/server`, chat and tab completion render on 1.8.9 | |
+| Vine messages on old clients | `/server`, chat and tab completion render on 1.8.9 | **Fail, scoped to #66:** on 1.8.9 to 1.21.11 Vine never sees `/server` or tab completion (wrong packet ids), so its own messages can't show. On 26.1 tab completion lists Vine's `/server` |
 | Wings create from template | A game instance is up and joinable in under 10 s | **Container floor: 0.35 s** from `docker run` to accepting players, 0.19 s to delete (Hallow server image, M1 Pro, 2026-11-14). Wings' own overhead is measured with the panel in Phase 1 |
 | Wings churn | 200 create and delete cycles on one node with no leaks | **Pass at the container level:** 200 cycles in 99 s, 0 failures, no leftover containers, volumes or disk. Repeat through Wings in Phase 1 |
-| Cold start | Time from the first queue entry after idle to the player in a game, on the floor node | |
-| Cloud node ready time | A Hetzner Cloud machine goes from API call to taking games, with Docker and Wings installed by cloud-init; record the time | |
-| Provider billing | Billing step and minimum term for Hetzner Cloud, Hetzner Robot and OVHcloud, from their current docs | |
+| Cold start | Time from the first queue entry after idle to the player in a game, on the floor node | **0.33 to 0.37 s** (3 runs, M1 Pro, 2026-11-14) from starting a stopped game server to a player joined through Vine and switched onto it. The matchmaker's own time is added in Phase 1 |
+| Cloud node ready time | A Hetzner Cloud machine goes from API call to taking games, with Docker and Wings installed by cloud-init; record the time | **Estimated from published measurements, not timed by us** (2026-11-14): about **125 s** typical (80–300) from a stock image with cloud-init installing Docker, about **45 s** (30–200) from a snapshot with Docker, Wings and images baked in. See [Cloud node timing](#cloud-node-timing). Time our own node when the Hetzner provider lands (#42) |
+| Provider billing | Billing step and minimum term for Hetzner Cloud, Hetzner Robot and OVHcloud, from their current docs | **Hetzner Cloud:** hourly, each started hour billed, capped at the monthly price; stopped servers and Primary IPv4 still billed. **OVHcloud Public Cloud:** per second after a 1-minute minimum, from `ACTIVE` (older guides say per started hour; confirm on an invoice). **Hetzner Robot:** monthly; auction and in-stock machines usually delivered within minutes to a workday, others in days to weeks. Sources in [Cloud node timing](#cloud-node-timing) |
 | Pumpkin plugin API | A test plugin creates a world, loads a map from disk, teleports players, shows a scoreboard and fills an inventory | **Pass, 10/10** (2026-11-13, Pumpkin `058f7ec6f`, `crates/apiprobe`). Three things to design around: see [Plugin API findings](#plugin-api-findings) |
-| Bedrock path | How a Bedrock client reaches Pumpkin now that it uses NetherNet, and whether Geyser still fits | **Researched (2026-11-14):** clients use NetherNet since 26.60; Geyser 2.12.1 build 1273+ supports it; route chosen in Decisions 4. A real Bedrock client through Geyser and Vine is still to test |
+| Bedrock path | How a Bedrock client reaches Pumpkin now that it uses NetherNet, and whether Geyser still fits | **Geyser in front of Vine works** (2026-11-14): clients use NetherNet since 26.60, Geyser 2.12.1 accepts NetherNet and RakNet, and a Bedrock bot joined, chatted and switched servers twice (see the client table). Route chosen in Decisions 4. A real NetherNet client and the Floodgate handoff (#72) are Phase 1 |
 | Calagopus extensions | An extension adds a table, an API route and a page | **Yes, from the source:** extensions ship their own `migrations/`, routes (`initialize_router`), background tasks, permissions and settings; the frontend adds admin, account and server pages, navigation, forms and overrides. Building the first one is Phase 1 (#23) |
 | Pumpkin capacity | Bot players per backend before tick time passes 50 ms | **200 to 300** crowded, moving players per server on an M1 Pro (2026-11-14); see [Load test](#load-test). With the multiversion plugin loaded it **deadlocks at about 50** |
 | Vine capacity | Bot players per proxy before latency rises | 400 held, but Vine used about 8 cores from 200 crowded players on; see [Load test](#load-test) |
@@ -99,3 +104,30 @@ Two separate problems, measured with the plugin loaded, through Vine, same machi
 2. **The slowness.** With the freeze gone, every packet to every 26.3 player still goes through the plugin as an observation, one call at a time. Skipping that observation for 26.3 clients brings joins back to normal. That changes what Pumpkin promises packet plugins, so it's proposed upstream as an option a plugin opts into (for example "only clients below the current version"), not done in the fix.
 
 Plan: launch on 26.3. Old clients come back once both land upstream, or, if they don't, by translating in our Vine fork instead of in a server plugin: proxies already read every packet, scale out, and would only pay for old clients. See [Decisions](DECISIONS.md) 29.
+
+## Cloud node timing
+
+Hallow has no cloud account yet, so these are published measurements (Hetzner Cloud, mostly ARM in fsn1, one to two runs each), checked 2026-11-14. Hetzner's own `docker-ce` app image was slower to create (40–60 s) than stock Ubuntu.
+
+| Phase | Low (s) | Typical (s) | High (s) | Source |
+|---|---|---|---|---|
+| Create call to `running`, stock image | 10 | 15 | 60 | [banjo/devbox#31](https://github.com/banjo/devbox/issues/31) (Nov 2026), [VPSBenchmarks](https://vpsbenchmarks.com/labs/provisioning_times) |
+| Create call to `running`, snapshot | 12 | 15 | 130 | banjo/devbox#31; [terraform-provider-hcloud#966](https://github.com/hetznercloud/terraform-provider-hcloud/issues/966) (2024, before Hetzner's faster snapshot format) |
+| `running` to booted and reachable | 16 | 20 | 30 | banjo/devbox#31 |
+| cloud-init installing Docker with apt | 45 | 70 | 120 | banjo/devbox#31 |
+| cloud-init on a prepared snapshot | 1 | 5 | 10 | banjo/devbox#31 |
+| Pull a 150–300 MB image from GHCR | 5 | 15 | 60+ | estimate from [measured bandwidth](https://www.vpsbenchmarks.com/trials/hetzner_performance_trial_28Aug2026/plan_grades/explanation/category/net_perf) (~870 Mbps) |
+| WireGuard join and Wings registering | 2 | 5 | 30 | no published data; estimate |
+| **Stock image, Docker by cloud-init, image pulled** | **80** | **125** | **300** | |
+| **Snapshot with Docker, Wings and images baked in** | **30** | **45** | **200** | |
+
+What this means for [Fleet](FLEET.md):
+
+- **Bake a snapshot.** Building the node image (Docker, Wings, WireGuard, current server images) in CI cuts about 80 s per node. Pre-pull only the images for the current `live` versions; anything newer pulls on demand.
+- **Headroom covers about a minute.** Scaling up has to start before the free game slots run out, because a new burst node takes roughly a minute to take games, and up to a few minutes on a bad day. The floor node and warm pools carry players meanwhile.
+- **Capacity is the bigger risk than speed.** Hetzner returns `resource_unavailable` for some server types and locations, and has limited new cloud servers for some accounts since June 2026. The provider needs fallback server types and locations, then OVHcloud.
+- **API limits.** 3600 requests per hour per project, refilled at one per second; poll server status every 5 s or so, not tighter.
+- **Short nodes cost a full hour on Hetzner.** A node that lives 5 minutes is billed for an hour, so scale-down waits until near the end of the paid hour unless the budget cap is hit.
+- **OVHcloud is unmeasured.** Published numbers for its VPS range from 35 s to tens of minutes. Time Public Cloud ourselves before relying on it for fast bursts (#44).
+- **GHCR over IPv6** has been reported to slow to minutes. Give nodes IPv4, or mirror images to a registry close to the nodes.
+
