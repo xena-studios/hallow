@@ -35,7 +35,7 @@ Prove the stack before writing games. About two weeks.
 
 - [ ] Vine fork: runtime `register-server` / `unregister-server`, drain mode
 - [ ] Vine: translate old Java clients on the proxy, using the multiversion plugin's tables (Decisions 29)
-- [ ] `crates/proto`: gRPC definitions for the control plane
+- [x] `crates/proto`: HTTP/JSON API types for the control plane
 - [ ] Control plane: server registry, proxy registry, presence in Redis
 - [ ] Vine plugins: presence, global ping, duplicate-login check, cross-proxy commands
 - [ ] Load balancer with PROXY protocol and health checks
