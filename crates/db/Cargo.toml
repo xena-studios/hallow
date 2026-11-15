@@ -1,0 +1,17 @@
+[package]
+name = "hallow-db"
+version = "0.1.0"
+description = "Hallow's PostgreSQL schema (accounts, ranks, sessions, punishments) and the typed queries the control plane runs against it."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "ipnet"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+ipnet = "2"
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

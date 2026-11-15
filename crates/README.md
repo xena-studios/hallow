@@ -6,6 +6,7 @@ Hallow's Cargo workspace.
 |---|---|
 | `proto/` | `hallow-proto`: HTTP/JSON API types shared by the control plane and every plugin; builds for the host and `wasm32-wasip2`. The endpoint table is in `src/routes.rs` |
 | `control-plane/` | Server and proxy registry, presence and cross-proxy commands over HTTP/JSON, state in Redis; later the matchmaker, orchestration through the Wings API and the fleet manager. See its [README](control-plane/README.md) |
+| `db/` | `hallow-db`: PostgreSQL schema in its own `hallow` schema (accounts, ranks, sessions, punishments), migrations, and the queries the control plane runs at login. See its [README](db/README.md) |
 | `providers/*` | One crate per machine provider (Hetzner Cloud, Hetzner Robot, OVHcloud) behind the fleet manager's provider trait |
 | `vine-plugin/` | `hallow-vine`: presence, global ping, duplicate-login check, server-list sync and cross-proxy commands, linking each proxy to the control plane (WASM); parties and queues later. See its [README](vine-plugin/README.md) |
 | `hallow-sdk/` | For server repos: minigame library (arenas, teams, kits, scoreboards, spectating, stats) and control-plane client (WASM) |
