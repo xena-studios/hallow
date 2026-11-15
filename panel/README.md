@@ -60,7 +60,7 @@ Then open <http://127.0.0.1:18200> for the first-run setup, and check the extens
 
 For production, Calagopus publishes Docker images built by its own release workflow. A Hallow image (from a source build, or Calagopus's `:heavy` image with our extension) comes with deployment.
 
-A CI job for this build is ready in [ci/panel.yml](ci/panel.yml) and runs on every change under `panel/` once it is moved to `.github/workflows/`. It must not become a required check.
+A CI job for this build, [panel.yml](../.github/workflows/panel.yml), runs on every change under `panel/`. It must not become a required check.
 
 ## Working on the extension
 
