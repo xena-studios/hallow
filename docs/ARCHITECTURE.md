@@ -47,7 +47,7 @@ flowchart TB
 |---|---|---|---|
 | Load balancer | Spreads TCP connections over healthy proxies, passes the real IP with PROXY protocol | HAProxy or a DDoS-protection provider | `deploy/` |
 | Vine proxy | Mojang auth, forwarding to backends, server switching | Vine fork | `upstream/Vine` |
-| Hallow Vine plugins | Presence, global player count, duplicate-login check, parties, queues, cross-proxy commands | Ours, WASM | `crates/vine-plugins` |
+| Hallow Vine plugin | Presence, global player count, duplicate-login check, server-list sync, cross-proxy commands; parties and queues later | Ours, WASM | `crates/vine-plugin` |
 | Server base image | Pumpkin, the multiversion plugin and Hallow's server plugin; every server image builds on it | Pumpkin + ours | `templates/` |
 | Multiversion plugin | Translates Java 1.7 – 26.2 clients to 26.3 on each server | pumpkin-java-multiversion | `upstream/pumpkin-java-multiversion` |
 | Server repos | One per lobby or game (`hub`, `skywars-lobby`, `skywars`, …): plugin, maps, config, `hallow.toml` | Ours, one repo each | separate repos |

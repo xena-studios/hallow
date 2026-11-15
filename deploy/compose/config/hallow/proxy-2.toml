@@ -1,0 +1,10 @@
+# hallow_vine settings for proxy-2. Mounted at
+# /proxy/plugins/data/hallow_vine/config.toml (the plugin sees it as /data).
+control_plane = "control-plane:8080"
+token_file = "token"
+proxy_id = "proxy-2"
+address = "proxy-2:25565"
+# Same forwarding and secret as the Pumpkin servers (HALLOW_VINE_SECRET).
+forwarding = "vine"
+forwarding_secret_file = "forwarding.secret"
+poll_ms = 250
