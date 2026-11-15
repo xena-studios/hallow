@@ -74,3 +74,36 @@ Rules for now:
 
 - **Dev only:** the config (`compose/config/geyser/config.yml`) uses offline auth and doesn't validate Bedrock logins, so bots can join and Bedrock players get offline-mode identities. Floodgate (issue #72) gives them their real ones.
 - **No load balancer:** Geyser connects to the proxy directly, so don't combine it with `compose.lb.yaml` yet.
+
+## Monitoring
+
+`compose/compose.monitoring.yaml`, layered on the two-proxy override, adds:
+
+- **Prometheus** (`localhost:19090`): scrapes the control plane's `/metrics` every 5 s.
+- **Loki**, fed by **Alloy**: keeps the logs of every container in the compose project.
+- **Grafana** (`localhost:13000`): anonymous viewer, `admin` / `hallow-dev`.
+
+```sh
+docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml \
+  -f deploy/compose/compose.monitoring.yaml up --build -d
+```
+
+The provisioned **Hallow network** dashboard shows:
+
+- players online, the limit, proxies, ready lobbies, game instances and queued players;
+- players over time, per proxy and per server;
+- instances by kind and state;
+- tick time per server, against the 50 ms budget;
+- queues by game;
+- warnings and errors from the logs.
+
+Each server's `hallow_server` plugin reports its tick time in its heartbeat.
+
+Alert rules (`config/monitoring/alerts.yml`) cover:
+
+- the control plane being down;
+- no proxies, or no ready lobby;
+- a server over its tick budget;
+- the network nearly full.
+
+They show on Prometheus' and Grafana's alert pages; production needs an Alertmanager for paging. Everything here is dev-only (open dashboards, a fixed password).

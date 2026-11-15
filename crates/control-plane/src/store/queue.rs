@@ -170,6 +170,18 @@ impl Store {
         Ok(())
     }
 
+    /// Players queued for each kind that has a queue.
+    pub async fn queue_sizes(&self) -> Result<Vec<(String, u32)>> {
+        let mut kinds: Vec<String> = self.conn().smembers(self.keys.queue_kinds()).await?;
+        kinds.sort();
+        let mut sizes = Vec::with_capacity(kinds.len());
+        for kind in kinds {
+            let players = self.queued_players(&kind).await?;
+            sizes.push((kind, players));
+        }
+        Ok(sizes)
+    }
+
     async fn queued_players(&self, kind: &str) -> Result<u32> {
         let raw: Vec<String> = self.conn().lrange(self.keys.queue(kind), 0, -1).await?;
         let mut total = 0;

@@ -506,6 +506,7 @@ impl Store {
             max_players: req.max_players,
             players: 0,
             state: ServerState::Ready,
+            tick_ms: None,
         };
         let _: () = redis::pipe()
             .atomic()
@@ -535,6 +536,9 @@ impl Store {
         let state_changed = info.state != beat.state;
         info.players = beat.players;
         info.state = beat.state;
+        if beat.tick_ms.is_some() {
+            info.tick_ms = beat.tick_ms;
+        }
         let written: i64 = self
             .update_if_present
             .key(self.keys.servers())

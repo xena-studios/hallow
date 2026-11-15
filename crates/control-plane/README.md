@@ -36,6 +36,11 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `POST /v1/punishments/revoke` lifts a ban or mute;
   - `GET /v1/punishments?name=` lists a player's last 10;
   - an active mute is sent with the login and pushed whenever it changes.
+- **Metrics.** `GET /metrics` (no token) serves Prometheus' text format, read from live state:
+  - players online and the limit;
+  - players per proxy;
+  - per-server players, limit and tick time;
+  - queue sizes.
 - **Lookups.** Online players can be looked up by UUID, or by username ignoring case, for `/find` and `/msg`.
 - **Commands.**
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.

@@ -111,6 +111,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
         .route("/healthz", get(health))
+        .route("/metrics", get(metrics))
         .merge(api)
         .fallback(|| async { Failure::not_found("no such endpoint") })
         .with_state(state)
@@ -149,6 +150,17 @@ fn check_name(what: &str, name: &str) -> Reply<()> {
             "{what} must be 1 to 64 letters, digits, '.', '_' or '-'"
         )))
     }
+}
+
+async fn metrics(State(state): Shared) -> Reply<impl IntoResponse> {
+    let body = crate::metrics::render(&state).await?;
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    ))
 }
 
 async fn health(State(state): Shared) -> Reply<StatusCode> {
