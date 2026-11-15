@@ -26,6 +26,7 @@ wit_bindgen::generate!({
     world: "plugin",
 });
 
+mod commands;
 mod config;
 mod http;
 
@@ -96,6 +97,8 @@ struct State {
     protocols: HashMap<String, (i32, Instant)>,
     /// Log a lost connection once, not every poll.
     reported_down: bool,
+    /// Who last messaged each player here, by UUID, for `/r`.
+    last_from: HashMap<String, String>,
 }
 
 thread_local! {
@@ -144,6 +147,7 @@ impl Guest for Hallow {
                 admitted: HashMap::new(),
                 protocols: HashMap::new(),
                 reported_down: false,
+                last_from: HashMap::new(),
             });
         });
 
@@ -163,6 +167,8 @@ impl Guest for Hallow {
             EventType::PlayerDisconnect,
             EventPriority::Monitor,
         );
+
+        commands::register(&ctx);
 
         with_state(State::tick);
         scheduler::schedule_repeating_task(TICK, poll_ms, poll_ms);
@@ -209,12 +215,23 @@ impl Guest for Hallow {
         .unwrap_or_else(unreachable_without_state)
     }
 
-    fn handle_command(_: u32, _: CommandSender, _: Vec<String>) -> Result<i32, String> {
-        Err("hallow has no commands".into())
+    fn handle_command(id: u32, sender: CommandSender, args: Vec<String>) -> Result<i32, String> {
+        // Messages for the player go out as they are; Vine would prefix an
+        // `Err` with "Error:".
+        let result = with_state(|state| state.command(id, &sender, &args))
+            .unwrap_or_else(|| Err(UNAVAILABLE.into()));
+        Ok(result.unwrap_or_else(|message| {
+            vine::plugin::command::reply(&sender, &message);
+            0
+        }))
     }
 
-    fn handle_command_suggestion(_: u32, _: CommandSender, _: Vec<String>) -> Vec<String> {
-        Vec::new()
+    fn handle_command_suggestion(
+        id: u32,
+        _sender: CommandSender,
+        args: Vec<String>,
+    ) -> Vec<String> {
+        with_state(|state| state.suggest(id, &args)).unwrap_or_default()
     }
 
     fn handle_task(handler_id: u32) {
@@ -527,7 +544,7 @@ impl State {
             Ok(Poll::Changed { revision, data }) => {
                 self.commands_revision = revision;
                 for command in data {
-                    run(command);
+                    self.run(command);
                 }
             }
             Ok(Poll::Unchanged { .. }) => {}
@@ -561,30 +578,38 @@ impl State {
     }
 }
 
-fn run(command: ProxyCommand) {
-    match command {
-        ProxyCommand::Send { player, server } => {
-            proxy::connect_player(&player.to_string(), &server);
-        }
-        ProxyCommand::Message { player, text } => {
-            proxy::send_message(&player.to_string(), &text);
-        }
-        ProxyCommand::Broadcast {
-            text,
-            servers: None,
-        } => proxy::broadcast(&text),
-        ProxyCommand::Broadcast {
-            text,
-            servers: Some(servers),
-        } => {
-            for player in proxy::get_players() {
-                if servers.contains(&player.current_server) {
-                    proxy::send_message(&player.uuid, &text);
+impl State {
+    /// Carries out a command the control plane queued for this proxy.
+    fn run(&mut self, command: ProxyCommand) {
+        match command {
+            ProxyCommand::Send { player, server } => {
+                proxy::connect_player(&player.to_string(), &server);
+            }
+            ProxyCommand::Message { player, text, from } => {
+                let player = player.to_string();
+                if proxy::send_message(&player, &text)
+                    && let Some(from) = from
+                {
+                    self.last_from.insert(player, from);
                 }
             }
-        }
-        ProxyCommand::Kick { player, reason } => {
-            proxy::disconnect_player(&player.to_string(), &reason);
+            ProxyCommand::Broadcast {
+                text,
+                servers: None,
+            } => proxy::broadcast(&text),
+            ProxyCommand::Broadcast {
+                text,
+                servers: Some(servers),
+            } => {
+                for player in proxy::get_players() {
+                    if servers.contains(&player.current_server) {
+                        proxy::send_message(&player.uuid, &text);
+                    }
+                }
+            }
+            ProxyCommand::Kick { player, reason } => {
+                proxy::disconnect_player(&player.to_string(), &reason);
+            }
         }
     }
 }

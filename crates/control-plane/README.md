@@ -14,6 +14,7 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - Refusals cover a full network, no free hub, or a duplicate login. With `HALLOW_DUPLICATE_LOGIN=kick_old`, a duplicate login kicks the old session instead.
   - Two proxies racing the same login can't both win.
 - **Leaving.** A leave only counts from the proxy the player is on, so a late leave from an old session can't remove a newer login.
+- **Lookups.** Online players can be looked up by UUID, or by username ignoring case, for `/find` and `/msg`.
 - **Commands.**
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.
   - Each proxy long-polls its own command queue. The last 1000 commands are kept for polls that fall behind.

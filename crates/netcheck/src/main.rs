@@ -4,6 +4,7 @@
 //! ```text
 //! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby] [--stay 0]
 //! netcheck --route "/some-command arg,game-1"   # steps starting with / run a command
+//! netcheck --route "~5,/msg someone hi"         # steps like ~5 wait that many seconds
 //! netcheck --bots 100 [--ramp 10] [--stay 60]      # load test
 //! ```
 //!
@@ -514,7 +515,18 @@ async fn run(args: &Args) -> Result<(), String> {
 
     for server in &args.route {
         let step = Instant::now();
-        // A step starting with `/` runs that command; anything else is a server to switch to.
+        // `~N` waits N seconds (still answering keep-alives and printing chat),
+        // a step starting with `/` runs that command, and anything else is a
+        // server to switch to.
+        if let Some(secs) = server.strip_prefix('~') {
+            let secs: u64 = secs
+                .parse()
+                .map_err(|_| format!("bad wait step {server}"))?;
+            bot.stay(secs)
+                .await
+                .map_err(|err| format!("waiting {secs}s: {err}"))?;
+            continue;
+        }
         if let Some(command) = server.strip_prefix('/') {
             bot.send(&SChatCommand { command })
                 .await

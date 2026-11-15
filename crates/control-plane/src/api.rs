@@ -90,6 +90,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::PRESENCE_SWITCH, post(switch))
         .route(routes::PRESENCE_LEAVE, post(leave))
         .route(routes::PRESENCE_COUNT, get(count))
+        .route(routes::PLAYERS, get(player_by_name))
         .route("/v1/players/{uuid}", get(player))
         .route(routes::COMMANDS, post(send_command))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
@@ -291,6 +292,24 @@ async fn player(State(state): Shared, Path(uuid): Path<String>) -> Reply<Body<Pl
     state
         .store
         .player(&uuid)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("player isn't online"))
+}
+
+#[derive(Deserialize)]
+struct NameParams {
+    name: String,
+}
+
+async fn player_by_name(
+    State(state): Shared,
+    query: Result<Query<NameParams>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<PlayerLocation>> {
+    let Query(params) = query?;
+    state
+        .store
+        .player_by_name(&params.name)
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("player isn't online"))
