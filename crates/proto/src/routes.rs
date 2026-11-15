@@ -19,6 +19,7 @@
 //! | `GET` | [`PRESENCE_COUNT`] | | [`NetworkCount`](crate::presence::NetworkCount) |
 //! | `GET` | [`player`] | | [`PlayerLocation`](crate::presence::PlayerLocation) or `404` |
 //! | `GET` | [`player_by_name`] | | [`PlayerLocation`](crate::presence::PlayerLocation) or `404`; names match without case |
+//! | `POST` | [`FRIENDS`] | [`FriendAction`](crate::friend::FriendAction) | [`FriendReply`](crate::friend::FriendReply) |
 //! | `POST` | [`PARTIES`] | [`PartyAction`](crate::party::PartyAction) | [`PartyReply`](crate::party::PartyReply) |
 //! | `GET` | [`party`] | | [`PartyInfo`](crate::party::PartyInfo) or `404` |
 //! | `POST` | [`PUNISHMENTS`] | [`IssuePunishment`](crate::punishment::IssuePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
@@ -54,6 +55,7 @@ pub const QUEUES: &str = "/v1/queues";
 pub const COMMANDS: &str = "/v1/commands";
 pub const PLAYERS: &str = "/v1/players";
 pub const PARTIES: &str = "/v1/parties";
+pub const FRIENDS: &str = "/v1/friends";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 

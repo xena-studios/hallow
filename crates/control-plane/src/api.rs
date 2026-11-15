@@ -14,6 +14,7 @@ use axum::{
 use hallow_proto::{
     ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
+    friend::{FriendAction, FriendReply},
     party::{PartyAction, PartyInfo, PartyReply},
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
@@ -31,7 +32,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, punish,
+    events, friends, punish,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -98,6 +99,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/players/{uuid}", get(player))
         .route(routes::COMMANDS, post(send_command))
         .route(routes::PARTIES, post(party_action))
+        .route(routes::FRIENDS, post(friend_action))
         .route(
             routes::PUNISHMENTS,
             post(issue_punishment).get(punishment_history),
@@ -322,6 +324,7 @@ async fn login(State(state): Shared, Body(req): Body<LoginRequest>) -> Reply<Bod
         }
         let session = accounts::open_session(db, &req).await?;
         state.store.set_session(&req.uuid, &session).await?;
+        friends::announce(db, &state.store, req.uuid, &req.username, true).await;
     }
     Ok(Body(LoginDecision::Allow {
         server,
@@ -347,11 +350,16 @@ async fn switch(State(state): Shared, Body(moved): Body<PlayerSwitched>) -> Repl
 /// logged in on another proxy, is simply ignored.
 async fn leave(State(state): Shared, Body(left): Body<PlayerLeft>) -> Reply<StatusCode> {
     let uuid = left.uuid;
+    let username = state.store.player(&uuid).await?.map(|p| p.username);
     if state.store.leave(left).await?
         && let Some(db) = &state.db
-        && let Some(session) = state.store.take_session(&uuid).await?
     {
-        hallow_db::close_session(db, session).await?;
+        if let Some(session) = state.store.take_session(&uuid).await? {
+            hallow_db::close_session(db, session).await?;
+        }
+        if let Some(username) = username {
+            friends::announce(db, &state.store, uuid, &username, false).await;
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -389,6 +397,21 @@ async fn player_by_name(
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("player isn't online"))
+}
+
+// Friends
+
+async fn friend_action(
+    State(state): Shared,
+    Body(action): Body<FriendAction>,
+) -> Reply<Body<FriendReply>> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        Failure::new(
+            ErrorCode::Unavailable,
+            "friends need a database (HALLOW_DATABASE_URL)",
+        )
+    })?;
+    Ok(Body(friends::act(db, &state.store, action).await?))
 }
 
 // Punishments

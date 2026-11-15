@@ -28,6 +28,9 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `HALLOW_ADMINS` gives the listed usernames the `admin` rank (`*`) at login, to bootstrap a network.
 
   With a database configured, logins fail closed when it's down. Without one, these are all off and nobody has staff permissions.
+- **Friends** (with the database):
+  - `POST /v1/friends` takes one action (add, accept, deny, remove, list or requests), with notices to the other player on their proxy;
+  - friends are told when each other join or leave the network.
 - **Punishments** (with the database):
   - `POST /v1/punishments` issues a ban, mute, kick or warning by username (online or not) and enforces it on the player's proxy;
   - `POST /v1/punishments/revoke` lifts a ban or mute;

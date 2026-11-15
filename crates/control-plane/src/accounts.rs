@@ -9,6 +9,8 @@ use hallow_db::{Edition, Login, NewSession, PgPool, Punishment};
 use hallow_proto::{presence::LoginRequest, punishment::MuteInfo};
 use uuid::Uuid;
 
+use crate::store::Store;
+
 pub type DbResult<T> = Result<T, hallow_db::sqlx::Error>;
 
 /// The rank `admins` from the config get: everything, highest weight.
@@ -114,6 +116,19 @@ pub fn remaining(left: chrono::TimeDelta) -> String {
         (0, _) => format!("{hours}h {mins}m"),
         _ => format!("{days}d {hours}h"),
     }
+}
+
+/// An account by username: the online player first, then the most recently
+/// seen account that used the name.
+pub async fn resolve(pool: &PgPool, store: &Store, name: &str) -> DbResult<Option<(Uuid, String)>> {
+    if let Ok(Some(online)) = store.player_by_name(name).await {
+        return Ok(Some((online.uuid, online.username)));
+    }
+    Ok(hallow_db::find_accounts_by_username(pool, name)
+        .await?
+        .into_iter()
+        .next()
+        .map(|a| (a.uuid, a.username)))
 }
 
 #[cfg(test)]

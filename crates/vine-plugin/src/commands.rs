@@ -9,6 +9,7 @@
 //! | `/gkick <player> [reason]` | `hallow.staff.kick` | Disconnect a player from the network |
 //! | `/party <invite\|accept\|leave\|kick\|disband\|warp\|list\|chat>` (`/p`; `/party <player>` invites) | | Parties |
 //! | `/pc <message>` | | Party chat |
+//! | `/friend [add\|accept\|deny\|remove\|list\|requests] [player]` (`/f`; `/friend <player>` adds) | | Friends (needs the database) |
 //! | `/play <game>` | | Queue for a game, with your party if you lead one |
 //! | `/leavequeue` (`/lq`) | | Leave the queue |
 //! | `/ban <player> [duration] <reason>` | `hallow.staff.ban` | Ban; permanent without a duration (`30m`, `2h`, `7d`, `1w`) |
@@ -28,6 +29,7 @@
 use hallow_proto::permission::has_permission;
 use hallow_proto::{
     command::NetworkCommand,
+    friend::{FriendAction, FriendReply},
     party::{PartyAction, PartyReply},
     presence::PlayerLocation,
     punishment::{
@@ -56,6 +58,10 @@ const MUTE: u32 = 21;
 const UNMUTE: u32 = 22;
 const WARN: u32 = 23;
 const HISTORY: u32 = 24;
+const FRIEND: u32 = 25;
+
+const FRIEND_USAGE: &str = "/friend <player> | add <player> | accept <player> | deny <player> | remove <player> | list | requests";
+const FRIEND_SUBCOMMANDS: [&str; 6] = ["add", "accept", "deny", "remove", "list", "requests"];
 
 const PARTY_USAGE: &str = "/party <player> | invite <player> | accept <player> | leave | kick <player> | disband | warp | list | chat <message>";
 const PARTY_SUBCOMMANDS: [&str; 8] = [
@@ -63,6 +69,7 @@ const PARTY_SUBCOMMANDS: [&str; 8] = [
 ];
 
 pub fn register(ctx: &Context) {
+    ctx.register_command(FRIEND, "friend", "Friends", &["f".into()], None);
     for (id, name, description) in [
         (BAN, "ban", "Ban a player from the network"),
         (UNBAN, "unban", "Lift a ban"),
@@ -296,6 +303,26 @@ impl State {
             (UNMUTE, _) => usage("/unmute <player> [reason]"),
             (HISTORY, [target]) => self.history(sender, target),
             (HISTORY, _) => usage("/history <player>"),
+            (FRIEND, args) => {
+                let Some(action) = friend_action(self.player_id(sender)?, args) else {
+                    return usage(FRIEND_USAGE);
+                };
+                match self.client.post::<_, FriendReply>(routes::FRIENDS, &action) {
+                    Ok(answer) => {
+                        for line in answer.message.lines() {
+                            reply(sender, line);
+                        }
+                        Ok(i32::from(answer.ok))
+                    }
+                    Err(http::Error::Status(503, _)) => {
+                        Err("§cFriends need the network's database, which isn't set up.".into())
+                    }
+                    Err(err) => {
+                        crate::log(crate::Level::Warn, &format!("friend action failed: {err}"));
+                        Err(crate::UNAVAILABLE.into())
+                    }
+                }
+            }
             (PLAY, [kind]) => {
                 let request = JoinQueue {
                     kind: kind.to_ascii_lowercase(),
@@ -359,6 +386,14 @@ impl State {
                     .collect();
             }
             PARTY if matches!(args[0].as_str(), "invite" | "accept" | "kick") => 2,
+            FRIEND if args.len() <= 1 => {
+                return FRIEND_SUBCOMMANDS
+                    .iter()
+                    .filter(|s| s.starts_with(&prefix))
+                    .map(|s| (*s).to_owned())
+                    .collect();
+            }
+            FRIEND if matches!(args[0].as_str(), "add" | "accept" | "deny" | "remove") => 2,
             _ => return Vec::new(),
         };
         if args.len() > names_at {
@@ -546,6 +581,43 @@ impl State {
     }
 }
 
+/// Reads `/friend ...` into an action; `None` means show the usage.
+fn friend_action(player: Uuid, args: &[String]) -> Option<FriendAction> {
+    let Some((first, rest)) = args.split_first() else {
+        return Some(FriendAction::List { player });
+    };
+    let target = match rest {
+        [name] => Some(name.clone()),
+        _ => None,
+    };
+    Some(match first.to_ascii_lowercase().as_str() {
+        "add" => FriendAction::Add {
+            player,
+            target: target?,
+        },
+        "accept" => FriendAction::Accept {
+            player,
+            target: target?,
+        },
+        "deny" => FriendAction::Deny {
+            player,
+            target: target?,
+        },
+        "remove" => FriendAction::Remove {
+            player,
+            target: target?,
+        },
+        "list" if rest.is_empty() => FriendAction::List { player },
+        "requests" if rest.is_empty() => FriendAction::Requests { player },
+        // `/friend <player>` adds.
+        name if rest.is_empty() && !FRIEND_SUBCOMMANDS.contains(&name) => FriendAction::Add {
+            player,
+            target: first.clone(),
+        },
+        _ => return None,
+    })
+}
+
 /// Reads `/party ...` into an action; `None` means show the usage.
 fn party_action(player: Uuid, args: &[String]) -> Option<PartyAction> {
     let (first, rest) = args.split_first()?;
@@ -589,6 +661,30 @@ mod tests {
 
     fn args(words: &str) -> Vec<String> {
         words.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn friend_commands_parse() {
+        let me = Uuid::nil();
+        assert_eq!(
+            friend_action(me, &[]),
+            Some(FriendAction::List { player: me })
+        );
+        assert_eq!(
+            friend_action(me, &args("Steve")),
+            Some(FriendAction::Add {
+                player: me,
+                target: "Steve".into()
+            })
+        );
+        assert_eq!(
+            friend_action(me, &args("deny Steve")),
+            Some(FriendAction::Deny {
+                player: me,
+                target: "Steve".into()
+            })
+        );
+        assert_eq!(friend_action(me, &args("remove")), None);
     }
 
     #[test]

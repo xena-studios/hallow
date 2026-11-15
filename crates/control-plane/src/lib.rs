@@ -15,6 +15,7 @@ mod agent;
 mod api;
 mod error;
 pub mod events;
+mod friends;
 mod punish;
 pub mod store;
 

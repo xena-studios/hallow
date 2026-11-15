@@ -31,6 +31,8 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `ranks` | Name, display prefix (`&` colour codes), weight (higher wins), permission nodes, and whether it is the default rank every account holds | `name` |
 | `account_ranks` | Ranks an account holds, who granted them, and an optional expiry | `(account_uuid, rank_name)` |
 | `sessions` | One row per connection: account, proxy, last server, protocol version (`NULL` for Bedrock), IP, login and logout times (`NULL` while open) | `id` |
+| `friend_requests` | A request from one account to another, until it's accepted or denied; asking back accepts | `(from_uuid, to_uuid)` |
+| `friendships` | One row per friendship, the smaller UUID first; at most 200 friends each | `(a_uuid, b_uuid)` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 
 A punishment's issuer and revoker are an actor: a staff `account` (with its UUID), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.
