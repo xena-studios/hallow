@@ -123,6 +123,8 @@ impl Guest for Probe {
     ) -> Vec<String> {
         Vec::new()
     }
+
+    fn handle_task(_handler_id: u32) {}
 }
 
 /// A plain-HTTP GET, returning the status code or the `wasi:http` error.

@@ -20,7 +20,10 @@
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
 //!
-//! Long polls are held for up to [`LONG_POLL_SECONDS`].
+//! Long polls are held for up to [`LONG_POLL_SECONDS`], or for `?wait=`
+//! seconds if that is shorter. `wait=0` answers at once, for callers that
+//! can't hold a request open, such as Vine plugins, whose calls block the
+//! plugin while they run.
 
 /// How long the control plane holds a long poll open before answering
 /// [`Poll::Unchanged`](crate::Poll::Unchanged).
@@ -80,6 +83,13 @@ pub fn since(path: &str, revision: u64) -> String {
     format!("{path}?since={revision}")
 }
 
+/// Appends `?since=<revision>&wait=<seconds>`: a poll held for at most
+/// `wait` seconds (`0` for none).
+#[must_use]
+pub fn since_wait(path: &str, revision: u64, wait: u64) -> String {
+    format!("{path}?since={revision}&wait={wait}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +98,7 @@ mod tests {
     fn paths() {
         assert_eq!(proxy_heartbeat("proxy-1"), "/v1/proxies/proxy-1/heartbeat");
         assert_eq!(since(SERVERS, 12), "/v1/servers?since=12");
+        assert_eq!(since_wait(SERVERS, 12, 0), "/v1/servers?since=12&wait=0");
         assert_eq!(
             player(&uuid::Uuid::nil()),
             "/v1/players/00000000-0000-0000-0000-000000000000"

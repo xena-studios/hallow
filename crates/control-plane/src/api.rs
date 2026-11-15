@@ -50,6 +50,16 @@ impl<T: serde::Serialize> IntoResponse for Body<T> {
 struct SinceParams {
     #[serde(default)]
     since: u64,
+    /// Seconds to hold the poll, capped at the configured long poll.
+    wait: Option<u64>,
+}
+
+impl SinceParams {
+    fn hold(&self, config: &crate::Config) -> std::time::Duration {
+        self.wait.map_or(config.long_poll, |wait| {
+            config.long_poll.min(std::time::Duration::from_secs(wait))
+        })
+    }
 }
 
 /// `?since=`, `0` if absent.
@@ -173,9 +183,13 @@ async fn poll_commands(
         return Err(Failure::not_found("proxy isn't registered; register again"));
     }
     let topic = events::commands(&id);
-    let poll = long_poll(&state, &topic, params.since, || {
-        state.store.read_commands(&id, params.since)
-    })
+    let poll = long_poll(
+        &state,
+        &topic,
+        params.since,
+        params.hold(&state.config),
+        || state.store.read_commands(&id, params.since),
+    )
     .await?;
     Ok(Body(poll))
 }
@@ -228,9 +242,13 @@ async fn poll_servers(
     State(state): Shared,
     Since(params): Since,
 ) -> Reply<Body<Poll<Vec<ServerInfo>>>> {
-    let poll = long_poll(&state, events::SERVERS, params.since, || {
-        state.store.read_servers()
-    })
+    let poll = long_poll(
+        &state,
+        events::SERVERS,
+        params.since,
+        params.hold(&state.config),
+        || state.store.read_servers(),
+    )
     .await?;
     Ok(Body(poll))
 }
@@ -292,20 +310,29 @@ async fn send_command(
 }
 
 /// Answers as soon as the revision differs from `since`, or with
-/// [`Poll::Unchanged`] after the long-poll timeout. Wakes on `topic` events
+/// [`Poll::Unchanged`] after `hold`. Wakes on `topic` events
 /// from any control plane instance.
-async fn long_poll<T, F, Fut>(state: &AppState, topic: &str, since: u64, read: F) -> Reply<Poll<T>>
+async fn long_poll<T, F, Fut>(
+    state: &AppState,
+    topic: &str,
+    since: u64,
+    hold: std::time::Duration,
+    read: F,
+) -> Reply<Poll<T>>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = crate::store::Result<(u64, T)>>,
 {
     // Subscribe before the first read, so a change between the two still wakes us.
     let mut events = state.events.subscribe();
-    let deadline = tokio::time::Instant::now() + state.config.long_poll;
+    let deadline = tokio::time::Instant::now() + hold;
     loop {
         let (revision, data) = read().await?;
         if revision != since {
             return Ok(Poll::Changed { revision, data });
+        }
+        if hold.is_zero() {
+            return Ok(Poll::Unchanged { revision });
         }
         let woke = tokio::time::timeout_at(deadline, async {
             loop {

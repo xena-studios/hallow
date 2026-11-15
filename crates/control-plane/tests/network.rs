@@ -285,6 +285,15 @@ async fn two_proxies_share_state() {
         )
         .await;
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // wait=0 answers at once.
+    let quick: Poll<Vec<ServerInfo>> = tokio::time::timeout(
+        Duration::from_secs(1),
+        one.get_json(&routes::since_wait(routes::SERVERS, revision, 0)),
+    )
+    .await
+    .expect("wait=0 should answer at once");
+    assert_eq!(quick, Poll::Unchanged { revision });
+
     // Still waiting after a second means nothing changed.
     assert!(
         tokio::time::timeout(Duration::from_secs(1), one.servers(revision))

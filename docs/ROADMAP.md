@@ -35,11 +35,13 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 
 ## Phase 1: network core
 
-- [ ] Vine fork: runtime `register-server` / `unregister-server`, drain mode
+- [x] Vine fork: runtime `register-server` / `unregister-server`, drain mode
+- [x] Vine fork: plugin scheduler (delayed and repeating tasks), so plugins can heartbeat and poll
 - [ ] Vine: translate old Java clients on the proxy, using the multiversion plugin's tables (Decisions 29)
 - [x] `crates/proto`: HTTP/JSON API types for the control plane
 - [x] Control plane: server registry, proxy registry, presence in Redis
-- [ ] Vine plugins: presence, global ping, duplicate-login check, cross-proxy commands
+- [x] Vine plugin: presence, global ping, duplicate-login check, server-list sync
+- [ ] Vine plugin: cross-proxy commands (`/find`, messages, party warp, staff broadcasts, kicks)
 - [ ] Load balancer with PROXY protocol and health checks
 - [ ] Matchmaker: queues, warm instances, start and delete server images through the Wings API
 - [ ] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow
