@@ -7,11 +7,11 @@
 
 ## Two-proxy dev network
 
-`compose/compose.hallow.yaml` is an override for the dev network that adds Valkey, the control plane and a second proxy. Both proxies load the `hallow_vine` plugin, which registers them with the control plane, checks logins (a player can't be online on two proxies at once) and mirrors the server list into Vine, so their `vine.toml` has no static servers. The plain `compose.yaml` network and CI are unchanged.
+`compose/compose.hallow.yaml` is an override for the dev network that adds Valkey, the control plane and a second proxy. Both proxies load the `hallow_vine` plugin, which registers them with the control plane, checks logins (a player can't be online on two proxies at once) and mirrors the server list into Vine, so their `vine.toml` has no static servers. The `lobby` and `game-1` servers register themselves through the `hallow_server` plugin. The plain `compose.yaml` network and CI are unchanged.
 
 ```sh
 git submodule update --init
-cargo build --release --target wasm32-wasip2 -p hallow-vine   # build the plugin first
+cargo build --release --target wasm32-wasip2 -p hallow-vine -p hallow-server   # build the plugins first
 docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml up --build -d
 cargo run --release -p netcheck -- --proxy 127.0.0.1:25565    # proxy-1
 cargo run --release -p netcheck -- --proxy 127.0.0.1:25566    # proxy-2
@@ -24,7 +24,7 @@ docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.y
 | `control-plane` | 127.0.0.1:18090 | `hallow-control-plane:dev` from `control-plane/Dockerfile` |
 | `valkey` | none | The control plane's Redis |
 | `postgres` | none | The control plane's PostgreSQL (accounts, bans, ranks, sessions). `HALLOW_ADMINS=netstaff` makes the netcheck bot `netstaff` an admin |
-| `registrar` | none | Dev only: registers `lobby` and `game-1` and heartbeats them every 5 s, until the server plugin does |
+| `lobby`, `game-1` | none | The server image with the dev build of `hallow_server` mounted, registering with the control plane; config in `compose/config/hallow/` |
 
 To see what the control plane knows:
 
@@ -32,7 +32,7 @@ To see what the control plane knows:
 curl -H "Authorization: Bearer $(cat deploy/compose/config/hallow/control-plane.token)" localhost:18090/v1/servers
 ```
 
-The token and forwarding secret in `compose/config/hallow/` are checked-in dev defaults. If you set `HALLOW_VINE_SECRET`, change `forwarding.secret` to match. Build the plugin before `up`: if `hallow_vine.wasm` is missing, Docker creates an empty directory in its place, and you have to delete it before cargo can write the file.
+The token and forwarding secret in `compose/config/hallow/` are checked-in dev defaults. If you set `HALLOW_VINE_SECRET`, change `forwarding.secret` to match. Build the plugins before `up`: if `hallow_vine.wasm` or `hallow_server.wasm` is missing, Docker creates an empty directory in its place, and you have to delete it before cargo can write the file.
 
 ## Load balancer
 

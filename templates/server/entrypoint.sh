@@ -20,4 +20,10 @@ else
   rm -f "$multiversion"
 fi
 
+# Hallow's server plugin links the server to the control plane. It's always
+# loaded and does nothing unless HALLOW_CONTROL_PLANE (or its config.toml) is
+# set; see crates/server-plugin. Copied on every start so a newer image (or a
+# dev build mounted over /opt/hallow/plugins/hallow_server.wasm) takes effect.
+cp /opt/hallow/plugins/hallow_server.wasm /server/plugins/hallow_server.wasm
+
 exec pumpkin "$@"

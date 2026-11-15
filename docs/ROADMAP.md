@@ -46,7 +46,8 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Matchmaker: queues that fill ready game servers, parties kept together
 - [ ] Matchmaker: warm instances, start and delete server images through the Wings API
 - [ ] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow
-- [ ] Hallow server plugin: presence, stats and the link to the control plane, in the base image
+- [x] Hallow server plugin: the link to the control plane (register, heartbeat, state, unregister), in the base image
+- [ ] Hallow server plugin: presence and stats
 - [ ] `hub` server repo
 - [x] Parties: invite, accept, leave, kick, disband, warp, chat; parties queue together
 - [ ] Friends and online status (the schema is in; the commands come next)

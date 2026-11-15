@@ -1,0 +1,20 @@
+[package]
+name = "hallow-server"
+version = "0.1.0"
+description = "Hallow's server plugin for Pumpkin: registers each lobby and game server with the control plane, heartbeats it and unregisters it on shutdown."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hallow-proto = { path = "../proto" }
+pumpkin-plugin-api.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = { version = "1.2.1", default-features = false, features = ["parse", "serde"] }
+tracing.workspace = true
+wasip2 = { version = "2.0.1", default-features = false }

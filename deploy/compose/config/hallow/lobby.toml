@@ -1,0 +1,8 @@
+# hallow_server plugin config for the lobby (dev only).
+control_plane = "control-plane:8080"
+token_file = "token"
+name = "lobby"
+# The control plane sends new players to ready lobbies of HALLOW_HUB_KIND (hub).
+kind = "hub"
+role = "lobby"
+address = "lobby:25565"
