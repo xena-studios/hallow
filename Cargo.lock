@@ -792,6 +792,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hallow-server"
+version = "0.1.0"
+dependencies = [
+ "hallow-proto",
+ "pumpkin-plugin-api",
+ "serde",
+ "serde_json",
+ "toml",
+ "tracing",
+ "wasip2",
+]
+
+[[package]]
 name = "hallow-vine"
 version = "0.1.0"
 dependencies = [

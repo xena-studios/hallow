@@ -1,17 +1,19 @@
 # Hallow two-proxy dev network: an override for compose.yaml that adds the
 # control plane, Valkey and a second proxy, with both proxies running the
-# hallow_vine plugin. DEV ONLY: the token and secret in config/hallow are
+# hallow_vine plugin and both servers registering themselves through the
+# hallow_server plugin. DEV ONLY: the token and secret in config/hallow are
 # checked-in defaults.
 #
-#   cargo build --release --target wasm32-wasip2 -p hallow-vine
+#   cargo build --release --target wasm32-wasip2 -p hallow-vine -p hallow-server
 #   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml up --build -d
 #
 # Proxies: localhost:25565 (proxy-1) and localhost:25566 (proxy-2).
 # Control plane: localhost:18090 (token in config/hallow/control-plane.token).
 
 # Both proxies mount the same Vine config, plugin, token and secret; only
-# config.toml (proxy id and address) differs. A missing hallow_vine.wasm makes
-# Docker create an empty directory in its place; build the plugin first.
+# config.toml (proxy id and address) differs. A missing hallow_vine.wasm or
+# hallow_server.wasm makes Docker create an empty directory in its place;
+# build the plugins first.
 x-hallow-proxy: &hallow-proxy
   depends_on:
     control-plane:
@@ -66,26 +68,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Dev only, until the Hallow server plugin registers servers itself.
-  registrar:
-    image: hallow-control-plane:dev
-    entrypoint: ["bash", "/registrar.sh"]
-    # The image's health check probes the control plane's own port.
-    healthcheck:
-      disable: true
-    environment:
-      HALLOW_TOKEN_FILE: /run/hallow/token
+  # The servers mount the dev build over the plugin baked into the image (the
+  # entrypoint copies it into plugins/ on start), the token, and their own
+  # config.toml (name, kind, role and address).
+  lobby:
     volumes:
-      - ./config/hallow/registrar.sh:/registrar.sh:ro
-      - ./config/hallow/control-plane.token:/run/hallow/token:ro
+      - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro
+      - ./config/hallow/control-plane.token:/server/plugins/data/hallow_server/token:ro
+      - ./config/hallow/lobby.toml:/server/plugins/data/hallow_server/config.toml:ro
     depends_on:
       control-plane:
         condition: service_healthy
-      lobby:
-        condition: service_started
-      game-1:
-        condition: service_started
-    restart: unless-stopped
+
+  game-1:
+    volumes:
+      - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro
+      - ./config/hallow/control-plane.token:/server/plugins/data/hallow_server/token:ro
+      - ./config/hallow/game-1.toml:/server/plugins/data/hallow_server/config.toml:ro
+    depends_on:
+      control-plane:
+        condition: service_healthy
 
   proxy:
     <<: *hallow-proxy

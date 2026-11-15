@@ -29,3 +29,20 @@ enabled = false
 
 [logging]
 color = false
+
+# Hallow's server plugin: pre-approve its permissions so Pumpkin doesn't ask
+# on the console. It reads only these variables from the environment.
+[plugins.overrides.hallow_server]
+allowed_permissions = [
+  "http.outbound",
+  "fs.read.data",
+  "sys.env.HALLOW_CONTROL_PLANE",
+  "sys.env.HALLOW_CONTROL_PLANE_TOKEN",
+  "sys.env.HALLOW_CONTROL_PLANE_TOKEN_FILE",
+  "sys.env.HALLOW_SERVER_NAME",
+  "sys.env.HALLOW_SERVER_KIND",
+  "sys.env.HALLOW_SERVER_VERSION",
+  "sys.env.HALLOW_SERVER_ROLE",
+  "sys.env.HALLOW_SERVER_ADDRESS",
+  "sys.env.HALLOW_MAX_PLAYERS",
+]
