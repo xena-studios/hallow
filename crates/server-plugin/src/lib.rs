@@ -161,6 +161,9 @@ fn tick(server: &Server) {
     let beat = ServerHeartbeat {
         players: server.get_player_count(),
         state,
+        // For the monitoring dashboard's tick-time graphs.
+        #[allow(clippy::cast_possible_truncation)]
+        tick_ms: Some(server.get_mspt() as f32),
     };
     let result = client.post_empty(&routes::server_heartbeat(&name), &beat);
     let mut forgotten = false;

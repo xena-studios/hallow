@@ -40,14 +40,18 @@ pub struct RegisterServer {
 }
 
 /// `POST /v1/servers/{name}/heartbeat`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ServerHeartbeat {
     pub players: u32,
     pub state: ServerState,
+    /// Average milliseconds per tick lately (50 is the 20 TPS budget), if the
+    /// server measures it. Shown on the monitoring dashboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_ms: Option<f32>,
 }
 
 /// One entry in `GET /v1/servers`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ServerInfo {
     pub name: String,
     pub kind: String,
@@ -57,6 +61,9 @@ pub struct ServerInfo {
     pub max_players: u32,
     pub players: u32,
     pub state: ServerState,
+    /// From the last heartbeat that reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_ms: Option<f32>,
 }
 
 #[cfg(test)]
@@ -75,6 +82,7 @@ mod tests {
             max_players: 12,
             players: 3,
             state: ServerState::InGame,
+            tick_ms: Some(12.5),
         };
         let value = serde_json::to_value(&info).unwrap();
         assert_eq!(value["role"], json!("game"));

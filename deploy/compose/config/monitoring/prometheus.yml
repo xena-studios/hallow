@@ -1,0 +1,14 @@
+# Dev Prometheus for the Hallow network (compose.monitoring.yaml).
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Players, proxies, servers (with tick times) and queues, read from the
+  # control plane's live state.
+  - job_name: control-plane
+    static_configs:
+      - targets: ["control-plane:8080"]

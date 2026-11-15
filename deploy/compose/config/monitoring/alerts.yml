@@ -1,0 +1,30 @@
+# Basic alerts. Without an Alertmanager they show on Prometheus' Alerts page
+# (and Grafana); wire one up for paging in production.
+groups:
+  - name: hallow
+    rules:
+      - alert: ControlPlaneDown
+        expr: up{job="control-plane"} == 0
+        for: 30s
+        annotations:
+          summary: The control plane isn't answering /metrics.
+      - alert: NoProxies
+        expr: count(hallow_proxy_players) == 0 or absent(hallow_proxy_players)
+        for: 1m
+        annotations:
+          summary: No proxy is registered; nobody can join.
+      - alert: NoReadyLobby
+        expr: count(hallow_server_players{role="lobby",state="ready"}) == 0 or absent(hallow_server_players{role="lobby",state="ready"})
+        for: 1m
+        annotations:
+          summary: No lobby is ready; logins are refused.
+      - alert: ServerOverTickBudget
+        expr: hallow_server_tick_ms > 50
+        for: 2m
+        annotations:
+          summary: "{{ $labels.server }} has averaged over 50 ms per tick for 2 minutes (below 20 TPS)."
+      - alert: NetworkNearlyFull
+        expr: hallow_players_online / hallow_players_max > 0.9
+        for: 5m
+        annotations:
+          summary: The network is over 90% of its player limit.

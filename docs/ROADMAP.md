@@ -57,7 +57,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Panel fork with Hallow branding and the extension scaffold
 - [ ] Panel: Network page and Players page
 - [ ] Panel: punishments and staff roles
-- [ ] Monitoring: Prometheus, Grafana, Loki
+- [x] Monitoring: Prometheus, Grafana, Loki (dev stack and dashboard, with each server's tick time from the server plugin)
 - [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
 - [ ] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md))
 

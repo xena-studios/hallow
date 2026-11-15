@@ -1,0 +1,65 @@
+# Monitoring for the dev network: Prometheus scrapes the control plane's
+# /metrics, Loki keeps every container's logs (collected by Alloy), and
+# Grafana shows both on a provisioned "Hallow network" dashboard. Layer it on
+# the two-proxy override:
+#
+#   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml \
+#     -f deploy/compose/compose.monitoring.yaml up --build -d
+#
+# Grafana: http://localhost:13000 (anonymous viewer; admin / hallow-dev).
+# Prometheus: http://localhost:19090. DEV ONLY: open dashboards, fixed password.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./config/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:19090:9090"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.6.0
+    command: -config.file=/etc/loki/local-config.yaml
+    # Dev only: the image's /loki isn't writable by its own user on a fresh volume.
+    user: "0"
+    volumes:
+      - loki-data:/loki
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.11.3
+    command: run /etc/alloy/config.alloy
+    environment:
+      # Only this compose project's containers are collected.
+      HALLOW_PROJECT: ${COMPOSE_PROJECT_NAME:-compose}
+    volumes:
+      - ./config/monitoring/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: hallow-dev
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/hallow.json
+    volumes:
+      - ./config/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+volumes:
+  loki-data:

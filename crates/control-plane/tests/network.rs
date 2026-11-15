@@ -303,7 +303,11 @@ async fn two_proxies_share_state() {
     let Poll::Changed { revision, .. } = one.servers(0).await else {
         panic!()
     };
-    let beat = |players, state| ServerHeartbeat { players, state };
+    let beat = |players, state| ServerHeartbeat {
+        players,
+        state,
+        tick_ms: None,
+    };
     let res = two
         .post(
             &routes::server_heartbeat("hub-1"),
@@ -701,6 +705,7 @@ impl Instance {
         let beat = ServerHeartbeat {
             players,
             state: ServerState::Ready,
+            tick_ms: Some(7.5),
         };
         let res = self.post(&routes::server_heartbeat(name), &beat).await;
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
@@ -1254,4 +1259,47 @@ async fn friends_across_proxies() {
         )))
         .await
         .unwrap();
+}
+
+/// `/metrics` needs no token and reports players, servers, tick times and
+/// queues.
+#[tokio::test]
+async fn metrics_endpoint() {
+    let Some(redis) = redis_url() else { return };
+    let one = Instance::start(config(&redis, &format!("test-{}", Uuid::new_v4()))).await;
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    one.register_game("sw-1", "skywars", 12, 12).await;
+    let player = Uuid::new_v4();
+    one.login(player, "proxy-a").await;
+    one.post_json::<_, QueueStatus>(
+        routes::QUEUES,
+        &JoinQueue {
+            kind: "skywars".into(),
+            player,
+        },
+    )
+    .await;
+
+    let res = one
+        .http
+        .get(format!("{}/metrics", one.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.text().await.unwrap();
+    for line in [
+        "hallow_players_online 1",
+        "hallow_players_max 1000",
+        "hallow_proxy_players{proxy=\"proxy-a\",draining=\"false\"} 0",
+        "hallow_server_players{server=\"sw-1\",kind=\"skywars\",role=\"game\",state=\"ready\"} 12",
+        "hallow_server_tick_ms{server=\"sw-1\",kind=\"skywars\"} 7.5",
+        "hallow_queue_players{kind=\"skywars\"} 1",
+    ] {
+        assert!(
+            body.lines().any(|l| l == line),
+            "missing {line:?} in:\n{body}"
+        );
+    }
 }
