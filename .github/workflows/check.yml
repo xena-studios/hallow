@@ -2,7 +2,8 @@ name: Check
 
 # Validates the Renovate config, checks the docs for broken relative links,
 # and formats, lints, tests and builds the Rust crates. main requires the
-# "check" and "rust" jobs. The control plane's tests run against Valkey.
+# "check" and "rust" jobs. The control plane's tests run against Valkey,
+# hallow-db's against PostgreSQL.
 on:
   push:
     branches: [main]
@@ -39,8 +40,20 @@ jobs:
         image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
         ports:
           - 6379:6379
+      postgres:
+        image: postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     env:
       HALLOW_TEST_REDIS_URL: redis://127.0.0.1:6379
+      HALLOW_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,8 +68,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint and test the host crates
         run: |
-          cargo clippy -p netcheck -p hallow-proto -p hallow-control-plane --all-targets -- -D warnings
-          cargo test -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-vine
+          cargo clippy -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-db --all-targets -- -D warnings
+          cargo test -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-db -p hallow-vine
       - name: Lint and build the plugins
         run: |
           # hallow-proto is linted for WASM too, since plugins build against it.

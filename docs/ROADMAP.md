@@ -48,7 +48,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Hallow server plugin: presence, stats and the link to the control plane, in the base image
 - [ ] `hub` server repo
 - [ ] Parties and friends
-- [ ] PostgreSQL schema: accounts, ranks, sessions, punishments
+- [x] PostgreSQL schema: accounts, ranks, sessions, punishments
 - [ ] Panel fork with Hallow branding and the extension scaffold
 - [ ] Panel: Network page and Players page
 - [ ] Panel: punishments and staff roles
