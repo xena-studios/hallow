@@ -1,0 +1,27 @@
+[package]
+name = "hallow-control-plane"
+version = "0.1.0"
+description = "Hallow's control plane: server and proxy registry, presence and cross-proxy commands over HTTP/JSON, with live state in Redis."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "control-plane"
+path = "src/main.rs"
+
+[dependencies]
+hallow-proto = { path = "../proto" }
+axum = { version = "0.8.9", features = ["macros"] }
+futures-util = { version = "0.3.31", default-features = false }
+redis = { version = "1.8.2", default-features = false, features = ["tokio-comp", "connection-manager", "script"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }

@@ -2,7 +2,7 @@ name: Check
 
 # Validates the Renovate config, checks the docs for broken relative links,
 # and formats, lints, tests and builds the Rust crates. main requires the
-# "check" and "rust" jobs.
+# "check" and "rust" jobs. The control plane's tests run against Valkey.
 on:
   push:
     branches: [main]
@@ -34,6 +34,13 @@ jobs:
 
   rust:
     runs-on: ubuntu-26.04
+    services:
+      valkey:
+        image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+        ports:
+          - 6379:6379
+    env:
+      HALLOW_TEST_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,11 +53,12 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Format
         run: cargo fmt --all --check
-      - name: Lint and test netcheck
+      - name: Lint and test the host crates
         run: |
-          cargo clippy -p netcheck --all-targets -- -D warnings
-          cargo test -p netcheck
+          cargo clippy -p netcheck -p hallow-proto -p hallow-control-plane --all-targets -- -D warnings
+          cargo test -p netcheck -p hallow-proto -p hallow-control-plane
       - name: Lint and build the plugins
         run: |
-          cargo clippy --target wasm32-wasip2 -p apiprobe -p tickwatch -p vineprobe -- -D warnings
+          # hallow-proto is linted for WASM too, since plugins build against it.
+          cargo clippy --target wasm32-wasip2 -p hallow-proto -p apiprobe -p tickwatch -p vineprobe -- -D warnings
           cargo build --release --target wasm32-wasip2 -p apiprobe -p tickwatch -p vineprobe
