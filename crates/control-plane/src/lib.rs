@@ -101,6 +101,7 @@ pub async fn serve_all(
         events,
     });
     tokio::spawn(reaper(state.clone()));
+    tokio::spawn(matchmaker(state.clone()));
     if let Some(agent) = agent {
         tracing::info!(address = %agent.local_addr()?, "answering load balancer agent checks");
         tokio::spawn(agent::serve(agent, state.clone()));
@@ -128,6 +129,30 @@ async fn reaper(state: Arc<AppState>) {
                 }
             }
             Err(err) => tracing::warn!(%err, "reaper couldn't reach Redis"),
+        }
+    }
+}
+
+/// Places queued players every half second. Every instance runs one; a lock
+/// in Redis lets only one pass run at a time.
+async fn matchmaker(state: Arc<AppState>) {
+    let instance = uuid::Uuid::new_v4().to_string();
+    let mut tick = tokio::time::interval(Duration::from_millis(500));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        match state.store.match_pass(&instance).await {
+            Ok(placements) => {
+                for placed in placements {
+                    tracing::info!(
+                        kind = %placed.kind,
+                        server = %placed.server,
+                        players = placed.players.len(),
+                        "matched"
+                    );
+                }
+            }
+            Err(err) => tracing::warn!(%err, "matchmaker couldn't reach Redis"),
         }
     }
 }

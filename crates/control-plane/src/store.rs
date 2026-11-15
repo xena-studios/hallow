@@ -30,6 +30,11 @@ use uuid::Uuid;
 
 use crate::{Config, DuplicateLogin, events};
 
+mod party;
+mod queue;
+
+pub use queue::Placement;
+
 /// Commands kept per proxy for polls that fall behind.
 pub const COMMANDS_KEPT: u64 = 1000;
 
@@ -394,15 +399,7 @@ impl Store {
     async fn drop_proxy_players(&self, id: &str) -> Result<()> {
         let players: Vec<String> = self.conn().smembers(self.keys.proxy_players(id)).await?;
         for uuid in players {
-            let _: i64 = self
-                .leave
-                .key(self.keys.online())
-                .key(self.keys.proxy_players(id))
-                .key(self.keys.names())
-                .arg(&uuid)
-                .arg(id)
-                .invoke_async(&mut self.conn())
-                .await?;
+            self.leave_one(&uuid, id).await?;
         }
         let _: () = self.conn().del(self.keys.proxy_players(id)).await?;
         Ok(())
@@ -706,15 +703,30 @@ impl Store {
 
     /// Ignored (returns false) unless the player is online on that proxy.
     pub async fn leave(&self, left: PlayerLeft) -> Result<bool> {
+        self.leave_one(&left.uuid.to_string(), &left.proxy).await
+    }
+
+    /// Removes a player who was on `proxy`, and takes them out of their party.
+    async fn leave_one(&self, uuid: &str, proxy: &str) -> Result<bool> {
+        let username = match Uuid::parse_str(uuid) {
+            Ok(id) => self.player(&id).await?.map(|p| p.username),
+            Err(_) => None,
+        };
         let removed: i64 = self
             .leave
             .key(self.keys.online())
-            .key(self.keys.proxy_players(&left.proxy))
+            .key(self.keys.proxy_players(proxy))
             .key(self.keys.names())
-            .arg(left.uuid.to_string())
-            .arg(&left.proxy)
+            .arg(uuid)
+            .arg(proxy)
             .invoke_async(&mut self.conn())
             .await?;
+        if removed == 1 {
+            let username = username.as_deref().unwrap_or("Someone");
+            // Queue first: it reads the party to know who queued together.
+            self.queue_on_leave(uuid, username).await?;
+            self.party_on_leave(uuid, username).await?;
+        }
         Ok(removed == 1)
     }
 

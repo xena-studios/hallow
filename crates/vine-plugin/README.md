@@ -12,7 +12,7 @@
   - Players already on them aren't affected.
 - **Commands.** Sends, messages, broadcasts and kicks queued for this proxy are carried out.
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
-  - Everyone: `/msg` and `/r`.
+  - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`.
   - Staff (Vine permissions under `hallow.staff.*`): `/find`, `/alert` and `/gkick`.
   - Players without the permission don't see the staff commands.
 - **Recovery.**

@@ -263,11 +263,13 @@ impl Bot {
         self.spawn().await
     }
 
-    /// Stays in play for `seconds`, answering keep-alives and confirming any
-    /// teleport the server sends, so plugins can act on the player.
+    /// Stays in play for `seconds`, answering keep-alives, confirming any
+    /// teleport the server sends and following switches the proxy starts, so
+    /// plugins can act on the player.
     async fn stay(&mut self, seconds: u64) -> Result<(), String> {
         let until = Instant::now() + Duration::from_secs(seconds);
         let position = CPlayerPosition::to_id(CURRENT_MC_VERSION);
+        let start_config = CStartConfiguration::to_id(CURRENT_MC_VERSION);
         while Instant::now() < until {
             let remaining = until - Instant::now();
             let packet = match timeout(remaining, self.reader.get_raw_packet()).await {
@@ -276,6 +278,17 @@ impl Bot {
                 Err(_) => break,
             };
             if self.answer_play(&packet).await? {
+                continue;
+            }
+            // The proxy moved this player (a party warp, the matchmaker):
+            // follow it into the new server.
+            if packet.id == start_config {
+                self.send(&SConfigurationAcknowledged).await?;
+                self.configure().await?;
+                self.spawn().await?;
+                if self.verbose {
+                    println!("    {} was moved to another server by the proxy", self.name);
+                }
                 continue;
             }
             if packet.id == position {

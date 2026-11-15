@@ -7,22 +7,52 @@
 //! | `/find <player>` | `hallow.staff.find` | Which server and proxy a player is on |
 //! | `/alert <message>` | `hallow.staff.alert` | Message every player on the network |
 //! | `/gkick <player> [reason]` | `hallow.staff.kick` | Disconnect a player from the network |
+//! | `/party <invite\|accept\|leave\|kick\|disband\|warp\|list\|chat>` (`/p`; `/party <player>` invites) | | Parties |
+//! | `/pc <message>` | | Party chat |
+//! | `/play <game>` | | Queue for a game, with your party if you lead one |
+//! | `/leavequeue` (`/lq`) | | Leave the queue |
 //!
 //! Permissions are Vine's (`[permissions]` in `vine.toml`) until ranks come
 //! from the database.
 
-use hallow_proto::{command::NetworkCommand, presence::PlayerLocation, routes};
+use hallow_proto::{
+    command::NetworkCommand,
+    party::{PartyAction, PartyReply},
+    presence::PlayerLocation,
+    queue::{JoinQueue, QueueStatus},
+    routes,
+};
+use uuid::Uuid;
 
 use crate::vine::plugin::{command::reply, proxy, types::CommandSenderType};
-use crate::{CommandSender, Context, State};
+use crate::{CommandSender, Context, State, http};
 
 const MSG: u32 = 10;
 const REPLY: u32 = 11;
 const FIND: u32 = 12;
 const ALERT: u32 = 13;
 const GKICK: u32 = 14;
+const PARTY: u32 = 15;
+const PARTY_CHAT: u32 = 16;
+const PLAY: u32 = 17;
+const LEAVE_QUEUE: u32 = 18;
+
+const PARTY_USAGE: &str = "/party <player> | invite <player> | accept <player> | leave | kick <player> | disband | warp | list | chat <message>";
+const PARTY_SUBCOMMANDS: [&str; 8] = [
+    "invite", "accept", "leave", "kick", "disband", "warp", "list", "chat",
+];
 
 pub fn register(ctx: &Context) {
+    ctx.register_command(PARTY, "party", "Play with friends", &["p".into()], None);
+    ctx.register_command(PARTY_CHAT, "pc", "Message your party", &[], None);
+    ctx.register_command(PLAY, "play", "Queue for a game", &[], None);
+    ctx.register_command(
+        LEAVE_QUEUE,
+        "leavequeue",
+        "Leave the queue",
+        &["lq".into()],
+        None,
+    );
     ctx.register_command(
         MSG,
         "msg",
@@ -126,6 +156,62 @@ impl State {
                 Ok(1)
             }
             (GKICK, _) => usage("/gkick <player> [reason]"),
+            (PARTY, args) => {
+                let Some(action) = party_action(self.player_id(sender)?, args) else {
+                    return usage(PARTY_USAGE);
+                };
+                self.party(sender, &action)
+            }
+            (PARTY_CHAT, message) if !message.is_empty() => {
+                let action = PartyAction::Chat {
+                    player: self.player_id(sender)?,
+                    text: plain(message),
+                };
+                self.party(sender, &action)
+            }
+            (PARTY_CHAT, _) => usage("/pc <message>"),
+            (PLAY, [kind]) => {
+                let request = JoinQueue {
+                    kind: kind.to_ascii_lowercase(),
+                    player: self.player_id(sender)?,
+                };
+                match self.client.post::<_, QueueStatus>(routes::QUEUES, &request) {
+                    Ok(status) => {
+                        reply(
+                            sender,
+                            &format!(
+                                "§aQueued for {}. §7{} player(s) in the queue.",
+                                status.kind, status.queued
+                            ),
+                        );
+                        Ok(1)
+                    }
+                    Err(http::Error::Status(409, Some(err))) => Err(format!("§c{}", err.message)),
+                    Err(err) => {
+                        crate::log(crate::Level::Warn, &format!("queueing failed: {err}"));
+                        Err(crate::UNAVAILABLE.into())
+                    }
+                }
+            }
+            (PLAY, _) => usage("/play <game>"),
+            (LEAVE_QUEUE, []) => {
+                let player = self.player_id(sender)?;
+                match self.client.delete(&routes::queue_entry(&player)) {
+                    Ok(()) => {
+                        reply(sender, "§eYou left the queue.");
+                        Ok(1)
+                    }
+                    Err(err) if err.is_not_found() => Err("§cYou aren't in a queue.".into()),
+                    Err(err) => {
+                        crate::log(
+                            crate::Level::Warn,
+                            &format!("leaving the queue failed: {err}"),
+                        );
+                        Err(crate::UNAVAILABLE.into())
+                    }
+                }
+            }
+            (LEAVE_QUEUE, _) => usage("/leavequeue"),
             _ => Err("§cUnknown command.".into()),
         }
     }
@@ -133,13 +219,25 @@ impl State {
     /// Names of players on this proxy, for tab completion. Players on other
     /// proxies can still be typed in full.
     pub fn suggest(&self, id: u32, args: &[String]) -> Vec<String> {
-        if !matches!(id, MSG | FIND | GKICK) || args.len() > 1 {
-            return Vec::new();
-        }
         let prefix = args
-            .first()
+            .last()
             .map(|a| a.to_ascii_lowercase())
             .unwrap_or_default();
+        let names_at = match id {
+            MSG | FIND | GKICK => 1,
+            PARTY if args.len() <= 1 => {
+                return PARTY_SUBCOMMANDS
+                    .iter()
+                    .filter(|s| s.starts_with(&prefix))
+                    .map(|s| (*s).to_owned())
+                    .collect();
+            }
+            PARTY if matches!(args[0].as_str(), "invite" | "accept" | "kick") => 2,
+            _ => return Vec::new(),
+        };
+        if args.len() > names_at {
+            return Vec::new();
+        }
         proxy::get_players()
             .into_iter()
             .map(|p| p.username)
@@ -173,6 +271,29 @@ impl State {
         Ok(1)
     }
 
+    fn player_id(&self, sender: &CommandSender) -> Result<Uuid, String> {
+        sender
+            .player_uuid
+            .as_deref()
+            .and_then(|uuid| Uuid::parse_str(uuid).ok())
+            .ok_or_else(|| "§cOnly players can use parties.".to_owned())
+    }
+
+    fn party(&self, sender: &CommandSender, action: &PartyAction) -> Result<i32, String> {
+        match self.client.post::<_, PartyReply>(routes::PARTIES, action) {
+            Ok(answer) => {
+                if !answer.message.is_empty() {
+                    reply(sender, &answer.message);
+                }
+                Ok(i32::from(answer.ok))
+            }
+            Err(err) => {
+                crate::log(crate::Level::Warn, &format!("party action failed: {err}"));
+                Err(crate::UNAVAILABLE.into())
+            }
+        }
+    }
+
     fn locate(&self, name: &str) -> Result<PlayerLocation, String> {
         match self.client.get(&routes::player_by_name(name)) {
             Ok(location) => Ok(location),
@@ -194,5 +315,84 @@ impl State {
                 Err(crate::UNAVAILABLE.into())
             }
         }
+    }
+}
+
+/// Reads `/party ...` into an action; `None` means show the usage.
+fn party_action(player: Uuid, args: &[String]) -> Option<PartyAction> {
+    let (first, rest) = args.split_first()?;
+    let one = |rest: &[String]| match rest {
+        [name] => Some(name.clone()),
+        _ => None,
+    };
+    Some(match first.to_ascii_lowercase().as_str() {
+        "invite" => PartyAction::Invite {
+            player,
+            target: one(rest)?,
+        },
+        "accept" => PartyAction::Accept {
+            player,
+            leader: one(rest)?,
+        },
+        "kick" | "remove" => PartyAction::Kick {
+            player,
+            target: one(rest)?,
+        },
+        "leave" if rest.is_empty() => PartyAction::Leave { player },
+        "disband" if rest.is_empty() => PartyAction::Disband { player },
+        "warp" if rest.is_empty() => PartyAction::Warp { player },
+        "list" if rest.is_empty() => PartyAction::List { player },
+        "chat" if !rest.is_empty() => PartyAction::Chat {
+            player,
+            text: plain(rest),
+        },
+        // `/party <player>` invites.
+        name if rest.is_empty() && !PARTY_SUBCOMMANDS.contains(&name) => PartyAction::Invite {
+            player,
+            target: first.clone(),
+        },
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(words: &str) -> Vec<String> {
+        words.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn party_commands_parse() {
+        let me = Uuid::nil();
+        assert_eq!(
+            party_action(me, &args("Steve")),
+            Some(PartyAction::Invite {
+                player: me,
+                target: "Steve".into()
+            })
+        );
+        assert_eq!(
+            party_action(me, &args("accept Steve")),
+            Some(PartyAction::Accept {
+                player: me,
+                leader: "Steve".into()
+            })
+        );
+        assert_eq!(
+            party_action(me, &args("warp")),
+            Some(PartyAction::Warp { player: me })
+        );
+        assert_eq!(
+            party_action(me, &args("chat §ahi all")),
+            Some(PartyAction::Chat {
+                player: me,
+                text: "ahi all".into()
+            })
+        );
+        assert_eq!(party_action(me, &args("kick")), None);
+        assert_eq!(party_action(me, &args("leave now")), None);
+        assert_eq!(party_action(me, &[]), None);
     }
 }

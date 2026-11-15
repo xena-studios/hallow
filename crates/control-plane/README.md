@@ -27,7 +27,18 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.
   - Each proxy long-polls its own command queue. The last 1000 commands are kept for polls that fall behind.
 
-Queues and the matchmaker come later.
+- **Parties.**
+  - `POST /v1/parties` takes one action (invite, accept, leave, kick, disband, warp, chat or list) and answers with a message for the player.
+  - Other members are told through their proxies.
+  - Parties live in Redis while their members are online:
+    - leaving the network leaves the party;
+    - a leaving leader hands over to the longest member;
+    - a party ends when one member is left.
+- **Queues and the matchmaker.**
+  - `POST /v1/queues` queues a player, or the whole party if they lead one.
+  - Every half second, one instance (under a Redis lock) puts each entry, oldest first, on the fullest ready game server of its kind with room for all of it.
+  - A member going offline takes the party out of the queue.
+  - Starting new servers when none has room comes with orchestration through Wings.
 
 ## Running
 

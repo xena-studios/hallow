@@ -14,10 +14,12 @@ use axum::{
 use hallow_proto::{
     ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
+    party::{PartyAction, PartyInfo, PartyReply},
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
+    queue::{JoinQueue, QueueStatus},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo},
 };
@@ -94,6 +96,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::PLAYERS, get(player_by_name))
         .route("/v1/players/{uuid}", get(player))
         .route(routes::COMMANDS, post(send_command))
+        .route(routes::PARTIES, post(party_action))
+        .route(routes::QUEUES, post(join_queue))
+        .route("/v1/queues/{uuid}", axum::routing::delete(leave_queue))
+        .route("/v1/parties/{uuid}", get(party_of))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
         .route("/healthz", get(health))
@@ -331,6 +337,44 @@ async fn player_by_name(
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("player isn't online"))
+}
+
+// Parties
+
+async fn party_action(
+    State(state): Shared,
+    Body(action): Body<PartyAction>,
+) -> Reply<Body<PartyReply>> {
+    Ok(Body(state.store.party_action(action).await?))
+}
+
+async fn party_of(State(state): Shared, Path(uuid): Path<String>) -> Reply<Body<PartyInfo>> {
+    let uuid = Uuid::parse_str(&uuid).map_err(|_| Failure::bad_request("not a UUID"))?;
+    state
+        .store
+        .party_of(&uuid)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("player isn't in a party"))
+}
+
+// Queues
+
+/// A refusal (`409`) carries a message for the player.
+async fn join_queue(State(state): Shared, Body(req): Body<JoinQueue>) -> Reply<Body<QueueStatus>> {
+    check_name("game kind", &req.kind)?;
+    match state.store.join_queue(req).await? {
+        Ok(status) => Ok(Body(status)),
+        Err(message) => Err(Failure::new(ErrorCode::Conflict, message)),
+    }
+}
+
+async fn leave_queue(State(state): Shared, Path(uuid): Path<String>) -> Reply<StatusCode> {
+    let uuid = Uuid::parse_str(&uuid).map_err(|_| Failure::bad_request("not a UUID"))?;
+    match state.store.dequeue(&uuid).await? {
+        Some(_) => Ok(StatusCode::NO_CONTENT),
+        None => Err(Failure::not_found("player isn't queued")),
+    }
 }
 
 // Commands

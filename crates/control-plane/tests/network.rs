@@ -12,10 +12,12 @@ use hallow_control_plane::{Config, DuplicateLogin, serve, serve_all};
 use hallow_proto::{
     ApiError, ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
+    party::{PartyAction, PartyInfo, PartyReply},
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
+    queue::{JoinQueue, QueueStatus},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerRole, ServerState},
 };
@@ -516,4 +518,362 @@ async fn drain_and_agent_checks() {
     assert_eq!(agent_check(agent, "proxy-a").await, "up ready");
     let res = one.post(&routes::proxy_drain("nobody"), &drain(true)).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+fn username(uuid: Uuid) -> String {
+    format!("p{}", &uuid.simple().to_string()[..6])
+}
+
+/// Every message queued for `proxy` after `since`, and the new revision.
+async fn messages(one: &Instance, proxy: &str, since: u64) -> (u64, Vec<String>) {
+    match one.commands(proxy, since).await {
+        Poll::Changed { revision, data } => (
+            revision,
+            data.into_iter()
+                .filter_map(|c| match c {
+                    ProxyCommand::Message { text, .. } => Some(text),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        Poll::Unchanged { revision } => (revision, Vec::new()),
+    }
+}
+
+/// Invite, accept, chat, warp, hand-over and the party ending, with members
+/// on different proxies.
+#[tokio::test]
+async fn parties() {
+    let Some(redis) = redis_url() else { return };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.long_poll = Duration::from_millis(200);
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+    let b = one.register_proxy("proxy-b").await;
+    one.register_hub("hub-1").await;
+    let [p1, p2, p3, p4] = [(); 4].map(|()| Uuid::new_v4());
+    for (player, proxy) in [
+        (p1, "proxy-a"),
+        (p2, "proxy-b"),
+        (p3, "proxy-b"),
+        (p4, "proxy-a"),
+    ] {
+        assert!(matches!(
+            one.login(player, proxy).await,
+            LoginDecision::Allow { .. }
+        ));
+    }
+    let act = |action: PartyAction| {
+        let one = &one;
+        async move {
+            one.post_json::<_, PartyReply>(routes::PARTIES, &action)
+                .await
+        }
+    };
+
+    // Accepting needs an invite.
+    let reply = act(PartyAction::Accept {
+        player: p2,
+        leader: username(p1),
+    })
+    .await;
+    assert!(!reply.ok, "{reply:?}");
+
+    for member in [p2, p3] {
+        let reply = act(PartyAction::Invite {
+            player: p1,
+            target: username(member).to_uppercase(),
+        })
+        .await;
+        assert!(reply.ok, "{reply:?}");
+        let reply = act(PartyAction::Accept {
+            player: member,
+            leader: username(p1),
+        })
+        .await;
+        assert!(reply.ok, "{reply:?}");
+    }
+    let party: PartyInfo = one.get_json(&routes::party(&p3)).await;
+    assert_eq!(party.leader, p1);
+    assert_eq!(
+        party.members.iter().map(|m| m.uuid).collect::<Vec<_>>(),
+        [p1, p2, p3]
+    );
+
+    // Only the leader invites; p4 isn't in a party.
+    let reply = act(PartyAction::Invite {
+        player: p2,
+        target: username(p4),
+    })
+    .await;
+    assert!(!reply.ok);
+    let reply = act(PartyAction::Chat {
+        player: p4,
+        text: "hi".into(),
+    })
+    .await;
+    assert!(!reply.ok);
+
+    // Chat reaches members on both proxies, without colour codes from players.
+    let (rev_b, _) = messages(&one, "proxy-b", b.commands_revision).await;
+    let reply = act(PartyAction::Chat {
+        player: p2,
+        text: "§kgo team".into(),
+    })
+    .await;
+    assert!(reply.ok);
+    let (rev_b, seen) = messages(&one, "proxy-b", rev_b).await;
+    assert_eq!(seen.len(), 2, "p2 and p3 are on proxy-b: {seen:?}");
+    assert!(seen[0].ends_with("§7: kgo team"), "{seen:?}");
+    let (rev_a, seen) = messages(&one, "proxy-a", a.commands_revision).await;
+    assert!(seen.iter().any(|m| m.contains("go team")));
+
+    // Warp sends the others to the leader's server.
+    one.post(
+        routes::PRESENCE_SWITCH,
+        &PlayerSwitched {
+            uuid: p1,
+            server: "hub-1".into(),
+        },
+    )
+    .await;
+    let reply = act(PartyAction::Warp { player: p1 }).await;
+    assert!(reply.ok, "{reply:?}");
+    let Poll::Changed { data, .. } = one.commands("proxy-b", rev_b).await else {
+        panic!()
+    };
+    let sends: Vec<Uuid> = data
+        .iter()
+        .filter_map(|c| match c {
+            ProxyCommand::Send { player, server } if server == "hub-1" => Some(*player),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends, [p2, p3]);
+    let _ = rev_a;
+
+    // The leader leaving the network hands over to the longest member.
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: p1,
+            proxy: "proxy-a".into(),
+        },
+    )
+    .await;
+    let party: PartyInfo = one.get_json(&routes::party(&p2)).await;
+    assert_eq!(party.leader, p2);
+    assert_eq!(party.members.len(), 2);
+
+    // Down to one member, the party ends.
+    let reply = act(PartyAction::Leave { player: p3 }).await;
+    assert!(reply.ok);
+    assert_eq!(
+        one.get(&routes::party(&p2)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+impl Instance {
+    async fn register_game(&self, name: &str, kind: &str, max_players: u32, players: u32) {
+        let res = self
+            .post(
+                routes::SERVERS,
+                &RegisterServer {
+                    name: name.into(),
+                    kind: kind.into(),
+                    version: "v1.0.0".into(),
+                    role: ServerRole::Game,
+                    address: format!("{name}:25565"),
+                    max_players,
+                },
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        let beat = ServerHeartbeat {
+            players,
+            state: ServerState::Ready,
+        };
+        let res = self.post(&routes::server_heartbeat(name), &beat).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    }
+}
+
+/// Where the matchmaker sent each player, from the proxies' command queues.
+async fn sends(one: &Instance, proxies: &[(&str, u64)], wait: Duration) -> Vec<(Uuid, String)> {
+    tokio::time::sleep(wait).await;
+    let mut out = Vec::new();
+    for (proxy, since) in proxies {
+        if let Poll::Changed { data, .. } = one.commands(proxy, *since).await {
+            for command in data {
+                if let ProxyCommand::Send { player, server } = command {
+                    out.push((player, server));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The #21 gate: a party of four on two proxies queues together and lands
+/// in the same game, on the one server with room for all of them.
+#[tokio::test]
+async fn party_of_four_queues_together() {
+    let Some(redis) = redis_url() else { return };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.long_poll = Duration::from_millis(200);
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+    let b = one.register_proxy("proxy-b").await;
+    one.register_hub("hub-1").await;
+    // sw-busy has room for 2, sw-free for 12.
+    one.register_game("sw-busy", "skywars", 12, 10).await;
+    one.register_game("sw-free", "skywars", 12, 0).await;
+    let players = [(); 5].map(|()| Uuid::new_v4());
+    let [leader, m1, m2, m3, solo] = players;
+    for (i, player) in players.iter().enumerate() {
+        let proxy = if i % 2 == 0 { "proxy-a" } else { "proxy-b" };
+        assert!(matches!(
+            one.login(*player, proxy).await,
+            LoginDecision::Allow { .. }
+        ));
+    }
+    for member in [m1, m2, m3] {
+        let invite = PartyAction::Invite {
+            player: leader,
+            target: username(member),
+        };
+        assert!(
+            one.post_json::<_, PartyReply>(routes::PARTIES, &invite)
+                .await
+                .ok
+        );
+        let accept = PartyAction::Accept {
+            player: member,
+            leader: username(leader),
+        };
+        assert!(
+            one.post_json::<_, PartyReply>(routes::PARTIES, &accept)
+                .await
+                .ok
+        );
+    }
+
+    // Members can't queue the party; the leader can.
+    let res = one
+        .post(
+            routes::QUEUES,
+            &JoinQueue {
+                kind: "skywars".into(),
+                player: m2,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let res = one
+        .post(
+            routes::QUEUES,
+            &JoinQueue {
+                kind: "nothing".into(),
+                player: solo,
+            },
+        )
+        .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::CONFLICT,
+        "no servers of that kind"
+    );
+    let status: QueueStatus = one
+        .post_json(
+            routes::QUEUES,
+            &JoinQueue {
+                kind: "skywars".into(),
+                player: leader,
+            },
+        )
+        .await;
+    assert_eq!(status.queued, 4);
+    let _: QueueStatus = one
+        .post_json(
+            routes::QUEUES,
+            &JoinQueue {
+                kind: "skywars".into(),
+                player: solo,
+            },
+        )
+        .await;
+
+    let placed = sends(
+        &one,
+        &[
+            ("proxy-a", a.commands_revision),
+            ("proxy-b", b.commands_revision),
+        ],
+        Duration::from_millis(1500),
+    )
+    .await;
+    let party_servers: Vec<&str> = placed
+        .iter()
+        .filter(|(p, _)| [leader, m1, m2, m3].contains(p))
+        .map(|(_, s)| s.as_str())
+        .collect();
+    assert_eq!(party_servers, ["sw-free"; 4], "{placed:?}");
+    // The solo player fills the fullest server with room.
+    assert!(placed.contains(&(solo, "sw-busy".into())), "{placed:?}");
+}
+
+/// A member disconnecting takes the party out of the queue.
+#[tokio::test]
+async fn disconnect_leaves_the_queue() {
+    let Some(redis) = redis_url() else { return };
+    let one = Instance::start(config(&redis, &format!("test-{}", Uuid::new_v4()))).await;
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    // Full: nothing gets placed while we look.
+    one.register_game("sw-full", "skywars", 2, 2).await;
+    let [leader, member] = [(); 2].map(|()| Uuid::new_v4());
+    for player in [leader, member] {
+        one.login(player, "proxy-a").await;
+    }
+    let invite = PartyAction::Invite {
+        player: leader,
+        target: username(member),
+    };
+    one.post_json::<_, PartyReply>(routes::PARTIES, &invite)
+        .await;
+    let accept = PartyAction::Accept {
+        player: member,
+        leader: username(leader),
+    };
+    one.post_json::<_, PartyReply>(routes::PARTIES, &accept)
+        .await;
+    one.post_json::<_, QueueStatus>(
+        routes::QUEUES,
+        &JoinQueue {
+            kind: "skywars".into(),
+            player: leader,
+        },
+    )
+    .await;
+
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: member,
+            proxy: "proxy-a".into(),
+        },
+    )
+    .await;
+    let res = one
+        .send(
+            one.http
+                .delete(format!("{}{}", one.base, routes::queue_entry(&leader))),
+        )
+        .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "the entry went with the member"
+    );
 }
