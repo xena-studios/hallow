@@ -73,10 +73,10 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Stats, leaderboards and ranks
 - [ ] Player website: profiles and leaderboards
 - [ ] Panel: reports, games and stats pages
-- [ ] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run
-- [ ] Hetzner Cloud provider: burst nodes on demand
+- [ ] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run (`crates/fleet` has the trait, the planner and dry run, tested on a simulated day; not yet wired into the control plane, and no audit log yet)
+- [ ] Hetzner Cloud provider: burst nodes on demand (`crates/providers/hetzner-cloud`, tested against a mock API; not yet run against Hetzner)
 - [ ] Scale to one: floor node, per-layer scaling for game instances, lobbies and proxies
-- [ ] Budgets: monthly budget, daily cap, forecast, queueing at the cap
+- [ ] Budgets: monthly budget, daily cap, forecast, queueing at the cap (the planner enforces the budget, cap and forecast; panel settings, per-region caps and alerts to come)
 - [ ] Panel: Fleet page
 - [ ] Closed beta with real players
 
