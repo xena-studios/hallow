@@ -11,6 +11,7 @@
 //! [Decisions]: https://github.com/xena-studios/hallow/blob/main/docs/DECISIONS.md
 
 pub mod command;
+pub mod party;
 pub mod presence;
 pub mod proxy;
 pub mod queue;

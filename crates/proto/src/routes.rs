@@ -19,6 +19,8 @@
 //! | `GET` | [`PRESENCE_COUNT`] | | [`NetworkCount`](crate::presence::NetworkCount) |
 //! | `GET` | [`player`] | | [`PlayerLocation`](crate::presence::PlayerLocation) or `404` |
 //! | `GET` | [`player_by_name`] | | [`PlayerLocation`](crate::presence::PlayerLocation) or `404`; names match without case |
+//! | `POST` | [`PARTIES`] | [`PartyAction`](crate::party::PartyAction) | [`PartyReply`](crate::party::PartyReply) |
+//! | `GET` | [`party`] | | [`PartyInfo`](crate::party::PartyInfo) or `404` |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
@@ -48,6 +50,7 @@ pub const PRESENCE_COUNT: &str = "/v1/presence/count";
 pub const QUEUES: &str = "/v1/queues";
 pub const COMMANDS: &str = "/v1/commands";
 pub const PLAYERS: &str = "/v1/players";
+pub const PARTIES: &str = "/v1/parties";
 
 #[must_use]
 pub fn proxy(id: &str) -> String {
@@ -97,6 +100,12 @@ pub fn player_by_name(name: &str) -> String {
         }
     }
     path
+}
+
+/// The party `uuid` is in.
+#[must_use]
+pub fn party(uuid: &uuid::Uuid) -> String {
+    format!("{PARTIES}/{uuid}")
 }
 
 #[must_use]

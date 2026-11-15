@@ -43,11 +43,13 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Vine plugin: presence, global ping, duplicate-login check, server-list sync
 - [x] Vine plugin: cross-proxy commands (`/find`, `/msg` and `/r`, staff `/alert` and `/gkick`); party warp comes with parties
 - [x] Load balancer with PROXY protocol and health checks (HAProxy, drain-aware agent checks against the control plane)
-- [ ] Matchmaker: queues, warm instances, start and delete server images through the Wings API
+- [x] Matchmaker: queues that fill ready game servers, parties kept together
+- [ ] Matchmaker: warm instances, start and delete server images through the Wings API
 - [ ] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow
 - [ ] Hallow server plugin: presence, stats and the link to the control plane, in the base image
 - [ ] `hub` server repo
-- [ ] Parties and friends
+- [x] Parties: invite, accept, leave, kick, disband, warp, chat; parties queue together
+- [ ] Friends and online status (the schema is in; the commands come next)
 - [x] PostgreSQL schema: accounts, ranks, sessions, punishments
 - [ ] Panel fork with Hallow branding and the extension scaffold
 - [ ] Panel: Network page and Players page

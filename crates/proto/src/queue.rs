@@ -1,6 +1,7 @@
-//! Matchmaking queues. A lobby's plugin queues players (alone or as a party)
-//! for a game kind; the matchmaker starts or fills a game and sends them there
-//! with a [`crate::command::ProxyCommand::Send`].
+//! Matchmaking queues. A player (or a lobby's plugin for them) queues for a
+//! game kind; a party queues together, by its leader. The matchmaker puts
+//! each entry on a ready game server of that kind with room for all of it,
+//! and sends everyone there with [`crate::command::ProxyCommand::Send`].
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -10,10 +11,9 @@ use uuid::Uuid;
 pub struct JoinQueue {
     /// The game kind (server repo), such as `skywars`.
     pub kind: String,
-    /// The player who queued; with a party, its leader.
+    /// Who queues. If they lead a party, the whole party queues; if they're
+    /// a member but not the leader, the request is refused.
     pub player: Uuid,
-    /// Everyone who plays together, including `player`.
-    pub party: Vec<Uuid>,
 }
 
 /// The answer to [`JoinQueue`].
