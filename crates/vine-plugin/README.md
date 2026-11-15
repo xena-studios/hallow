@@ -14,6 +14,11 @@
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
   - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`.
   - Staff: `/find`, `/alert` and `/gkick`, for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
+- **Moderation** (needs the control plane's database):
+  - `/ban` and `/mute`, with an optional duration (`30m`, `2h`, `7d`, `1w`); `/unban` and `/unmute`; `/warn`; `/history`.
+  - Permissions: `hallow.staff.ban`, `.mute`, `.warn` and `.history`.
+  - A ban kicks the player wherever they are and refuses their logins.
+  - A muted player's chat, `/msg`, `/r` and party chat are blocked until the mute ends.
 - **Recovery.**
   - If the control plane forgets the proxy, for example after it expired or Redis was reset, the plugin registers again and re-reports its players.
   - Admitted players who never became live sessions are reported gone after 10 s.

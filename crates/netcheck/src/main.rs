@@ -5,6 +5,7 @@
 //! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby] [--stay 0]
 //! netcheck --route "/some-command arg,game-1"   # steps starting with / run a command
 //! netcheck --route "~5,/msg someone hi"         # steps like ~5 wait that many seconds
+//! netcheck --route ">hello there"               # steps starting with > send chat
 //! netcheck --bots 100 [--ramp 10] [--stay 60] [--name load]   # load test; bots are load0000, load0001, ...
 //! ```
 //!
@@ -38,8 +39,8 @@ use pumpkin_protocol::{
             handshake::SHandShake,
             login::{SLoginAcknowledged, SLoginStart},
             play::{
-                SChatCommand, SConfigurationAcknowledged, SConfirmTeleport, SKeepAlive, SPlayPong,
-                SPlayerLoaded, SPlayerPosition,
+                SChatCommand, SChatMessage, SConfigurationAcknowledged, SConfirmTeleport,
+                SKeepAlive, SPlayPong, SPlayerLoaded, SPlayerPosition,
             },
         },
     },
@@ -538,6 +539,27 @@ async fn run(args: &Args) -> Result<(), String> {
             bot.stay(secs)
                 .await
                 .map_err(|err| format!("waiting {secs}s: {err}"))?;
+            continue;
+        }
+        if let Some(message) = server.strip_prefix('>') {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0));
+            bot.send(&SChatMessage {
+                message,
+                timestamp,
+                salt: 0,
+                signature: None,
+                message_count: VarInt(0),
+                acknowledged: &[0; 3],
+                checksum: 0,
+            })
+            .await
+            .map_err(|err| format!("say {message}: {err}"))?;
+            bot.stay(1)
+                .await
+                .map_err(|err| format!("after saying {message}: {err}"))?;
+            println!("  ok  said {message}");
             continue;
         }
         if let Some(command) = server.strip_prefix('/') {

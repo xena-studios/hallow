@@ -17,6 +17,9 @@ use hallow_proto::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
+    punishment::{
+        IssuePunishment, PunishmentKind, PunishmentRecord, PunishmentReply, RevokePunishment,
+    },
     queue::{JoinQueue, QueueStatus},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerRole, ServerState},
@@ -224,6 +227,7 @@ async fn two_proxies_share_state() {
     let hub = LoginDecision::Allow {
         server: "hub-1".into(),
         permissions: vec![],
+        mute: None,
     };
     assert_eq!(one.login(p1, "proxy-a").await, hub);
     assert_eq!(two.login(p2, "proxy-b").await, hub);
@@ -1013,6 +1017,136 @@ async fn database_logins() {
     assert_eq!(open, 1);
 
     pool.close().await;
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// Staff punishments: mutes reach the player's proxy, bans kick and refuse
+/// logins, offline players resolve by name, history reads back.
+#[tokio::test]
+async fn punishments_in_game() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    config.long_poll = Duration::from_millis(200);
+    let one = Instance::start(config).await;
+    one.register_proxy("proxy-a").await;
+    let b = one.register_proxy("proxy-b").await;
+    one.register_hub("hub-1").await;
+    let (boss, target) = (Uuid::new_v4(), Uuid::new_v4());
+    login_as(&one, boss, "boss", "proxy-a").await;
+    login_as(&one, target, "Griefer", "proxy-b").await;
+
+    let issue = |kind, duration_seconds| IssuePunishment {
+        kind,
+        target: "griefer".into(),
+        issuer: Some(boss),
+        reason: "being rude".into(),
+        duration_seconds,
+    };
+    let reply: PunishmentReply = one
+        .post_json(routes::PUNISHMENTS, &issue(PunishmentKind::Mute, Some(600)))
+        .await;
+    assert!(reply.ok, "{reply:?}");
+    let reply: PunishmentReply = one
+        .post_json(routes::PUNISHMENTS, &issue(PunishmentKind::Mute, None))
+        .await;
+    assert!(
+        !reply.ok && reply.message.contains("already muted"),
+        "{reply:?}"
+    );
+    let Poll::Changed { revision, data } = one.commands("proxy-b", b.commands_revision).await
+    else {
+        panic!()
+    };
+    assert!(
+        data.iter().any(|c| matches!(c, ProxyCommand::Mute { player, mute: Some(m) } if *player == target && m.until_ms.is_some())),
+        "{data:?}"
+    );
+
+    // A ban kicks the player where they are, and refuses the next login.
+    let reply: PunishmentReply = one
+        .post_json(routes::PUNISHMENTS, &issue(PunishmentKind::Ban, None))
+        .await;
+    assert!(
+        reply.ok && reply.message.contains("permanently"),
+        "{reply:?}"
+    );
+    let Poll::Changed { data, .. } = one.commands("proxy-b", revision).await else {
+        panic!()
+    };
+    assert!(
+        data.iter().any(|c| matches!(c, ProxyCommand::Kick { player, reason } if *player == target && reason.contains("being rude"))),
+        "{data:?}"
+    );
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: target,
+            proxy: "proxy-b".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        login_as(&one, target, "Griefer", "proxy-b").await,
+        LoginDecision::Deny { .. }
+    ));
+
+    // Offline players are found by name; the console can act.
+    let warn = IssuePunishment {
+        kind: PunishmentKind::Warn,
+        issuer: None,
+        ..issue(PunishmentKind::Warn, None)
+    };
+    assert!(
+        one.post_json::<_, PunishmentReply>(routes::PUNISHMENTS, &warn)
+            .await
+            .ok
+    );
+
+    let unban = RevokePunishment {
+        kind: PunishmentKind::Ban,
+        target: "GRIEFER".into(),
+        issuer: Some(boss),
+        reason: None,
+    };
+    assert!(
+        one.post_json::<_, PunishmentReply>(routes::PUNISHMENTS_REVOKE, &unban)
+            .await
+            .ok
+    );
+    let LoginDecision::Allow { mute, .. } = login_as(&one, target, "Griefer", "proxy-b").await
+    else {
+        panic!("unbanned player refused")
+    };
+    assert_eq!(
+        mute.map(|m| m.reason).as_deref(),
+        Some("being rude"),
+        "the mute still holds"
+    );
+
+    let history: Vec<PunishmentRecord> = one.get_json(&routes::punishment_history("griefer")).await;
+    let kinds: Vec<(PunishmentKind, bool, &str)> = history
+        .iter()
+        .map(|r| (r.kind, r.active, r.issuer.as_str()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            (PunishmentKind::Warn, false, "console"),
+            (PunishmentKind::Ban, false, "boss"),
+            (PunishmentKind::Mute, true, "boss"),
+        ]
+    );
+
     admin
         .execute(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE {db_name} WITH (FORCE)"

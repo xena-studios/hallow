@@ -437,6 +437,11 @@ impl Store {
         Ok((revision, commands))
     }
 
+    /// Queues `command` for `proxy`.
+    pub async fn send_to_proxy(&self, proxy: &str, command: &ProxyCommand) -> Result<u64> {
+        self.push_command(proxy, command).await
+    }
+
     async fn push_command(&self, proxy: &str, command: &ProxyCommand) -> Result<u64> {
         Ok(self
             .push_command
@@ -680,6 +685,7 @@ impl Store {
         Ok(LoginOutcome::Decided(LoginDecision::Allow {
             server: hub,
             permissions: Vec::new(),
+            mute: None,
         }))
     }
 

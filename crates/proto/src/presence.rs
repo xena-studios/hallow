@@ -30,6 +30,9 @@ pub enum LoginDecision {
         server: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         permissions: Vec<String>,
+        /// The player's active mute, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mute: Option<crate::punishment::MuteInfo>,
     },
     /// Refuse the login with `reason`, shown to the player. Used for a
     /// duplicate login when the network keeps the old session, bans, and a
@@ -89,6 +92,7 @@ mod tests {
             LoginDecision::Allow {
                 server: "hub-1".into(),
                 permissions: vec![],
+                mute: None,
             }
         );
     }

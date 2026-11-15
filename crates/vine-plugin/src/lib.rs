@@ -39,14 +39,15 @@ use hallow_proto::{
     command::ProxyCommand,
     presence::{LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerSwitched},
     proxy::{ProxyHeartbeat, ProxyRegistered, RegisterProxy},
+    punishment::MuteInfo,
     routes,
     server::{ServerInfo, ServerState},
 };
 use uuid::Uuid;
 use vine::plugin::{
     event::{
-        EventType, PlayerDisconnectEvent, PlayerLoginEvent, PlayerPreLoginEvent, ProxyPingEvent,
-        ServerConnectEvent, ServerConnectedEvent,
+        EventType, PlayerChatEvent, PlayerDisconnectEvent, PlayerLoginEvent, PlayerPreLoginEvent,
+        ProxyPingEvent, ServerConnectEvent, ServerConnectedEvent,
     },
     logging::{self, Level},
     proxy, scheduler,
@@ -62,6 +63,7 @@ const LOGIN: u32 = 3;
 const CONNECT: u32 = 4;
 const CONNECTED: u32 = 5;
 const DISCONNECT: u32 = 6;
+const CHAT: u32 = 7;
 const TICK: u32 = 100;
 
 const HEARTBEAT: Duration = Duration::from_secs(routes::HEARTBEAT_SECONDS);
@@ -101,6 +103,8 @@ struct State {
     last_from: HashMap<String, String>,
     /// Each player's permission nodes from their ranks, from login.
     permissions: HashMap<String, Vec<String>>,
+    /// Muted players here, by UUID.
+    mutes: HashMap<String, MuteInfo>,
 }
 
 thread_local! {
@@ -151,6 +155,7 @@ impl Guest for Hallow {
                 reported_down: false,
                 last_from: HashMap::new(),
                 permissions: HashMap::new(),
+                mutes: HashMap::new(),
             });
         });
 
@@ -171,6 +176,7 @@ impl Guest for Hallow {
             EventPriority::Monitor,
         );
 
+        ctx.register_event(CHAT, EventType::PlayerChat, EventPriority::High);
         commands::register(&ctx);
 
         with_state(State::tick);
@@ -205,6 +211,7 @@ impl Guest for Hallow {
             Event::PlayerPreLogin(pre) => Event::PlayerPreLogin(state.on_pre_login(pre)),
             Event::PlayerLogin(login) => Event::PlayerLogin(state.on_login(login)),
             Event::ServerConnect(connect) => Event::ServerConnect(state.on_connect(connect)),
+            Event::PlayerChat(chat) => Event::PlayerChat(state.on_chat(chat)),
             Event::ServerConnected(connected) => {
                 state.on_connected(&connected);
                 Event::ServerConnected(connected)
@@ -297,8 +304,10 @@ impl State {
             Ok(LoginDecision::Allow {
                 server,
                 permissions,
+                mute,
             }) => {
                 self.permissions.insert(login.uuid.clone(), permissions);
+                self.set_mute(&login.uuid, mute);
                 self.hubs.insert(login.uuid.clone(), server);
                 self.admitted.insert(login.uuid.clone(), Instant::now());
             }
@@ -315,6 +324,50 @@ impl State {
             }
         }
         login
+    }
+
+    /// Muted players' chat goes nowhere.
+    fn on_chat(&mut self, mut chat: PlayerChatEvent) -> PlayerChatEvent {
+        if !chat.cancelled
+            && let Some(notice) = self.muted(&chat.uuid)
+        {
+            chat.cancelled = true;
+            proxy::send_message(&chat.uuid, &notice);
+        }
+        chat
+    }
+
+    fn set_mute(&mut self, uuid: &str, mute: Option<MuteInfo>) {
+        match mute {
+            Some(mute) => self.mutes.insert(uuid.to_owned(), mute),
+            None => self.mutes.remove(uuid),
+        };
+    }
+
+    /// If the player is muted now, what to tell them. Expired mutes are
+    /// dropped here.
+    pub(crate) fn muted(&mut self, uuid: &str) -> Option<String> {
+        let mute = self.mutes.get(uuid)?;
+        let left = match mute.until_ms {
+            None => None,
+            Some(until) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+                if until <= now {
+                    self.mutes.remove(uuid);
+                    return None;
+                }
+                Some(commands::duration_text((until - now) / 1000))
+            }
+        };
+        Some(match left {
+            Some(left) => format!(
+                "§cYou are muted for {left} more. §7Reason: §f{}",
+                mute.reason
+            ),
+            None => format!("§cYou are muted. §7Reason: §f{}", mute.reason),
+        })
     }
 
     /// Sends a player's first connect to the hub the control plane picked.
@@ -344,6 +397,7 @@ impl State {
     fn on_disconnect(&mut self, gone: &PlayerDisconnectEvent) {
         self.hubs.remove(&gone.uuid);
         self.permissions.remove(&gone.uuid);
+        self.mutes.remove(&gone.uuid);
         self.last_from.remove(&gone.uuid);
         if self.leave(&gone.uuid) {
             self.admitted.remove(&gone.uuid);
@@ -437,8 +491,11 @@ impl State {
                 .client
                 .post::<_, LoginDecision>(routes::PRESENCE_LOGIN, &request)
             {
-                Ok(LoginDecision::Allow { permissions, .. }) => {
+                Ok(LoginDecision::Allow {
+                    permissions, mute, ..
+                }) => {
                     self.permissions.insert(player.uuid.clone(), permissions);
+                    self.set_mute(&player.uuid, mute);
                     self.admitted.insert(player.uuid.clone(), Instant::now());
                     let switched = PlayerSwitched {
                         uuid,
@@ -637,6 +694,7 @@ impl State {
             ProxyCommand::Kick { player, reason } => {
                 proxy::disconnect_player(&player.to_string(), &reason);
             }
+            ProxyCommand::Mute { player, mute } => self.set_mute(&player.to_string(), mute),
             ProxyCommand::Drain { draining } => {
                 proxy::set_draining(draining);
                 log(

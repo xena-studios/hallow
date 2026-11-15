@@ -15,6 +15,7 @@ pub mod party;
 pub mod permission;
 pub mod presence;
 pub mod proxy;
+pub mod punishment;
 pub mod queue;
 pub mod routes;
 pub mod server;

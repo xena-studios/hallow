@@ -19,6 +19,7 @@ use hallow_proto::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
+    punishment::{IssuePunishment, PunishmentRecord, PunishmentReply, RevokePunishment},
     queue::{JoinQueue, QueueStatus},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo},
@@ -30,7 +31,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events,
+    events, punish,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -97,6 +98,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/players/{uuid}", get(player))
         .route(routes::COMMANDS, post(send_command))
         .route(routes::PARTIES, post(party_action))
+        .route(
+            routes::PUNISHMENTS,
+            post(issue_punishment).get(punishment_history),
+        )
+        .route(routes::PUNISHMENTS_REVOKE, post(revoke_punishment))
         .route(routes::QUEUES, post(join_queue))
         .route("/v1/queues/{uuid}", axum::routing::delete(leave_queue))
         .route("/v1/parties/{uuid}", get(party_of))
@@ -290,10 +296,13 @@ async fn poll_servers(
 /// With a database, a banned account is refused before it touches presence,
 /// and an allowed login gets its permission nodes and an open session.
 async fn login(State(state): Shared, Body(req): Body<LoginRequest>) -> Reply<Body<LoginDecision>> {
-    let mut permissions = Vec::new();
+    let mut grant = accounts::Grant {
+        permissions: Vec::new(),
+        mute: None,
+    };
     if let Some(db) = &state.db {
         match accounts::check_login(db, &req, &state.config.admins).await? {
-            Ok(nodes) => permissions = nodes,
+            Ok(granted) => grant = granted,
             Err(reason) => return Ok(Body(LoginDecision::Deny { reason })),
         }
     }
@@ -316,7 +325,8 @@ async fn login(State(state): Shared, Body(req): Body<LoginRequest>) -> Reply<Bod
     }
     Ok(Body(LoginDecision::Allow {
         server,
-        permissions,
+        permissions: grant.permissions,
+        mute: grant.mute,
     }))
 }
 
@@ -379,6 +389,45 @@ async fn player_by_name(
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("player isn't online"))
+}
+
+// Punishments
+
+fn database(state: &AppState) -> Reply<&hallow_db::PgPool> {
+    state.db.as_ref().ok_or_else(|| {
+        Failure::new(
+            ErrorCode::Unavailable,
+            "punishments need a database (HALLOW_DATABASE_URL)",
+        )
+    })
+}
+
+async fn issue_punishment(
+    State(state): Shared,
+    Body(req): Body<IssuePunishment>,
+) -> Reply<Body<PunishmentReply>> {
+    let db = database(&state)?;
+    Ok(Body(punish::issue(db, &state.store, req).await?))
+}
+
+async fn revoke_punishment(
+    State(state): Shared,
+    Body(req): Body<RevokePunishment>,
+) -> Reply<Body<PunishmentReply>> {
+    let db = database(&state)?;
+    Ok(Body(punish::revoke(db, &state.store, req).await?))
+}
+
+async fn punishment_history(
+    State(state): Shared,
+    query: Result<Query<NameParams>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<Vec<PunishmentRecord>>> {
+    let Query(params) = query?;
+    let db = database(&state)?;
+    punish::history(db, &state.store, &params.name)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
 }
 
 // Parties
