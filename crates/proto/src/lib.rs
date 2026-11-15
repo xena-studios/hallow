@@ -12,6 +12,7 @@
 
 pub mod command;
 pub mod party;
+pub mod permission;
 pub mod presence;
 pub mod proxy;
 pub mod queue;

@@ -1,6 +1,7 @@
 //! Permission-node matching, with the same rules as Vine's
 //! `upstream/Vine/src/permissions.rs`, so a rank's nodes mean the same thing
-//! whether Vine or the control plane checks them.
+//! whether Vine, the control plane or a plugin checks them. Shared by
+//! `hallow-db` (ranks) and the Vine plugin (staff commands).
 
 /// Whether `pattern` grants `node`: `*` matches everything, `a.b.*` matches
 /// anything below `a.b` (not `a.b` itself, and not `a.bc`), and otherwise

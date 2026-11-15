@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::permissions::has_permission;
+use hallow_proto::permission::has_permission;
 
 /// A rank: a display prefix, a weight and permission nodes in Vine's format.
 #[derive(Clone, Debug, PartialEq, Eq, FromRow)]

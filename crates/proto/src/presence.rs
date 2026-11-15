@@ -13,14 +13,24 @@ pub struct LoginRequest {
     pub proxy: String,
     /// Java protocol version, or `None` for a Bedrock player through Geyser.
     pub protocol: Option<i32>,
+    /// The player's address as the proxy sees it (the real one behind a load
+    /// balancer with PROXY protocol). Kept for ban evasion checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
 }
 
 /// The answer to [`LoginRequest`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum LoginDecision {
-    /// Let the player in and send them to `server`.
-    Allow { server: String },
+    /// Let the player in and send them to `server`. `permissions` are the
+    /// player's nodes from their ranks (see [`crate::permission`]); empty
+    /// when the network runs without a database.
+    Allow {
+        server: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        permissions: Vec<String>,
+    },
     /// Refuse the login with `reason`, shown to the player. Used for a
     /// duplicate login when the network keeps the old session, bans, and a
     /// full network.
@@ -77,7 +87,8 @@ mod tests {
         assert_eq!(
             allow,
             LoginDecision::Allow {
-                server: "hub-1".into()
+                server: "hub-1".into(),
+                permissions: vec![],
             }
         );
     }

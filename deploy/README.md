@@ -23,6 +23,7 @@ docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.y
 | `proxy` (alias `proxy-1`), `proxy-2` | 25565, 25566 | Vine with `hallow_vine`; config in `compose/config/hallow/` |
 | `control-plane` | 127.0.0.1:18090 | `hallow-control-plane:dev` from `control-plane/Dockerfile` |
 | `valkey` | none | The control plane's Redis |
+| `postgres` | none | The control plane's PostgreSQL (accounts, bans, ranks, sessions). `HALLOW_ADMINS=netstaff` makes the netcheck bot `netstaff` an admin |
 | `registrar` | none | Dev only: registers `lobby` and `game-1` and heartbeats them every 5 s, until the server plugin does |
 
 To see what the control plane knows:

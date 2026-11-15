@@ -13,8 +13,7 @@
 - **Commands.** Sends, messages, broadcasts and kicks queued for this proxy are carried out.
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
   - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`.
-  - Staff (Vine permissions under `hallow.staff.*`): `/find`, `/alert` and `/gkick`.
-  - Players without the permission don't see the staff commands.
+  - Staff: `/find`, `/alert` and `/gkick`, for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
 - **Recovery.**
   - If the control plane forgets the proxy, for example after it expired or Redis was reset, the plugin registers again and re-reports its players.
   - Admitted players who never became live sessions are reported gone after 10 s.

@@ -10,6 +10,8 @@
 //! | `HALLOW_HUB_KIND` | `hub` | Server kind players land on after login |
 //! | `HALLOW_MAX_PLAYERS` | `1000` | Network player limit |
 //! | `HALLOW_DUPLICATE_LOGIN` | `deny` | `deny` refuses a second login; `kick_old` kicks the first session |
+//! | `HALLOW_DATABASE_URL` | none | PostgreSQL for accounts, bans, ranks and sessions; without it they're off |
+//! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
@@ -87,6 +89,17 @@ fn config() -> Result<Config, String> {
         config.max_players = max
             .parse()
             .map_err(|err| format!("HALLOW_MAX_PLAYERS {max}: {err}"))?;
+    }
+    if let Ok(url) = env::var("HALLOW_DATABASE_URL") {
+        config.database_url = Some(url);
+    }
+    if let Ok(admins) = env::var("HALLOW_ADMINS") {
+        config.admins = admins
+            .split(',')
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(str::to_owned)
+            .collect();
     }
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
         config.duplicate_login = match mode.as_str() {

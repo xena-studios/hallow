@@ -31,6 +31,19 @@ services:
       timeout: 3s
       retries: 6
 
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      # Dev only.
+      POSTGRES_PASSWORD: hallow-dev
+      POSTGRES_DB: hallow
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   control-plane:
     build:
       context: ../..
@@ -39,12 +52,17 @@ services:
     environment:
       HALLOW_TOKEN_FILE: /run/hallow/token
       HALLOW_REDIS_URL: redis://valkey:6379
+      HALLOW_DATABASE_URL: postgres://postgres:hallow-dev@postgres:5432/hallow
+      # Dev only: the netcheck bot used for the staff command test.
+      HALLOW_ADMINS: netstaff
     volumes:
       - ./config/hallow/control-plane.token:/run/hallow/token:ro
     ports:
       - "127.0.0.1:18090:8080"
     depends_on:
       valkey:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 

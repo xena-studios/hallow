@@ -10,6 +10,7 @@
 //! | `proxy-drain:{id}` | string | present while staff want the proxy drained; kept across restarts and expiry |
 //! | `online` | hash | player UUID → [`PlayerLocation`] JSON |
 //! | `proxy-players:{id}` | set | UUIDs on that proxy, to clean up when it goes |
+//! | `sessions` | hash | player UUID → their open PostgreSQL session id |
 //! | `names` | hash | lower-case username → UUID of online players, for lookups by name |
 //! | `commands:{id}` | sorted set | `"{rev}\|{json}"` [`ProxyCommand`]s scored by revision, last [`COMMANDS_KEPT`] |
 //! | `commands:{id}:rev` | integer | that proxy's command revision |
@@ -103,6 +104,9 @@ impl Keys {
     }
     fn online(&self) -> String {
         format!("{}:online", self.prefix)
+    }
+    fn sessions(&self) -> String {
+        format!("{}:sessions", self.prefix)
     }
     fn names(&self) -> String {
         format!("{}:names", self.prefix)
@@ -400,6 +404,8 @@ impl Store {
         let players: Vec<String> = self.conn().smembers(self.keys.proxy_players(id)).await?;
         for uuid in players {
             self.leave_one(&uuid, id).await?;
+            // The proxy's sessions are closed in PostgreSQL all at once.
+            let _: () = self.conn().hdel(self.keys.sessions(), &uuid).await?;
         }
         let _: () = self.conn().del(self.keys.proxy_players(id)).await?;
         Ok(())
@@ -671,7 +677,10 @@ impl Store {
             .ignore()
             .query_async(&mut self.conn())
             .await?;
-        Ok(LoginOutcome::Decided(LoginDecision::Allow { server: hub }))
+        Ok(LoginOutcome::Decided(LoginDecision::Allow {
+            server: hub,
+            permissions: Vec::new(),
+        }))
     }
 
     /// The emptiest hub that is ready and has room.
@@ -728,6 +737,33 @@ impl Store {
             self.party_on_leave(uuid, username).await?;
         }
         Ok(removed == 1)
+    }
+
+    /// Remembers a player's open PostgreSQL session.
+    pub async fn set_session(&self, uuid: &Uuid, session: &Uuid) -> Result<()> {
+        let _: () = self
+            .conn()
+            .hset(self.keys.sessions(), uuid.to_string(), session.to_string())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn session(&self, uuid: &Uuid) -> Result<Option<Uuid>> {
+        let id: Option<String> = self
+            .conn()
+            .hget(self.keys.sessions(), uuid.to_string())
+            .await?;
+        Ok(id.and_then(|id| Uuid::parse_str(&id).ok()))
+    }
+
+    /// Forgets and returns a player's session, at logout.
+    pub async fn take_session(&self, uuid: &Uuid) -> Result<Option<Uuid>> {
+        let session = self.session(uuid).await?;
+        let _: () = self
+            .conn()
+            .hdel(self.keys.sessions(), uuid.to_string())
+            .await?;
+        Ok(session)
     }
 
     pub async fn online(&self) -> Result<u32> {

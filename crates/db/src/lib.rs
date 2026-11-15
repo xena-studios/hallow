@@ -14,7 +14,6 @@
 //! ```
 
 mod accounts;
-mod permissions;
 mod punishments;
 mod ranks;
 mod sessions;
@@ -23,7 +22,7 @@ pub use accounts::{
     Account, Edition, Login, PastUsername, find_accounts_by_username, get_account, upsert_account,
     username_history,
 };
-pub use permissions::{has_permission, matches_node};
+pub use hallow_proto::permission::{has_permission, matches_node};
 pub use punishments::{
     Actor, NewPunishment, Punishment, PunishmentKind, Revocation, active_ban, active_mute,
     add_punishment, punishment_history, revoke_punishment,

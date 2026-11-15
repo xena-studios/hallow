@@ -62,6 +62,13 @@ impl From<StoreError> for Failure {
     }
 }
 
+impl From<hallow_db::sqlx::Error> for Failure {
+    fn from(err: hallow_db::sqlx::Error) -> Self {
+        tracing::error!(%err, "database error");
+        Self::new(ErrorCode::Unavailable, "the database is unavailable; retry")
+    }
+}
+
 impl From<JsonRejection> for Failure {
     fn from(rejection: JsonRejection) -> Self {
         Self::bad_request(rejection.body_text())

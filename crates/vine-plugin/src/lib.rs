@@ -99,6 +99,8 @@ struct State {
     reported_down: bool,
     /// Who last messaged each player here, by UUID, for `/r`.
     last_from: HashMap<String, String>,
+    /// Each player's permission nodes from their ranks, from login.
+    permissions: HashMap<String, Vec<String>>,
 }
 
 thread_local! {
@@ -148,6 +150,7 @@ impl Guest for Hallow {
                 protocols: HashMap::new(),
                 reported_down: false,
                 last_from: HashMap::new(),
+                permissions: HashMap::new(),
             });
         });
 
@@ -288,9 +291,14 @@ impl State {
             username: login.username.clone(),
             proxy: self.config.proxy_id.clone(),
             protocol: self.protocols.remove(&login.username).map(|(p, _)| p),
+            ip: address(&login.client_ip),
         };
         match self.client.post(routes::PRESENCE_LOGIN, &request) {
-            Ok(LoginDecision::Allow { server }) => {
+            Ok(LoginDecision::Allow {
+                server,
+                permissions,
+            }) => {
+                self.permissions.insert(login.uuid.clone(), permissions);
                 self.hubs.insert(login.uuid.clone(), server);
                 self.admitted.insert(login.uuid.clone(), Instant::now());
             }
@@ -335,6 +343,8 @@ impl State {
 
     fn on_disconnect(&mut self, gone: &PlayerDisconnectEvent) {
         self.hubs.remove(&gone.uuid);
+        self.permissions.remove(&gone.uuid);
+        self.last_from.remove(&gone.uuid);
         if self.leave(&gone.uuid) {
             self.admitted.remove(&gone.uuid);
         }
@@ -421,12 +431,14 @@ impl State {
                 username: player.username.clone(),
                 proxy: self.config.proxy_id.clone(),
                 protocol: i32::try_from(player.protocol_version).ok(),
+                ip: address(&player.client_ip),
             };
             match self
                 .client
                 .post::<_, LoginDecision>(routes::PRESENCE_LOGIN, &request)
             {
-                Ok(LoginDecision::Allow { .. }) => {
+                Ok(LoginDecision::Allow { permissions, .. }) => {
+                    self.permissions.insert(player.uuid.clone(), permissions);
                     self.admitted.insert(player.uuid.clone(), Instant::now());
                     let switched = PlayerSwitched {
                         uuid,
@@ -580,6 +592,17 @@ impl State {
             self.reported_down = true;
         }
     }
+}
+
+/// The IP part of a client address Vine reports (`1.2.3.4`, `1.2.3.4:5678`,
+/// `[::1]:5678`), or `None` if it isn't one.
+fn address(client: &str) -> Option<String> {
+    let ip = client
+        .parse::<std::net::SocketAddr>()
+        .map(|socket| socket.ip())
+        .or_else(|_| client.parse::<std::net::IpAddr>())
+        .ok()?;
+    Some(ip.to_string())
 }
 
 impl State {
