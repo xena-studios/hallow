@@ -1,10 +1,14 @@
-//! A small JSON client for the control plane over `wasi:http`, the same as
-//! the Vine plugin's.
+//! A small JSON client for the control plane over `wasi:http`.
 //!
-//! A call waits for its response, and Pumpkin won't run anything else in this
-//! plugin until it returns. It runs on a Tokio task, not on the tick (see the
-//! crate docs), but each call still has short timeouts so a slow control
-//! plane can't hold the plugin.
+//! Pumpkin runs one call into this plugin at a time, and the plugin's event
+//! handlers are called from inside the tick. So a call that waited on the
+//! network would hold up the tick whenever a player moved meanwhile. Requests
+//! are started with [`Client::start_post`] and checked with [`Pending::poll`]
+//! on later runs of the task instead; nothing waits on the network except
+//! [`Client::delete`] on unload, after the players are gone. Each request
+//! also has short timeouts.
+
+use std::time::{Duration, Instant};
 
 use hallow_proto::ApiError;
 use serde::Serialize;
@@ -13,8 +17,9 @@ use wasip2::io::streams::StreamError;
 
 /// Connect, first-byte and between-bytes timeouts, in milliseconds.
 const TIMEOUT_MS: u64 = 2000;
-/// `blocking-write-and-flush` takes at most 4096 bytes at a time.
-const WRITE_CHUNK: usize = 4096;
+/// Give up on a request that hasn't answered by then, whatever the host's
+/// timeouts did.
+const GIVE_UP: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub enum Error {
@@ -58,21 +63,52 @@ enum Method {
     Delete,
 }
 
+/// A request on its way; check it with [`Pending::poll`].
+pub struct Pending {
+    response: types::FutureIncomingResponse,
+    started: Instant,
+}
+
+impl Pending {
+    /// `None` while there's no answer yet, then the result once.
+    pub fn poll(&self) -> Option<Result<(), Error>> {
+        match self.response.get() {
+            None if self.started.elapsed() >= GIVE_UP => {
+                Some(Err(Error::Transport("no answer in time".into())))
+            }
+            None => None,
+            Some(answer) => Some(finish(answer, false)),
+        }
+    }
+}
+
 impl Client {
-    /// A POST answered with an empty `2xx`.
-    pub fn post_empty<B: Serialize>(&self, path: &str, body: &B) -> Result<(), Error> {
+    /// Starts a POST answered with an empty `2xx`, without waiting for it.
+    pub fn start_post<B: Serialize>(&self, path: &str, body: &B) -> Result<Pending, Error> {
         let json = serde_json::to_vec(body).map_err(|err| Error::Body(err.to_string()))?;
-        self.send(Method::Post, path, Some(&json)).map(drop)
+        Ok(Pending {
+            response: self.start(Method::Post, path, Some(&json))?,
+            started: Instant::now(),
+        })
     }
 
+    /// Sends a DELETE and waits for the answer.
     pub fn delete(&self, path: &str) -> Result<(), Error> {
-        self.send(Method::Delete, path, None).map(drop)
+        let response = self.start(Method::Delete, path, None)?;
+        response.subscribe().block();
+        let result = response
+            .get()
+            .ok_or_else(|| Error::Transport("no response".into()))?;
+        finish(result, true)
     }
 
-    /// Sends a request and returns the body of a `2xx` response.
-    fn send(&self, method: Method, path: &str, body: Option<&[u8]>) -> Result<Vec<u8>, Error> {
-        let transport = |err: &dyn std::fmt::Debug| Error::Transport(format!("{err:?}"));
-
+    /// Sends a request; the response arrives on the returned future.
+    fn start(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&[u8]>,
+    ) -> Result<types::FutureIncomingResponse, Error> {
         let mut headers = vec![(
             "authorization".to_owned(),
             format!("Bearer {}", self.token).into_bytes(),
@@ -96,11 +132,20 @@ impl Client {
             let stream = outgoing
                 .write()
                 .map_err(|()| transport(&"no body stream"))?;
-            for chunk in bytes.chunks(WRITE_CHUNK) {
-                stream
-                    .blocking_write_and_flush(chunk)
-                    .map_err(|err| transport(&err))?;
+            // Written without waiting: the host buffers the whole body (a
+            // write may be up to `check-write` bytes, a megabyte by default),
+            // and nothing reads it until the request is sent below.
+            let mut rest = bytes;
+            while !rest.is_empty() {
+                let room = stream.check_write().map_err(|err| transport(&err))?;
+                let take = usize::try_from(room).unwrap_or(usize::MAX).min(rest.len());
+                if take == 0 {
+                    return Err(transport(&"request body too large to buffer"));
+                }
+                stream.write(&rest[..take]).map_err(|err| transport(&err))?;
+                rest = &rest[take..];
             }
+            stream.flush().map_err(|err| transport(&err))?;
         }
 
         let options = types::RequestOptions::new();
@@ -109,27 +154,37 @@ impl Client {
         let _ = options.set_first_byte_timeout(Some(timeout_ns));
         let _ = options.set_between_bytes_timeout(Some(timeout_ns));
 
-        let future =
+        let response =
             outgoing_handler::handle(request, Some(options)).map_err(|err| transport(&err))?;
         types::OutgoingBody::finish(outgoing, None).map_err(|err| transport(&err))?;
-        future.subscribe().block();
-        let response = future
-            .get()
-            .ok_or_else(|| transport(&"no response"))?
-            .map_err(|()| transport(&"response already taken"))?
-            .map_err(|err| transport(&err))?;
-
-        let status = response.status();
-        let bytes = read_body(&response).map_err(|err| transport(&err))?;
-        if (200..300).contains(&status) {
-            Ok(bytes)
-        } else {
-            Err(Error::Status(status, serde_json::from_slice(&bytes).ok()))
-        }
+        Ok(response)
     }
 }
 
-fn read_body(response: &types::IncomingResponse) -> Result<Vec<u8>, String> {
+fn transport(err: &dyn std::fmt::Debug) -> Error {
+    Error::Transport(format!("{err:?}"))
+}
+
+type Answer = Result<Result<types::IncomingResponse, types::ErrorCode>, ()>;
+
+/// `Ok` for a `2xx` answer, whose body is ignored. An error's body is read
+/// for its message: without `wait`, only as much as has arrived.
+fn finish(answer: Answer, wait: bool) -> Result<(), Error> {
+    let response = answer
+        .map_err(|()| transport(&"response already taken"))?
+        .map_err(|err| transport(&err))?;
+    let status = response.status();
+    if (200..300).contains(&status) {
+        return Ok(());
+    }
+    let message = read_body(&response, wait)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    Err(Error::Status(status, message))
+}
+
+/// Reads the body; without `wait`, only what has already arrived.
+fn read_body(response: &types::IncomingResponse, wait: bool) -> Result<Vec<u8>, String> {
     let body = response
         .consume()
         .map_err(|()| "body already taken".to_owned())?;
@@ -137,7 +192,13 @@ fn read_body(response: &types::IncomingResponse) -> Result<Vec<u8>, String> {
     {
         let stream = body.stream().map_err(|()| "no body stream".to_owned())?;
         loop {
-            match stream.blocking_read(64 * 1024) {
+            let read = if wait {
+                stream.blocking_read(64 * 1024)
+            } else {
+                stream.read(64 * 1024)
+            };
+            match read {
+                Ok(chunk) if chunk.is_empty() && !wait => break,
                 Ok(chunk) => bytes.extend_from_slice(&chunk),
                 Err(StreamError::Closed) => break,
                 Err(err) => return Err(format!("{err:?}")),
