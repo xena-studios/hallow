@@ -6,8 +6,8 @@ FROM rust:1.98-trixie AS build
 WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
 COPY upstream/Vine upstream/Vine
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/upstream/Vine/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/upstream/Vine/target,sharing=locked \
     cd upstream/Vine && cargo build --release --locked \
     && cp target/release/vine /vine
 

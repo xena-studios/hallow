@@ -11,12 +11,12 @@ RUN apt-get update \
 WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
 COPY upstream/pumpkin-java-multiversion upstream/pumpkin-java-multiversion
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/upstream/Pumpkin/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/upstream/Pumpkin/target,sharing=locked \
     cd upstream/Pumpkin && cargo build --release --locked --bin pumpkin \
     && cp target/release/pumpkin /pumpkin
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/upstream/pumpkin-java-multiversion/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/upstream/pumpkin-java-multiversion/target,sharing=locked \
     cd upstream/pumpkin-java-multiversion && cargo build --release --target wasm32-wasip2 \
     && cp target/wasm32-wasip2/release/pumpkin_java_multiversion.wasm /multiversion.wasm
 # Hallow's server plugin builds in the workspace, which names path
@@ -25,8 +25,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # artifacts built from other sources when their timestamps are newer.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=hallow-server-plugin-target,target=/src/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=hallow-server-plugin-target,target=/src/target,sharing=locked \
     cargo build --release --locked --target wasm32-wasip2 -p hallow-server \
     && cp target/wasm32-wasip2/release/hallow_server.wasm /hallow_server.wasm
 

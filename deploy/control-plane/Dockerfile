@@ -9,8 +9,8 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY upstream/Pumpkin upstream/Pumpkin
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=hallow-control-plane-target,target=/src/target,sharing=locked \
     cargo build --release --locked -p hallow-control-plane --bin control-plane \
     && cp target/release/control-plane /control-plane
 
