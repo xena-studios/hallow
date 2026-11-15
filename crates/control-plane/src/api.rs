@@ -17,7 +17,7 @@ use hallow_proto::{
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
-    proxy::{ProxyHeartbeat, ProxyRegistered, RegisterProxy},
+    proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo},
 };
@@ -76,7 +76,8 @@ impl<S: Send + Sync> FromRequestParts<S> for Since {
 
 pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
-        .route(routes::PROXIES, post(register_proxy))
+        .route(routes::PROXIES, post(register_proxy).get(list_proxies))
+        .route(&routes::proxy_drain("{id}"), post(drain_proxy))
         .route(&routes::proxy("{id}"), axum::routing::delete(remove_proxy))
         .route(&routes::proxy_heartbeat("{id}"), post(proxy_heartbeat))
         .route(&routes::proxy_commands("{id}"), get(poll_commands))
@@ -152,6 +153,23 @@ async fn register_proxy(
     let registered = state.store.register_proxy(req).await?;
     tracing::info!(proxy = %id, "proxy registered");
     Ok(Body(registered))
+}
+
+async fn list_proxies(State(state): Shared) -> Reply<Body<Vec<ProxyInfo>>> {
+    Ok(Body(state.store.proxies().await?))
+}
+
+async fn drain_proxy(
+    State(state): Shared,
+    Path(id): Path<String>,
+    Body(req): Body<SetDraining>,
+) -> Reply<StatusCode> {
+    if state.store.set_draining(&id, req.draining).await? {
+        tracing::info!(proxy = %id, draining = req.draining, "proxy drain set");
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(Failure::not_found("proxy isn't registered"))
+    }
 }
 
 async fn proxy_heartbeat(

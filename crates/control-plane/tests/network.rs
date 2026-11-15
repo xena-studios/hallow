@@ -8,14 +8,14 @@
 
 use std::time::Duration;
 
-use hallow_control_plane::{Config, DuplicateLogin, serve};
+use hallow_control_plane::{Config, DuplicateLogin, serve, serve_all};
 use hallow_proto::{
     ApiError, ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
-    proxy::{ProxyHeartbeat, ProxyRegistered, RegisterProxy},
+    proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerRole, ServerState},
 };
@@ -55,6 +55,11 @@ impl Instance {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { serve(listener, config).await.unwrap() });
+        Self::connect(base).await
+    }
+
+    /// Waits for an instance at `base` to answer its health check.
+    async fn connect(base: String) -> Self {
         let instance = Self {
             base,
             http: reqwest::Client::new(),
@@ -454,5 +459,61 @@ async fn auth_and_errors() {
             },
         )
         .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+/// Asks the agent port about `id`, like HAProxy's agent check.
+async fn agent_check(agent: std::net::SocketAddr, id: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(agent).await.unwrap();
+    stream
+        .write_all(format!("{id}\n").as_bytes())
+        .await
+        .unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).await.unwrap();
+    reply.trim().to_owned()
+}
+
+/// Draining a proxy turns its agent check to `drain` at once, tells the
+/// proxy, and survives the proxy restarting.
+#[tokio::test]
+async fn drain_and_agent_checks() {
+    let Some(redis) = redis_url() else { return };
+    let config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    let http = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let agent_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let agent = agent_listener.local_addr().unwrap();
+    let base = format!("http://{}", http.local_addr().unwrap());
+    tokio::spawn(async move { serve_all(http, Some(agent_listener), config).await.unwrap() });
+    let one = Instance::connect(base).await;
+
+    let registered = one.register_proxy("proxy-a").await;
+    assert!(!registered.draining);
+    assert_eq!(agent_check(agent, "proxy-a").await, "up ready");
+    assert_eq!(agent_check(agent, "nobody").await, "down");
+
+    let drain = |draining| SetDraining { draining };
+    let res = one
+        .post(&routes::proxy_drain("proxy-a"), &drain(true))
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(agent_check(agent, "proxy-a").await, "drain");
+    let Poll::Changed { data, .. } = one.commands("proxy-a", registered.commands_revision).await
+    else {
+        panic!("expected a drain command")
+    };
+    assert_eq!(data, [ProxyCommand::Drain { draining: true }]);
+    let proxies: Vec<ProxyInfo> = one.get_json(routes::PROXIES).await;
+    assert!(proxies[0].draining);
+
+    // A restart keeps the drain.
+    assert!(one.register_proxy("proxy-a").await.draining);
+    assert_eq!(agent_check(agent, "proxy-a").await, "drain");
+
+    one.post(&routes::proxy_drain("proxy-a"), &drain(false))
+        .await;
+    assert_eq!(agent_check(agent, "proxy-a").await, "up ready");
+    let res = one.post(&routes::proxy_drain("nobody"), &drain(true)).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

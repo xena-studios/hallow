@@ -5,7 +5,7 @@
 //! netcheck [--proxy 127.0.0.1:25565] [--name netcheck] [--route game-1,lobby] [--stay 0]
 //! netcheck --route "/some-command arg,game-1"   # steps starting with / run a command
 //! netcheck --route "~5,/msg someone hi"         # steps like ~5 wait that many seconds
-//! netcheck --bots 100 [--ramp 10] [--stay 60]      # load test
+//! netcheck --bots 100 [--ramp 10] [--stay 60] [--name load]   # load test; bots are load0000, load0001, ...
 //! ```
 //!
 //! With `--bots`, that many bots join (`--ramp` per second), walk around spawn
@@ -604,7 +604,13 @@ async fn load_test(args: &Args) -> Result<(), String> {
         if i > 0 && i % args.ramp == 0 {
             sleep(Duration::from_secs(1)).await;
         }
-        let name = format!("load{i:04}");
+        // `--name` sets the prefix, so several runs can be online at once.
+        let prefix = if args.name == "netcheck" {
+            "load"
+        } else {
+            args.name.as_str()
+        };
+        let name = format!("{prefix}{i:04}");
         tasks.push(tokio::spawn(load_bot(args.proxy, name, args.stay)));
     }
 

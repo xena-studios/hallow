@@ -4,7 +4,9 @@
 //! | Method | Path | Body | Response |
 //! |---|---|---|---|
 //! | `POST` | [`PROXIES`] | [`RegisterProxy`](crate::proxy::RegisterProxy) | [`ProxyRegistered`](crate::proxy::ProxyRegistered) |
+//! | `GET` | [`PROXIES`] | | `Vec<`[`ProxyInfo`](crate::proxy::ProxyInfo)`>` |
 //! | `POST` | [`proxy_heartbeat`] | [`ProxyHeartbeat`](crate::proxy::ProxyHeartbeat) | `204` |
+//! | `POST` | [`proxy_drain`] | [`SetDraining`](crate::proxy::SetDraining) | `204` |
 //! | `DELETE` | [`proxy`] | | `204` |
 //! | `GET` | [`proxy_commands`]`?since=` | | [`Poll`](crate::Poll)`<Vec<`[`ProxyCommand`](crate::command::ProxyCommand)`>>` |
 //! | `POST` | [`SERVERS`] | [`RegisterServer`](crate::server::RegisterServer) | `204` |
@@ -20,6 +22,9 @@
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
+//!
+//! The control plane also answers HAProxy agent checks on a separate TCP
+//! port (not HTTP); see the control plane's README.
 //!
 //! Long polls are held for up to [`LONG_POLL_SECONDS`], or for `?wait=`
 //! seconds if that is shorter. `wait=0` answers at once, for callers that
@@ -52,6 +57,11 @@ pub fn proxy(id: &str) -> String {
 #[must_use]
 pub fn proxy_heartbeat(id: &str) -> String {
     format!("{PROXIES}/{id}/heartbeat")
+}
+
+#[must_use]
+pub fn proxy_drain(id: &str) -> String {
+    format!("{PROXIES}/{id}/drain")
 }
 
 #[must_use]

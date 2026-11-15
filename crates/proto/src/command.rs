@@ -55,6 +55,10 @@ pub enum ProxyCommand {
         player: Uuid,
         reason: String,
     },
+    /// Stop (or resume) accepting new logins on this proxy.
+    Drain {
+        draining: bool,
+    },
 }
 
 impl From<NetworkCommand> for ProxyCommand {

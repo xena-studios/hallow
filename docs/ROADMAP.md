@@ -42,7 +42,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Control plane: server registry, proxy registry, presence in Redis
 - [x] Vine plugin: presence, global ping, duplicate-login check, server-list sync
 - [x] Vine plugin: cross-proxy commands (`/find`, `/msg` and `/r`, staff `/alert` and `/gkick`); party warp comes with parties
-- [ ] Load balancer with PROXY protocol and health checks
+- [x] Load balancer with PROXY protocol and health checks (HAProxy, drain-aware agent checks against the control plane)
 - [ ] Matchmaker: queues, warm instances, start and delete server images through the Wings API
 - [ ] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow
 - [ ] Hallow server plugin: presence, stats and the link to the control plane, in the base image

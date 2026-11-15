@@ -10,6 +10,7 @@
 //!
 //! [Decisions]: https://github.com/xena-studios/hallow/blob/main/docs/DECISIONS.md
 
+mod agent;
 mod api;
 mod error;
 pub mod events;
@@ -82,6 +83,15 @@ pub async fn serve(
     listener: TcpListener,
     config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    serve_all(listener, None, config).await
+}
+
+/// [`serve`], plus HAProxy agent checks on `agent` (see the `agent` module).
+pub async fn serve_all(
+    listener: TcpListener,
+    agent: Option<TcpListener>,
+    config: Config,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = redis::Client::open(config.redis_url.as_str())?;
     let store = store::Store::new(&client, &config).await?;
     let events = events::Events::listen(client, store.keys().channel());
@@ -91,6 +101,10 @@ pub async fn serve(
         events,
     });
     tokio::spawn(reaper(state.clone()));
+    if let Some(agent) = agent {
+        tracing::info!(address = %agent.local_addr()?, "answering load balancer agent checks");
+        tokio::spawn(agent::serve(agent, state.clone()));
+    }
     tracing::info!(address = %listener.local_addr()?, "control plane listening");
     axum::serve(listener, api::router(state)).await?;
     Ok(())

@@ -402,6 +402,10 @@ impl State {
         self.reported_down = false;
         self.registered = true;
         self.commands_revision = registered.commands_revision;
+        // Staff drained this proxy before it (re)started.
+        if registered.draining != proxy::is_draining() {
+            proxy::set_draining(registered.draining);
+        }
         // Take the whole list on the next poll.
         self.servers_revision = 0;
         self.last_heartbeat = Some(Instant::now());
@@ -609,6 +613,17 @@ impl State {
             }
             ProxyCommand::Kick { player, reason } => {
                 proxy::disconnect_player(&player.to_string(), &reason);
+            }
+            ProxyCommand::Drain { draining } => {
+                proxy::set_draining(draining);
+                log(
+                    Level::Info,
+                    if draining {
+                        "draining: refusing new logins"
+                    } else {
+                        "no longer draining"
+                    },
+                );
             }
         }
     }

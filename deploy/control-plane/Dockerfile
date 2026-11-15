@@ -23,6 +23,7 @@ RUN apt-get update \
 COPY --from=build /control-plane /usr/local/bin/control-plane
 WORKDIR /control-plane
 USER hallow
-EXPOSE 8080
+# 8080: HTTP API. 8081: HAProxy agent checks (plain TCP, private network only).
+EXPOSE 8080 8081
 ENTRYPOINT ["control-plane"]
 HEALTHCHECK --interval=5s --timeout=3s --retries=6 CMD curl -fsS -o /dev/null http://127.0.0.1:8080/healthz || exit 1
