@@ -56,3 +56,21 @@ curl -H "Authorization: Bearer $TOKEN" localhost:18090/v1/proxies               
 ```
 
 HAProxy's stats page, with each proxy's state (`UP`, `DRAIN (agent)`), is at <http://localhost:8404/>. In production the same agent check works with any HAProxy; the agent port carries no token, so keep it on the private network.
+
+## Bedrock through Geyser
+
+`compose/compose.geyser.yaml` adds Geyser Standalone in front of the proxy, so Bedrock players can join:
+
+- **Image:** `geyser/Dockerfile` pins Geyser 2.12.1 build 1302 and checks the jar's published SHA-256.
+- **Ports:** Bedrock clients connect to `localhost:19132`, over RakNet or NetherNet (signaling on 19132/tcp, WebRTC on 19133/udp).
+- **Path:** Geyser joins Vine as a Java player.
+
+```sh
+docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.geyser.yaml up --build -d
+docker run --rm --network compose_default hallow-bedrockbot geyser 19132   # tools/matrix bot
+```
+
+Rules for now:
+
+- **Dev only:** the config (`compose/config/geyser/config.yml`) uses offline auth and doesn't validate Bedrock logins, so bots can join and Bedrock players get offline-mode identities. Floodgate (issue #72) gives them their real ones.
+- **No load balancer:** Geyser connects to the proxy directly, so don't combine it with `compose.lb.yaml` yet.

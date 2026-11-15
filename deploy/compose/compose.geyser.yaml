@@ -1,0 +1,32 @@
+# Geyser in front of the dev network, so Bedrock players can join: they
+# connect to Geyser (RakNet or NetherNet), which joins Vine as a Java player.
+# Layer it on compose.yaml, or on the two-proxy override too:
+#
+#   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.geyser.yaml up --build -d
+#
+# Bedrock clients connect to localhost:19132. DEV ONLY: offline auth, no
+# Floodgate yet (issue #72), so Bedrock players get offline-mode identities.
+# Geyser talks to the proxy directly, so don't combine it with
+# compose.lb.yaml (whose proxies only accept PROXY protocol) yet.
+
+services:
+  geyser:
+    build:
+      context: ../geyser
+    image: hallow-geyser:dev
+    # Geyser rewrites its config on upgrades, so it works on a copy.
+    entrypoint:
+      - sh
+      - -c
+      - cp /config/config.yml /geyser/config.yml && exec java -Xms256M -Xmx1G -jar /opt/geyser.jar --nogui
+    volumes:
+      - ./config/geyser/config.yml:/config/config.yml:ro
+    ports:
+      - "19132:19132/udp"
+      - "19132:19132/tcp"
+      - "19133:19133/udp"
+    depends_on:
+      proxy:
+        condition: service_healthy
+    restart: unless-stopped
+    tty: true
