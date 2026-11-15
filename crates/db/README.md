@@ -33,6 +33,7 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `sessions` | One row per connection: account, proxy, last server, protocol version (`NULL` for Bedrock), IP, login and logout times (`NULL` while open) | `id` |
 | `friend_requests` | A request from one account to another, until it's accepted or denied; asking back accepts | `(from_uuid, to_uuid)` |
 | `friendships` | One row per friendship, the smaller UUID first; at most 200 friends each | `(a_uuid, b_uuid)` |
+| `signal_samples` | Anticheat signals: one row per player per measured window (30 s), with the source, protocol and free-form JSON metrics; deleted after the retention period | `id` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 
 A punishment's issuer and revoker are an actor: a staff `account` (with its UUID), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.

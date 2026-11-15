@@ -780,6 +780,7 @@ dependencies = [
  "chrono",
  "hallow-proto",
  "ipnet",
+ "serde_json",
  "sqlx",
  "tokio",
  "uuid",

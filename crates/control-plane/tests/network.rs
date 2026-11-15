@@ -24,6 +24,7 @@ use hallow_proto::{
     queue::{JoinQueue, QueueStatus},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerRole, ServerState},
+    signal::{PlayerSignals, SignalBatch, SignalRecord},
 };
 use reqwest::StatusCode;
 use serde::{Serialize, de::DeserializeOwned};
@@ -1302,4 +1303,46 @@ async fn metrics_endpoint() {
             "missing {line:?} in:\n{body}"
         );
     }
+}
+
+/// Signals go in from a proxy and come back out by player name.
+#[tokio::test]
+async fn signals_roundtrip() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    let one = Instance::start(config).await;
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    let player = Uuid::new_v4();
+    login_as(&one, player, "Clicker", "proxy-a").await;
+
+    let batch = SignalBatch {
+        source: "proxy-a".into(),
+        samples: vec![PlayerSignals {
+            player,
+            at_ms: 1_800_000_000_000,
+            window_ms: 30_000,
+            protocol: Some(777),
+            metrics: [("attacks".to_owned(), 42.0), ("cps_max".to_owned(), 15.5)].into(),
+        }],
+    };
+    let res = one.post(routes::SIGNALS, &batch).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let records: Vec<SignalRecord> = one.get_json(&routes::signals_of("clicker")).await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].source, "proxy-a");
+    assert_eq!(records[0].at_ms, 1_800_000_000_000);
+    assert_eq!(records[0].metrics["cps_max"], 15.5);
+
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
 }

@@ -18,6 +18,7 @@ pub mod events;
 mod friends;
 mod metrics;
 mod punish;
+mod signals;
 pub mod store;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -55,6 +56,8 @@ pub struct Config {
     /// Usernames given the `admin` rank (`*`) when they log in, to bootstrap
     /// a new network. Needs `database_url`.
     pub admins: Vec<String>,
+    /// How long anticheat signal samples are kept.
+    pub signal_retention_days: u32,
     /// A proxy or server that hasn't heartbeated for this long is removed.
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
@@ -75,6 +78,7 @@ impl Config {
             duplicate_login: DuplicateLogin::Deny,
             database_url: None,
             admins: Vec::new(),
+            signal_retention_days: 14,
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
@@ -128,6 +132,7 @@ pub async fn serve_all(
     });
     tokio::spawn(reaper(state.clone()));
     tokio::spawn(matchmaker(state.clone()));
+    tokio::spawn(signals::retention(state.clone()));
     if let Some(agent) = agent {
         tracing::info!(address = %agent.local_addr()?, "answering load balancer agent checks");
         tokio::spawn(agent::serve(agent, state.clone()));

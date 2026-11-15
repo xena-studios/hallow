@@ -9,9 +9,10 @@ publish.workspace = true
 
 [dependencies]
 hallow-proto = { path = "../proto" }
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "ipnet"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "ipnet", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 ipnet = "2"
+serde_json = "1.0.154"
 uuid.workspace = true
 
 [dev-dependencies]

@@ -18,6 +18,7 @@ mod friends;
 mod punishments;
 mod ranks;
 mod sessions;
+mod signals;
 
 pub use accounts::{
     Account, Edition, Login, PastUsername, find_accounts_by_username, get_account, upsert_account,
@@ -40,6 +41,7 @@ pub use sessions::{
     NewSession, Session, close_proxy_sessions, close_session, open_session, set_session_server,
 };
 
+pub use signals::{NewSignal, Signal, add_signals, delete_signals_before, recent_signals};
 pub use sqlx::{self, PgPool, migrate::MigrateError};
 
 /// The schema every Hallow table lives in.

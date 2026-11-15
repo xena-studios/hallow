@@ -132,7 +132,8 @@ async fn migrations_stay_in_the_hallow_schema() {
             "friendships",
             "punishments",
             "ranks",
-            "sessions"
+            "sessions",
+            "signal_samples"
         ]
     );
     db.drop().await;
@@ -698,5 +699,48 @@ async fn friends() {
 
     assert!(hallow_db::remove_friend(&db.pool, b, a).await.unwrap());
     assert!(!hallow_db::are_friends(&db.pool, a, b).await.unwrap());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn signals() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let (player, stranger) = (Uuid::new_v4(), Uuid::new_v4());
+    join(&db.pool, player, "clicker").await;
+    let metrics = serde_json::json!({"attacks": 42.0, "cps_max": 15.0});
+    let now = Utc::now();
+    let sample = |account, at| hallow_db::NewSignal {
+        account,
+        source: "proxy-1",
+        at,
+        window_ms: 30_000,
+        protocol: Some(777),
+        metrics: &metrics,
+    };
+    // A sample for an account that never joined is skipped.
+    let stored = hallow_db::add_signals(
+        &db.pool,
+        &[
+            sample(player, now - Duration::days(20)),
+            sample(player, now),
+            sample(stranger, now),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored, 2);
+    let recent = hallow_db::recent_signals(&db.pool, player, 10)
+        .await
+        .unwrap();
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0].metrics.0["cps_max"], 15.0);
+    assert!(recent[0].at > recent[1].at, "newest first");
+
+    let deleted = hallow_db::delete_signals_before(&db.pool, now - Duration::days(14))
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
     db.drop().await;
 }

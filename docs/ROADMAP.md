@@ -59,7 +59,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Panel: punishments and staff roles
 - [x] Monitoring: Prometheus, Grafana, Loki (dev stack and dashboard, with each server's tick time from the server plugin)
 - [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
-- [ ] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md))
+- [ ] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md)). The control plane stores and serves samples; the Vine and server-plugin collectors are next
 
 **Gate:** with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.
 
