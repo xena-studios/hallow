@@ -14,7 +14,7 @@ use hallow_proto::{
 use uuid::Uuid;
 
 use crate::{
-    accounts::{DbResult, ban_message, remaining},
+    accounts::{DbResult, ban_message, remaining, resolve},
     store::Store,
 };
 
@@ -63,19 +63,6 @@ pub fn mute_info(mute: &Punishment) -> MuteInfo {
         reason: mute.reason.clone(),
         until_ms: mute.expires_at.map(millis),
     }
-}
-
-/// An account by username: the online player first, then the most recently
-/// seen account that used the name.
-async fn resolve(pool: &PgPool, store: &Store, name: &str) -> DbResult<Option<(Uuid, String)>> {
-    if let Ok(Some(online)) = store.player_by_name(name).await {
-        return Ok(Some((online.uuid, online.username)));
-    }
-    Ok(hallow_db::find_accounts_by_username(pool, name)
-        .await?
-        .into_iter()
-        .next()
-        .map(|a| (a.uuid, a.username)))
 }
 
 fn actor(issuer: Option<Uuid>) -> Actor {

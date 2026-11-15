@@ -14,6 +14,7 @@
 //! ```
 
 mod accounts;
+mod friends;
 mod punishments;
 mod ranks;
 mod sessions;
@@ -21,6 +22,10 @@ mod sessions;
 pub use accounts::{
     Account, Edition, Login, PastUsername, find_accounts_by_username, get_account, upsert_account,
     username_history,
+};
+pub use friends::{
+    Friend, MAX_FRIENDS, RequestOutcome, accept_friend, are_friends, deny_friend, friends_of,
+    pending_requests, remove_friend, request_friend,
 };
 pub use hallow_proto::permission::{has_permission, matches_node};
 pub use punishments::{

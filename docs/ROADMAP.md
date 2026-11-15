@@ -50,7 +50,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Hallow server plugin: presence and stats
 - [ ] `hub` server repo
 - [x] Parties: invite, accept, leave, kick, disband, warp, chat; parties queue together
-- [ ] Friends and online status (the schema is in; the commands come next)
+- [x] Friends and online status: `/friend`, join and leave notices
 - [x] PostgreSQL schema: accounts, ranks, sessions, punishments
 - [x] Control plane on PostgreSQL: accounts and sessions at login, bans refuse logins, staff permissions from ranks, `HALLOW_ADMINS` bootstrap
 - [x] In-game moderation: `/ban`, `/mute` (with durations), `/unban`, `/unmute`, `/warn`, `/history`, enforced on every proxy

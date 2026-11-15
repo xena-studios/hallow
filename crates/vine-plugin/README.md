@@ -14,6 +14,10 @@
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
   - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`.
   - Staff: `/find`, `/alert` and `/gkick`, for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
+- **Friends** (needs the control plane's database):
+  - `/friend` (`/f`): add, accept, deny, remove, list and requests; `/friend <player>` adds.
+  - The list shows who's online and on which server.
+  - Friends are told when each other join or leave the network.
 - **Moderation** (needs the control plane's database):
   - `/ban` and `/mute`, with an optional duration (`30m`, `2h`, `7d`, `1w`); `/unban` and `/unmute`; `/warn`; `/history`.
   - Permissions: `hallow.staff.ban`, `.mute`, `.warn` and `.history`.

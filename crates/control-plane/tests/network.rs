@@ -12,6 +12,7 @@ use hallow_control_plane::{Config, DuplicateLogin, serve, serve_all};
 use hallow_proto::{
     ApiError, ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
+    friend::{FriendAction, FriendReply},
     party::{PartyAction, PartyInfo, PartyReply},
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
@@ -1146,6 +1147,106 @@ async fn punishments_in_game() {
             (PunishmentKind::Mute, true, "boss"),
         ]
     );
+
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// Friends across proxies: requests and accepts reach the other player,
+/// the list shows who's online, and friends hear about joins and leaves.
+#[tokio::test]
+async fn friends_across_proxies() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    config.long_poll = Duration::from_millis(200);
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+    let b = one.register_proxy("proxy-b").await;
+    one.register_hub("hub-1").await;
+    let (alice, bob) = (Uuid::new_v4(), Uuid::new_v4());
+    login_as(&one, alice, "alice", "proxy-a").await;
+    login_as(&one, bob, "bob", "proxy-b").await;
+    let act = |action: FriendAction| {
+        let one = &one;
+        async move {
+            one.post_json::<_, FriendReply>(routes::FRIENDS, &action)
+                .await
+        }
+    };
+
+    let reply = act(FriendAction::Add {
+        player: alice,
+        target: "BOB".into(),
+    })
+    .await;
+    assert!(reply.ok, "{reply:?}");
+    let (rev_b, seen) = messages(&one, "proxy-b", b.commands_revision).await;
+    assert!(
+        seen.iter()
+            .any(|m| m.contains("alice sent you a friend request")),
+        "{seen:?}"
+    );
+    let reply = act(FriendAction::Accept {
+        player: bob,
+        target: "alice".into(),
+    })
+    .await;
+    assert!(reply.ok, "{reply:?}");
+    let (rev_a, seen) = messages(&one, "proxy-a", a.commands_revision).await;
+    assert!(seen.iter().any(|m| m.contains("bob accepted")), "{seen:?}");
+
+    let list = act(FriendAction::List { player: alice }).await;
+    assert!(
+        list.message.contains("1 online of 1") && list.message.contains("bob"),
+        "{list:?}"
+    );
+
+    // Friends hear about leaves and joins.
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: bob,
+            proxy: "proxy-b".into(),
+        },
+    )
+    .await;
+    let (rev_a, seen) = messages(&one, "proxy-a", rev_a).await;
+    assert!(
+        seen.iter().any(|m| m.contains("bob") && m.contains("left")),
+        "{seen:?}"
+    );
+    let list = act(FriendAction::List { player: alice }).await;
+    assert!(list.message.contains("0 online of 1"), "{list:?}");
+    login_as(&one, bob, "bob", "proxy-b").await;
+    let (_, seen) = messages(&one, "proxy-a", rev_a).await;
+    assert!(
+        seen.iter()
+            .any(|m| m.contains("bob") && m.contains("joined")),
+        "{seen:?}"
+    );
+    let _ = rev_b;
+
+    let reply = act(FriendAction::Remove {
+        player: bob,
+        target: "alice".into(),
+    })
+    .await;
+    assert!(reply.ok);
+    let reply = act(FriendAction::Accept {
+        player: bob,
+        target: "alice".into(),
+    })
+    .await;
+    assert!(!reply.ok, "nothing to accept");
 
     admin
         .execute(sqlx::AssertSqlSafe(format!(

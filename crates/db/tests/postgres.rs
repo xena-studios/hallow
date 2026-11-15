@@ -128,6 +128,8 @@ async fn migrations_stay_in_the_hallow_schema() {
             "account_ranks",
             "account_usernames",
             "accounts",
+            "friend_requests",
+            "friendships",
             "punishments",
             "ranks",
             "sessions"
@@ -644,5 +646,57 @@ async fn lookups_use_their_indexes() {
         assert!(plan.contains(index), "{query}\n{plan}");
     }
     drop(conn);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn friends() {
+    use hallow_db::RequestOutcome;
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let [a, b, c] = [(); 3].map(|()| Uuid::new_v4());
+    join(&db.pool, a, "alice").await;
+    join(&db.pool, b, "bob").await;
+    join(&db.pool, c, "carol").await;
+
+    assert_eq!(
+        hallow_db::request_friend(&db.pool, a, b).await.unwrap(),
+        RequestOutcome::Sent
+    );
+    assert_eq!(
+        hallow_db::request_friend(&db.pool, a, b).await.unwrap(),
+        RequestOutcome::AlreadySent
+    );
+    // Asking back accepts.
+    assert_eq!(
+        hallow_db::request_friend(&db.pool, b, a).await.unwrap(),
+        RequestOutcome::Accepted
+    );
+    assert_eq!(
+        hallow_db::request_friend(&db.pool, a, b).await.unwrap(),
+        RequestOutcome::AlreadyFriends
+    );
+    let friends = hallow_db::friends_of(&db.pool, a).await.unwrap();
+    assert_eq!(
+        friends
+            .iter()
+            .map(|f| f.username.as_str())
+            .collect::<Vec<_>>(),
+        ["bob"]
+    );
+    assert_eq!(hallow_db::friends_of(&db.pool, b).await.unwrap()[0].uuid, a);
+
+    hallow_db::request_friend(&db.pool, c, a).await.unwrap();
+    let pending = hallow_db::pending_requests(&db.pool, a).await.unwrap();
+    assert_eq!(pending.iter().map(|f| f.uuid).collect::<Vec<_>>(), [c]);
+    assert!(hallow_db::deny_friend(&db.pool, a, c).await.unwrap());
+    assert!(
+        !hallow_db::accept_friend(&db.pool, a, c).await.unwrap(),
+        "denied requests are gone"
+    );
+
+    assert!(hallow_db::remove_friend(&db.pool, b, a).await.unwrap());
+    assert!(!hallow_db::are_friends(&db.pool, a, b).await.unwrap());
     db.drop().await;
 }
