@@ -22,6 +22,19 @@ Each client joins through Vine, then plays 10 minutes: loads chunks, moves, brea
 | Bedrock, route A (native) | not used | | | | | | Not used: see [Decisions](DECISIONS.md) 4 |
 | Bedrock, route B (Geyser) | Pass | Pass (3797) | Pass | not checked | not tested | **Pass** | 1.26.60 bot over RakNet → Geyser → Vine → Pumpkin. Needed a Vine fix: Geyser sends every command as `chat_command_signed`, which Vine didn't intercept, so `/server` did nothing (fixed in our fork). A real NetherNet client is still to try |
 
+**Run 2026-11-15** with Vine `hallow` `e289b06`, which looks packet ids up per client version (#66 stage A) and adds the small fixes. Same bots and backends as above, with the multiversion plugin loaded.
+
+| Client | Join | Chunks | Switch ×2 | Notes |
+|---|---|---|---|---|
+| 1.7.10 | Pass | Pass (660) | not tried | Compression is off below 1.8. A minecraft-protocol probe got Vine's `/server` reply |
+| 1.8.9 | Pass | Pass (638) | **Fail** | Kicked when the bot tab-completes: the multiversion plugin can't read the pre-1.13 tab-complete packet, which Vine passes through. `/server` works for a client that doesn't tab-complete |
+| 1.12.2 | Pass | Pass (638) | **Fail** | Same as 1.8.9 |
+| 1.16.5 | Pass | Pass (1506) | Pass | Tab completion shows `/server`. Below 1.20.2 the switch is a second join without the respawn sequence; a proper sequence is #66 stage B |
+| 1.20.1 | Pass | Pass (1565) | Pass | Same note as 1.16.5 |
+| 1.21.11 | Pass | Pass (266) | Pass | |
+| 26.1 | Pass | Pass (281) | Pass | |
+| 26.3 | Pass | Pass | Pass | `netcheck` |
+
 Old clients matter most because the multiversion plugin rewrites packet bodies only for entity spawns. Chunks, chat, join and inventory packets are where it is expected to break first.
 
 **What the run showed:** every old-version failure except 1.8.9's parse error is in Vine, not the plugin. Vine uses one packet id table for every client, enables compression for 1.7, and only re-enters configuration on 1.20.2+. This is the work in #66 (translate old clients in Vine, [Decisions](DECISIONS.md) 29); launch stays 26.3 and Bedrock.
