@@ -16,7 +16,7 @@ node java-1.7.js        # 1.7.10, through minecraft-protocol
 
 26.3 is `netcheck` (`cargo run --release -p netcheck -- --route game-1,lobby`).
 
-**Bedrock** through Geyser: run Geyser Standalone with `java.address` set to the proxy, `auth-type: offline`, `bedrock.transport: both` (the bot speaks RakNet) and `advanced.validate-bedrock-login: false`, then:
+**Bedrock** through Geyser: start the dev network with `deploy/compose/compose.geyser.yaml` (see [deploy](../../deploy/README.md#bedrock-through-geyser)), which runs Geyser with the settings the bot needs, then:
 
 ```sh
 docker build -t hallow-bedrockbot tools/matrix
