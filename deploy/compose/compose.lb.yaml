@@ -1,0 +1,38 @@
+# Load balancer for the two-proxy dev network: HAProxy in front of both
+# proxies, with PROXY protocol and drain-aware agent checks against the
+# control plane. Layer it on the two-proxy override:
+#
+#   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml \
+#     -f deploy/compose/compose.lb.yaml up --build -d
+#
+# Players connect to localhost:25565 (HAProxy). The proxies take PROXY
+# protocol only, so they're no longer reachable directly. HAProxy's stats page
+# is on localhost:8404.
+#
+# Drain a proxy: POST /v1/proxies/proxy-2/drain {"draining": true} on the
+# control plane (localhost:18090). Undrain with false.
+
+services:
+  lb:
+    image: haproxy:3.2-alpine
+    ports:
+      - "25565:25565"
+      - "127.0.0.1:8404:8404"
+    volumes:
+      - ./config/hallow/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      proxy:
+        condition: service_healthy
+      proxy-2:
+        condition: service_healthy
+    restart: unless-stopped
+
+  proxy:
+    ports: !reset []
+    volumes:
+      - ./config/hallow/vine-lb.toml:/proxy/vine.toml:ro
+
+  proxy-2:
+    ports: !reset []
+    volumes:
+      - ./config/hallow/vine-lb.toml:/proxy/vine.toml:ro

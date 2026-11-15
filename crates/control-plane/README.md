@@ -14,6 +14,14 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - Refusals cover a full network, no free hub, or a duplicate login. With `HALLOW_DUPLICATE_LOGIN=kick_old`, a duplicate login kicks the old session instead.
   - Two proxies racing the same login can't both win.
 - **Leaving.** A leave only counts from the proxy the player is on, so a late leave from an old session can't remove a newer login.
+- **Draining.**
+  - `POST /v1/proxies/{id}/drain` stops (or resumes) new players for a proxy.
+  - The proxy refuses new logins as soon as it polls, and the request survives the proxy restarting.
+  - `GET /v1/proxies` lists proxies with their player counts.
+- **Load balancer agent checks.**
+  - A plain TCP port (`HALLOW_AGENT_LISTEN`, default `0.0.0.0:8081`) answers HAProxy's `agent-check`.
+  - HAProxy sends a proxy id; the agent replies `up ready`, `drain` (weight 0: no new players, existing ones stay) or `down`.
+  - The port carries no token and changes nothing. Keep it on the private network.
 - **Lookups.** Online players can be looked up by UUID, or by username ignoring case, for `/find` and `/msg`.
 - **Commands.**
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.

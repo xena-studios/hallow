@@ -21,6 +21,10 @@ pub struct ProxyRegistered {
     pub servers_revision: u64,
     /// The current command revision; poll [`crate::routes::proxy_commands`] from here.
     pub commands_revision: u64,
+    /// Staff asked for this proxy to be drained (it survives restarts): refuse
+    /// new logins until told otherwise.
+    #[serde(default)]
+    pub draining: bool,
 }
 
 /// `POST /v1/proxies/{id}/heartbeat`.
@@ -40,4 +44,12 @@ pub struct ProxyInfo {
     pub players: u32,
     pub draining: bool,
     pub last_heartbeat_ms: u64,
+}
+
+/// `POST /v1/proxies/{id}/drain`: stop (or resume) sending new players to a
+/// proxy. The load balancer stops picking it at once; the proxy refuses new
+/// logins as soon as it polls. Players already on it stay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetDraining {
+    pub draining: bool,
 }

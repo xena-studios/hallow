@@ -7,6 +7,7 @@
 //! | `server-alive:{name}` | string with TTL | present while the server heartbeats |
 //! | `proxies` | hash | proxy id → [`ProxyInfo`] JSON |
 //! | `proxy-alive:{id}` | string with TTL | present while the proxy heartbeats |
+//! | `proxy-drain:{id}` | string | present while staff want the proxy drained; kept across restarts and expiry |
 //! | `online` | hash | player UUID → [`PlayerLocation`] JSON |
 //! | `proxy-players:{id}` | set | UUIDs on that proxy, to clean up when it goes |
 //! | `names` | hash | lower-case username → UUID of online players, for lookups by name |
@@ -91,6 +92,9 @@ impl Keys {
     }
     fn proxy_alive(&self, id: &str) -> String {
         format!("{}:proxy-alive:{id}", self.prefix)
+    }
+    fn proxy_drain(&self, id: &str) -> String {
+        format!("{}:proxy-drain:{id}", self.prefix)
     }
     fn online(&self) -> String {
         format!("{}:online", self.prefix)
@@ -183,6 +187,17 @@ pub enum RegisterError {
     NameTaken,
 }
 
+/// A proxy's state for the load balancer's agent check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentState {
+    /// Registered, heartbeating and taking logins.
+    Ready,
+    /// Taking no new logins; players on it stay.
+    Drain,
+    /// Unknown or expired.
+    Down,
+}
+
 /// What [`Store::reap`] removed.
 #[derive(Debug, Default)]
 pub struct Reaped {
@@ -243,12 +258,13 @@ impl Store {
     /// has no players, so any presence it left behind is dropped.
     pub async fn register_proxy(&self, req: RegisterProxy) -> Result<ProxyRegistered> {
         self.drop_proxy_players(&req.id).await?;
+        let draining: bool = self.conn().exists(self.keys.proxy_drain(&req.id)).await?;
         let info = ProxyInfo {
             id: req.id.clone(),
             address: req.address,
             version: req.version,
             players: 0,
-            draining: false,
+            draining,
             last_heartbeat_ms: now_ms(),
         };
         let (servers_revision, commands_revision): (Option<u64>, Option<u64>) = redis::pipe()
@@ -264,6 +280,7 @@ impl Store {
         Ok(ProxyRegistered {
             servers_revision: servers_revision.unwrap_or(0),
             commands_revision: commands_revision.unwrap_or(0),
+            draining,
         })
     }
 
@@ -301,10 +318,70 @@ impl Store {
             .hdel(self.keys.proxies(), id)
             .del(self.keys.proxy_alive(id))
             .ignore()
+            .del(self.keys.proxy_drain(id))
+            .ignore()
             .query_async(&mut self.conn())
             .await?;
         self.forget_proxy(id).await?;
         Ok(removed == 1)
+    }
+
+    /// Records whether staff want a proxy drained and tells the proxy.
+    /// Returns false if the proxy isn't registered.
+    pub async fn set_draining(&self, id: &str, draining: bool) -> Result<bool> {
+        let Some(mut info) = self.proxy(id).await? else {
+            return Ok(false);
+        };
+        let key = self.keys.proxy_drain(id);
+        if draining {
+            let _: () = self.conn().set(key, 1).await?;
+        } else {
+            let _: () = self.conn().del(key).await?;
+        }
+        // Take effect for the load balancer now; the proxy's next heartbeat
+        // confirms it.
+        info.draining = draining;
+        let _: () = self
+            .conn()
+            .hset(self.keys.proxies(), id, serde_json::to_string(&info)?)
+            .await?;
+        self.push_command(id, &ProxyCommand::Drain { draining })
+            .await?;
+        Ok(true)
+    }
+
+    /// Every registered proxy, sorted by id. `draining` is true if the proxy
+    /// says so or staff asked for it.
+    pub async fn proxies(&self) -> Result<Vec<ProxyInfo>> {
+        let raw: Vec<String> = self.conn().hvals(self.keys.proxies()).await?;
+        let mut proxies = Vec::with_capacity(raw.len());
+        for raw in raw {
+            let mut info: ProxyInfo = serde_json::from_str(&raw)?;
+            let drain: bool = self.conn().exists(self.keys.proxy_drain(&info.id)).await?;
+            info.draining |= drain;
+            proxies.push(info);
+        }
+        proxies.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(proxies)
+    }
+
+    /// What the load balancer should do with a proxy.
+    pub async fn agent_state(&self, id: &str) -> Result<AgentState> {
+        let (alive, drain, raw): (bool, bool, Option<String>) = redis::pipe()
+            .exists(self.keys.proxy_alive(id))
+            .exists(self.keys.proxy_drain(id))
+            .hget(self.keys.proxies(), id)
+            .query_async(&mut self.conn())
+            .await?;
+        let Some(raw) = raw.filter(|_| alive) else {
+            return Ok(AgentState::Down);
+        };
+        let info: ProxyInfo = serde_json::from_str(&raw)?;
+        Ok(if drain || info.draining {
+            AgentState::Drain
+        } else {
+            AgentState::Ready
+        })
     }
 
     /// Clears what a removed proxy leaves behind: its players and queued commands.

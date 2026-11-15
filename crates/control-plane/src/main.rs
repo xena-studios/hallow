@@ -5,6 +5,7 @@
 //! | `HALLOW_TOKEN` or `HALLOW_TOKEN_FILE` | required | Bearer token every caller sends |
 //! | `HALLOW_REDIS_URL` | `redis://127.0.0.1:6379` | |
 //! | `HALLOW_LISTEN` | `0.0.0.0:8080` | |
+//! | `HALLOW_AGENT_LISTEN` | `0.0.0.0:8081` | HAProxy agent checks (plain TCP, no token); `off` disables |
 //! | `HALLOW_KEY_PREFIX` | `hallow` | Prefix for Redis keys, to share one Redis between networks |
 //! | `HALLOW_HUB_KIND` | `hub` | Server kind players land on after login |
 //! | `HALLOW_MAX_PLAYERS` | `1000` | Network player limit |
@@ -13,7 +14,7 @@
 
 use std::{env, process::ExitCode};
 
-use hallow_control_plane::{Config, DuplicateLogin, serve};
+use hallow_control_plane::{Config, DuplicateLogin, serve_all};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -37,7 +38,19 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Err(err) = serve(listener, config).await {
+    let agent_listen = env::var("HALLOW_AGENT_LISTEN").unwrap_or_else(|_| "0.0.0.0:8081".into());
+    let agent = if agent_listen == "off" {
+        None
+    } else {
+        match tokio::net::TcpListener::bind(&agent_listen).await {
+            Ok(listener) => Some(listener),
+            Err(err) => {
+                tracing::error!(%err, address = %agent_listen, "can't listen for agent checks");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+    if let Err(err) = serve_all(listener, agent, config).await {
         tracing::error!(%err, "control plane stopped");
         return ExitCode::FAILURE;
     }

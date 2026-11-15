@@ -1,0 +1,67 @@
+# Copy of vine.toml for the load-balanced network (compose.lb.yaml): the same
+# except proxy_protocol. Keep the two in step.
+# Hallow two-proxy dev network: vine.toml for proxy and proxy-2
+# (compose.hallow.yaml). Same as ../vine.toml, except that the servers come
+# from the control plane through the hallow_vine plugin instead of [servers].
+
+[server]
+bind_address = "0.0.0.0:25565"
+# false lets offline (cracked) and bot clients join for local testing. Set
+# true to require Mojang accounts; backends trust Vine either way.
+online_mode = false
+prevent_proxy_connections = true
+compression_threshold = 256
+compression_level = 6
+shutdown_timeout_secs = 10
+
+[network]
+# HAProxy sends PROXY protocol v2 headers; direct connections are refused.
+proxy_protocol = true
+log_pings = false
+
+[motd]
+line1 = "§6§lHallow §7» §fdev network"
+line2 = "§7Vine + Pumpkin"
+max_players = 100
+version_name = "Hallow dev"
+protocol_version = 777
+sample_players = []
+show_sample_players = false
+
+[security]
+rate_limit_enabled = true
+max_connections_per_sec = 20
+connection_burst = 40
+max_packets_per_sec = 500
+max_packet_size = 2097152
+validate_usernames = true
+
+[routing]
+default_server = "lobby"
+fallback_server = "lobby"
+try_fallback_on_connect_failure = true
+
+[routing.forced_hosts]
+
+# Vine needs the table; hallow_vine fills it from the control plane.
+[servers]
+
+[telemetry]
+enabled = false
+
+[bedrock]
+enabled = false
+
+[plugins]
+enabled = true
+plugin_dir = "./plugins"
+
+# Keys are plugin file stems. hallow_vine calls the control plane over HTTP
+# and reads config.toml, token and forwarding.secret from its data folder.
+[plugins.permissions]
+hallow_vine = ["http.outbound", "fs.read.data"]
+
+# Dev only: lets the netcheck bot named "netstaff" run the staff commands
+# (/find, /alert, /gkick) in the cross-proxy command test.
+[permissions.users]
+netstaff = { permissions = ["hallow.staff.*"] }
