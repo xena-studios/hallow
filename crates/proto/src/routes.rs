@@ -25,6 +25,8 @@
 //! | `POST` | [`PUNISHMENTS`] | [`IssuePunishment`](crate::punishment::IssuePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
 //! | `POST` | [`PUNISHMENTS_REVOKE`] | [`RevokePunishment`](crate::punishment::RevokePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
 //! | `GET` | [`punishment_history`] | | `Vec<`[`PunishmentRecord`](crate::punishment::PunishmentRecord)`>` |
+//! | `POST` | [`SIGNALS`] | [`SignalBatch`](crate::signal::SignalBatch) | `204` |
+//! | `GET` | [`signals_of`] | | `Vec<`[`SignalRecord`](crate::signal::SignalRecord)`>` |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
@@ -56,6 +58,7 @@ pub const COMMANDS: &str = "/v1/commands";
 pub const PLAYERS: &str = "/v1/players";
 pub const PARTIES: &str = "/v1/parties";
 pub const FRIENDS: &str = "/v1/friends";
+pub const SIGNALS: &str = "/v1/signals";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 
@@ -113,6 +116,12 @@ pub fn player_by_name(name: &str) -> String {
 #[must_use]
 pub fn punishment_history(name: &str) -> String {
     player_by_name(name).replacen(PLAYERS, PUNISHMENTS, 1)
+}
+
+/// A player's recent anticheat signal samples by username, newest first.
+#[must_use]
+pub fn signals_of(name: &str) -> String {
+    player_by_name(name).replacen(PLAYERS, SIGNALS, 1)
 }
 
 /// The party `uuid` is in.

@@ -20,6 +20,7 @@ pub mod punishment;
 pub mod queue;
 pub mod routes;
 pub mod server;
+pub mod signal;
 
 use serde::{Deserialize, Serialize};
 

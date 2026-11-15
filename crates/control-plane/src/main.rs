@@ -12,6 +12,7 @@
 //! | `HALLOW_DUPLICATE_LOGIN` | `deny` | `deny` refuses a second login; `kick_old` kicks the first session |
 //! | `HALLOW_DATABASE_URL` | none | PostgreSQL for accounts, bans, ranks and sessions; without it they're off |
 //! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
+//! | `HALLOW_SIGNAL_RETENTION_DAYS` | `14` | How long anticheat signal samples are kept |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
@@ -100,6 +101,11 @@ fn config() -> Result<Config, String> {
             .filter(|a| !a.is_empty())
             .map(str::to_owned)
             .collect();
+    }
+    if let Ok(days) = env::var("HALLOW_SIGNAL_RETENTION_DAYS") {
+        config.signal_retention_days = days
+            .parse()
+            .map_err(|err| format!("HALLOW_SIGNAL_RETENTION_DAYS {days}: {err}"))?;
     }
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
         config.duplicate_login = match mode.as_str() {

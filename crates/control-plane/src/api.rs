@@ -24,6 +24,7 @@ use hallow_proto::{
     queue::{JoinQueue, QueueStatus},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo},
+    signal::{SignalBatch, SignalRecord},
 };
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
@@ -32,7 +33,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, friends, punish,
+    events, friends, punish, signals,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -100,6 +101,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::COMMANDS, post(send_command))
         .route(routes::PARTIES, post(party_action))
         .route(routes::FRIENDS, post(friend_action))
+        .route(routes::SIGNALS, post(add_signals).get(signal_history))
         .route(
             routes::PUNISHMENTS,
             post(issue_punishment).get(punishment_history),
@@ -409,6 +411,33 @@ async fn player_by_name(
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("player isn't online"))
+}
+
+// Anticheat signals
+
+async fn add_signals(State(state): Shared, Body(batch): Body<SignalBatch>) -> Reply<StatusCode> {
+    check_name("signal source", &batch.source)?;
+    if batch.samples.len() > signals::MAX_BATCH {
+        return Err(Failure::bad_request(format!(
+            "at most {} samples per batch",
+            signals::MAX_BATCH
+        )));
+    }
+    let db = database(&state)?;
+    signals::store(db, &batch).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn signal_history(
+    State(state): Shared,
+    query: Result<Query<NameParams>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<Vec<SignalRecord>>> {
+    let Query(params) = query?;
+    let db = database(&state)?;
+    signals::history(db, &state.store, &params.name)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
 }
 
 // Friends

@@ -36,6 +36,10 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `POST /v1/punishments/revoke` lifts a ban or mute;
   - `GET /v1/punishments?name=` lists a player's last 10;
   - an active mute is sent with the login and pushed whenever it changes.
+- **Anticheat signals** (with the database):
+  - proxies and servers `POST /v1/signals` batches of per-player samples, each a window of named measurements, from 30 s of play;
+  - they're kept in PostgreSQL for `HALLOW_SIGNAL_RETENTION_DAYS` (14);
+  - `GET /v1/signals?name=` returns a player's last 200 for review (docs/ANTICHEAT.md, phase 1).
 - **Metrics.** `GET /metrics` (no token) serves Prometheus' text format, read from live state:
   - players online and the limit;
   - players per proxy;
