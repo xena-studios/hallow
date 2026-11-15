@@ -59,6 +59,11 @@ pub enum ProxyCommand {
     Drain {
         draining: bool,
     },
+    /// The player was muted (`Some`) or unmuted (`None`).
+    Mute {
+        player: Uuid,
+        mute: Option<crate::punishment::MuteInfo>,
+    },
 }
 
 impl From<NetworkCommand> for ProxyCommand {

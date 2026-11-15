@@ -21,6 +21,9 @@
 //! | `GET` | [`player_by_name`] | | [`PlayerLocation`](crate::presence::PlayerLocation) or `404`; names match without case |
 //! | `POST` | [`PARTIES`] | [`PartyAction`](crate::party::PartyAction) | [`PartyReply`](crate::party::PartyReply) |
 //! | `GET` | [`party`] | | [`PartyInfo`](crate::party::PartyInfo) or `404` |
+//! | `POST` | [`PUNISHMENTS`] | [`IssuePunishment`](crate::punishment::IssuePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
+//! | `POST` | [`PUNISHMENTS_REVOKE`] | [`RevokePunishment`](crate::punishment::RevokePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
+//! | `GET` | [`punishment_history`] | | `Vec<`[`PunishmentRecord`](crate::punishment::PunishmentRecord)`>` |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
@@ -51,6 +54,8 @@ pub const QUEUES: &str = "/v1/queues";
 pub const COMMANDS: &str = "/v1/commands";
 pub const PLAYERS: &str = "/v1/players";
 pub const PARTIES: &str = "/v1/parties";
+pub const PUNISHMENTS: &str = "/v1/punishments";
+pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 
 #[must_use]
 pub fn proxy(id: &str) -> String {
@@ -100,6 +105,12 @@ pub fn player_by_name(name: &str) -> String {
         }
     }
     path
+}
+
+/// A player's punishments by username, newest first.
+#[must_use]
+pub fn punishment_history(name: &str) -> String {
+    player_by_name(name).replacen(PLAYERS, PUNISHMENTS, 1)
 }
 
 /// The party `uuid` is in.

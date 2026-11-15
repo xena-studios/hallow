@@ -15,6 +15,7 @@ mod agent;
 mod api;
 mod error;
 pub mod events;
+mod punish;
 pub mod store;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};

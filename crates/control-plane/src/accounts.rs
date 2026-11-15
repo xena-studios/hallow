@@ -6,7 +6,7 @@ use std::net::IpAddr;
 
 use chrono::Utc;
 use hallow_db::{Edition, Login, NewSession, PgPool, Punishment};
-use hallow_proto::presence::LoginRequest;
+use hallow_proto::{presence::LoginRequest, punishment::MuteInfo};
 use uuid::Uuid;
 
 pub type DbResult<T> = Result<T, hallow_db::sqlx::Error>;
@@ -14,13 +14,19 @@ pub type DbResult<T> = Result<T, hallow_db::sqlx::Error>;
 /// The rank `admins` from the config get: everything, highest weight.
 pub const ADMIN_RANK: &str = "admin";
 
-/// Records the login and returns the player's permission nodes, or the
+/// What an allowed login carries from the database.
+pub struct Grant {
+    pub permissions: Vec<String>,
+    pub mute: Option<MuteInfo>,
+}
+
+/// Records the login and returns the player's permissions and mute, or the
 /// reason they're refused (a ban).
 pub async fn check_login(
     pool: &PgPool,
     req: &LoginRequest,
     admins: &[String],
-) -> DbResult<Result<Vec<String>, String>> {
+) -> DbResult<Result<Grant, String>> {
     let ip = req.ip.as_deref().and_then(|ip| ip.parse::<IpAddr>().ok());
     let account = hallow_db::upsert_account(
         pool,
@@ -42,9 +48,14 @@ pub async fn check_login(
     if admins.iter().any(|a| a.eq_ignore_ascii_case(&req.username)) {
         ensure_admin(pool, account.uuid).await?;
     }
-    Ok(Ok(hallow_db::account_permissions(pool, account.uuid)
+    let permissions = hallow_db::account_permissions(pool, account.uuid)
         .await?
-        .nodes))
+        .nodes;
+    let mute = hallow_db::active_mute(pool, account.uuid)
+        .await?
+        .as_ref()
+        .map(crate::punish::mute_info);
+    Ok(Ok(Grant { permissions, mute }))
 }
 
 /// Gives the account the admin rank, creating the rank (`*`) the first time.

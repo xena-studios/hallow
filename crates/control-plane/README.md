@@ -28,6 +28,11 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `HALLOW_ADMINS` gives the listed usernames the `admin` rank (`*`) at login, to bootstrap a network.
 
   With a database configured, logins fail closed when it's down. Without one, these are all off and nobody has staff permissions.
+- **Punishments** (with the database):
+  - `POST /v1/punishments` issues a ban, mute, kick or warning by username (online or not) and enforces it on the player's proxy;
+  - `POST /v1/punishments/revoke` lifts a ban or mute;
+  - `GET /v1/punishments?name=` lists a player's last 10;
+  - an active mute is sent with the login and pushed whenever it changes.
 - **Lookups.** Online players can be looked up by UUID, or by username ignoring case, for `/find` and `/msg`.
 - **Commands.**
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.

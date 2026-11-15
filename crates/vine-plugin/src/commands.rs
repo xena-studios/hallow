@@ -11,6 +11,15 @@
 //! | `/pc <message>` | | Party chat |
 //! | `/play <game>` | | Queue for a game, with your party if you lead one |
 //! | `/leavequeue` (`/lq`) | | Leave the queue |
+//! | `/ban <player> [duration] <reason>` | `hallow.staff.ban` | Ban; permanent without a duration (`30m`, `2h`, `7d`, `1w`) |
+//! | `/unban <player> [reason]` | `hallow.staff.ban` | Lift a ban |
+//! | `/mute <player> [duration] <reason>` | `hallow.staff.mute` | Mute: no chat, `/msg`, `/r` or party chat |
+//! | `/unmute <player> [reason]` | `hallow.staff.mute` | Lift a mute |
+//! | `/warn <player> <reason>` | `hallow.staff.warn` | Warn, on the record |
+//! | `/history <player>` | `hallow.staff.history` | A player's last 10 punishments |
+//!
+//! Punishments are kept in PostgreSQL, so they need a control plane with a
+//! database.
 //!
 //! Staff permissions come from the player's ranks in the database, sent with
 //! their login (`hallow.staff.*` and the like; see `hallow_proto::permission`).
@@ -21,6 +30,9 @@ use hallow_proto::{
     command::NetworkCommand,
     party::{PartyAction, PartyReply},
     presence::PlayerLocation,
+    punishment::{
+        IssuePunishment, PunishmentKind, PunishmentRecord, PunishmentReply, RevokePunishment,
+    },
     queue::{JoinQueue, QueueStatus},
     routes,
 };
@@ -38,6 +50,12 @@ const PARTY: u32 = 15;
 const PARTY_CHAT: u32 = 16;
 const PLAY: u32 = 17;
 const LEAVE_QUEUE: u32 = 18;
+const BAN: u32 = 19;
+const UNBAN: u32 = 20;
+const MUTE: u32 = 21;
+const UNMUTE: u32 = 22;
+const WARN: u32 = 23;
+const HISTORY: u32 = 24;
 
 const PARTY_USAGE: &str = "/party <player> | invite <player> | accept <player> | leave | kick <player> | disband | warp | list | chat <message>";
 const PARTY_SUBCOMMANDS: [&str; 8] = [
@@ -45,6 +63,16 @@ const PARTY_SUBCOMMANDS: [&str; 8] = [
 ];
 
 pub fn register(ctx: &Context) {
+    for (id, name, description) in [
+        (BAN, "ban", "Ban a player from the network"),
+        (UNBAN, "unban", "Lift a ban"),
+        (MUTE, "mute", "Mute a player"),
+        (UNMUTE, "unmute", "Lift a mute"),
+        (WARN, "warn", "Warn a player"),
+        (HISTORY, "history", "Show a player's punishments"),
+    ] {
+        ctx.register_command(id, name, description, &[], None);
+    }
     ctx.register_command(PARTY, "party", "Play with friends", &["p".into()], None);
     ctx.register_command(PARTY_CHAT, "pc", "Message your party", &[], None);
     ctx.register_command(PLAY, "play", "Queue for a game", &[], None);
@@ -86,6 +114,47 @@ pub fn register(ctx: &Context) {
     );
 }
 
+fn moderation_node(id: u32) -> Option<&'static str> {
+    Some(match id {
+        BAN | UNBAN => "hallow.staff.ban",
+        MUTE | UNMUTE => "hallow.staff.mute",
+        WARN => "hallow.staff.warn",
+        HISTORY => "hallow.staff.history",
+        _ => return None,
+    })
+}
+
+/// `30s`, `30m`, `2h`, `7d` or `1w` in seconds; `None` if it isn't one.
+pub fn parse_duration(text: &str) -> Option<u64> {
+    let (number, unit) = text.split_at(text.len().checked_sub(1)?);
+    let n: u64 = number.parse().ok().filter(|n| *n > 0)?;
+    let unit = match unit.to_ascii_lowercase().as_str() {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 604_800,
+        _ => return None,
+    };
+    n.checked_mul(unit)
+}
+
+/// `3d 4h`, `5h 10m`, `12m`, `40s`: the two largest units.
+pub fn duration_text(seconds: u64) -> String {
+    let (d, h, m, s) = (
+        seconds / 86_400,
+        (seconds / 3600) % 24,
+        (seconds / 60) % 60,
+        seconds % 60,
+    );
+    match (d, h, m) {
+        (0, 0, 0) => format!("{s}s"),
+        (0, 0, _) => format!("{m}m"),
+        (0, _, _) => format!("{h}h {m}m"),
+        _ => format!("{d}d {h}h"),
+    }
+}
+
 fn staff_node(id: u32) -> &'static str {
     match id {
         FIND => "hallow.staff.find",
@@ -107,6 +176,20 @@ impl State {
         args: &[String],
     ) -> Result<i32, String> {
         let usage = |text: &str| Err(format!("§cUsage: {text}"));
+        // Muted players can't talk to anyone, through any command.
+        let talking = matches!(id, MSG | REPLY | PARTY_CHAT)
+            || (id == PARTY && args.first().is_some_and(|a| a.eq_ignore_ascii_case("chat")));
+        if talking
+            && let Some(uuid) = sender.player_uuid.as_deref()
+            && let Some(notice) = self.muted(uuid)
+        {
+            return Err(notice);
+        }
+        if let Some(node) = moderation_node(id)
+            && !self.allowed(sender, node)
+        {
+            return Err("§cYou don't have permission to do that.".into());
+        }
         match (id, args) {
             (MSG, [target, message @ ..]) if !message.is_empty() => {
                 self.private_message(sender, target, &plain(message))
@@ -177,6 +260,42 @@ impl State {
                 self.party(sender, &action)
             }
             (PARTY_CHAT, _) => usage("/pc <message>"),
+            (BAN | MUTE, [target, rest @ ..]) if !rest.is_empty() => {
+                let (duration, reason) = match parse_duration(&rest[0]) {
+                    Some(seconds) if rest.len() > 1 => (Some(seconds), &rest[1..]),
+                    Some(_) => return usage("/ban|/mute <player> [duration] <reason>"),
+                    None => (None, rest),
+                };
+                let kind = if id == BAN {
+                    PunishmentKind::Ban
+                } else {
+                    PunishmentKind::Mute
+                };
+                self.punish(sender, kind, target, &plain(reason), duration)
+            }
+            (BAN, _) => usage("/ban <player> [duration] <reason>"),
+            (MUTE, _) => usage("/mute <player> [duration] <reason>"),
+            (WARN, [target, reason @ ..]) if !reason.is_empty() => {
+                self.punish(sender, PunishmentKind::Warn, target, &plain(reason), None)
+            }
+            (WARN, _) => usage("/warn <player> <reason>"),
+            (UNBAN | UNMUTE, [target, reason @ ..]) => {
+                let request = RevokePunishment {
+                    kind: if id == UNBAN {
+                        PunishmentKind::Ban
+                    } else {
+                        PunishmentKind::Mute
+                    },
+                    target: target.clone(),
+                    issuer: self.issuer(sender),
+                    reason: (!reason.is_empty()).then(|| plain(reason)),
+                };
+                self.moderate(sender, routes::PUNISHMENTS_REVOKE, &request)
+            }
+            (UNBAN, _) => usage("/unban <player> [reason]"),
+            (UNMUTE, _) => usage("/unmute <player> [reason]"),
+            (HISTORY, [target]) => self.history(sender, target),
+            (HISTORY, _) => usage("/history <player>"),
             (PLAY, [kind]) => {
                 let request = JoinQueue {
                     kind: kind.to_ascii_lowercase(),
@@ -274,6 +393,96 @@ impl State {
         if let Some(uuid) = &sender.player_uuid {
             // Replying to someone you just messaged goes back to them.
             self.last_from.insert(uuid.clone(), location.username);
+        }
+        Ok(1)
+    }
+
+    fn issuer(&self, sender: &CommandSender) -> Option<Uuid> {
+        sender
+            .player_uuid
+            .as_deref()
+            .and_then(|uuid| Uuid::parse_str(uuid).ok())
+    }
+
+    fn punish(
+        &self,
+        sender: &CommandSender,
+        kind: PunishmentKind,
+        target: &str,
+        reason: &str,
+        duration_seconds: Option<u64>,
+    ) -> Result<i32, String> {
+        let request = IssuePunishment {
+            kind,
+            target: target.to_owned(),
+            issuer: self.issuer(sender),
+            reason: reason.to_owned(),
+            duration_seconds,
+        };
+        self.moderate(sender, routes::PUNISHMENTS, &request)
+    }
+
+    fn moderate<B: serde::Serialize>(
+        &self,
+        sender: &CommandSender,
+        path: &str,
+        body: &B,
+    ) -> Result<i32, String> {
+        match self.client.post::<_, PunishmentReply>(path, body) {
+            Ok(answer) => {
+                reply(sender, &answer.message);
+                Ok(i32::from(answer.ok))
+            }
+            Err(http::Error::Status(503, _)) => {
+                Err("§cPunishments need the network's database, which isn't set up.".into())
+            }
+            Err(err) => {
+                crate::log(crate::Level::Warn, &format!("punishment failed: {err}"));
+                Err(crate::UNAVAILABLE.into())
+            }
+        }
+    }
+
+    fn history(&self, sender: &CommandSender, target: &str) -> Result<i32, String> {
+        let records: Vec<PunishmentRecord> =
+            match self.client.get(&routes::punishment_history(target)) {
+                Ok(records) => records,
+                Err(err) if err.is_not_found() => {
+                    return Err(format!("§cNo player called {target} has joined."));
+                }
+                Err(http::Error::Status(503, _)) => {
+                    return Err(
+                        "§cPunishments need the network's database, which isn't set up.".into(),
+                    );
+                }
+                Err(err) => {
+                    crate::log(crate::Level::Warn, &format!("history failed: {err}"));
+                    return Err(crate::UNAVAILABLE.into());
+                }
+            };
+        if records.is_empty() {
+            reply(sender, &format!("§a{target} has a clean record."));
+            return Ok(1);
+        }
+        reply(
+            sender,
+            &format!("§ePunishments of {target} §7(newest first):"),
+        );
+        for record in records {
+            let kind = match record.kind {
+                PunishmentKind::Ban => "Ban",
+                PunishmentKind::Mute => "Mute",
+                PunishmentKind::Kick => "Kick",
+                PunishmentKind::Warn => "Warn",
+            };
+            let state = if record.active { " §c(active)" } else { "" };
+            reply(
+                sender,
+                &format!(
+                    "§7#{} §f{kind}{state} §7by {}: §f{}",
+                    record.id, record.issuer, record.reason
+                ),
+            );
         }
         Ok(1)
     }
@@ -380,6 +589,18 @@ mod tests {
 
     fn args(words: &str) -> Vec<String> {
         words.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn durations() {
+        assert_eq!(parse_duration("30m"), Some(1800));
+        assert_eq!(parse_duration("7D"), Some(604_800));
+        assert_eq!(parse_duration("1w"), Some(604_800));
+        assert_eq!(parse_duration("0h"), None);
+        assert_eq!(parse_duration("rude"), None);
+        assert_eq!(parse_duration("h"), None);
+        assert_eq!(duration_text(40), "40s");
+        assert_eq!(duration_text(3 * 86_400 + 4 * 3600 + 5), "3d 4h");
     }
 
     #[test]
