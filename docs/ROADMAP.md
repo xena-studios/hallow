@@ -38,7 +38,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Vine fork: runtime `register-server` / `unregister-server`, drain mode
 - [ ] Vine: translate old Java clients on the proxy, using the multiversion plugin's tables (Decisions 29)
 - [x] `crates/proto`: HTTP/JSON API types for the control plane
-- [ ] Control plane: server registry, proxy registry, presence in Redis
+- [x] Control plane: server registry, proxy registry, presence in Redis
 - [ ] Vine plugins: presence, global ping, duplicate-login check, cross-proxy commands
 - [ ] Load balancer with PROXY protocol and health checks
 - [ ] Matchmaker: queues, warm instances, start and delete server images through the Wings API

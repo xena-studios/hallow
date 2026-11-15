@@ -5,7 +5,7 @@ Hallow's Cargo workspace.
 | Crate | What it is |
 |---|---|
 | `proto/` | `hallow-proto`: HTTP/JSON API types shared by the control plane and every plugin; builds for the host and `wasm32-wasip2`. The endpoint table is in `src/routes.rs` |
-| `control-plane/` | Server and proxy registry, matchmaker, presence, orchestration through the Wings API, fleet manager |
+| `control-plane/` | Server and proxy registry, presence and cross-proxy commands over HTTP/JSON, state in Redis; later the matchmaker, orchestration through the Wings API and the fleet manager. See its [README](control-plane/README.md) |
 | `providers/*` | One crate per machine provider (Hetzner Cloud, Hetzner Robot, OVHcloud) behind the fleet manager's provider trait |
 | `vine-plugins/` | Presence, global ping, duplicate-login check, parties, queues, cross-proxy commands (WASM) |
 | `hallow-sdk/` | For server repos: minigame library (arenas, teams, kits, scoreboards, spectating, stats) and control-plane client (WASM) |
