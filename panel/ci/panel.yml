@@ -1,0 +1,67 @@
+# Pending: move to .github/workflows/panel.yml. It was written for there but
+# couldn't be pushed (the token that pushed this branch lacks the workflow
+# scope). Paths and working directories already assume that location.
+#
+name: Panel
+
+# Builds the Hallow Panel (the panel/calagopus submodule) with the Hallow
+# extension compiled in: type-checks and bundles the frontend, then compiles
+# the backend. Runs only when the panel changes. Not a required check.
+on:
+  push:
+    branches: [main]
+    paths:
+      - panel/**
+      - .gitmodules
+      - .github/workflows/panel.yml
+  pull_request:
+    paths:
+      - panel/**
+      - .gitmodules
+      - .github/workflows/panel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: panel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: panel/calagopus
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+      - name: Check out the panel submodule only
+        working-directory: .
+        run: git submodule update --init --depth 1 panel/calagopus
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11
+          run_install: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: panel/calagopus
+      - name: Build the frontend
+        working-directory: panel/calagopus/frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build:translations
+          pnpm build:ci
+      - name: Build the backend
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo build -p panel-rs

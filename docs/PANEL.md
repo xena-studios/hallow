@@ -33,6 +33,6 @@ One panel runs the whole network: nodes, servers, databases, players, ranks, sta
 
 The matchmaker creates and deletes game instances through the Wings API. They never become one panel server record each, which would flood its database and UI. The Network page shows them live instead.
 
-## Open question
+## Extension reach
 
-How far does the extension API reach: can an extension add database tables, API routes and frontend pages? Phase 0 checks. If not, those gaps are the hooks we add to the core.
+Can an extension add database tables, API routes and frontend pages? **Yes to all three:** [Phase 0](PHASE0.md) found it in the source (#9), and the fork confirmed routes and pages by building and running the Hallow extension on v1.2.10 (2026-11-15). The panel runs each extension's migrations on startup; the Hallow extension has none yet, so a table hasn't been added end to end. Extensions add backend routes (public, admin, client, per-server and Wings-facing), admin and server pages with sidebar entries, and their own SQL migrations, plus permissions, settings, background tasks and a theme. So far Hallow needs no hooks in the core, only branding. Details and limits: [panel/README.md](../panel/README.md#where-the-hallow-code-lives).

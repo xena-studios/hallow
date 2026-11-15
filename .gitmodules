@@ -11,3 +11,7 @@
 [submodule "upstream/wings"]
 	path = upstream/wings
 	url = https://github.com/calagopus/wings
+[submodule "panel/calagopus"]
+	path = panel/calagopus
+	url = https://github.com/xena-studios/calagopus-panel
+	branch = hallow
