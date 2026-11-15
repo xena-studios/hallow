@@ -11,6 +11,10 @@
   - Draining servers are left out, so nobody new is sent there.
   - Players already on them aren't affected.
 - **Commands.** Sends, messages, broadcasts and kicks queued for this proxy are carried out.
+- **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
+  - Everyone: `/msg` and `/r`.
+  - Staff (Vine permissions under `hallow.staff.*`): `/find`, `/alert` and `/gkick`.
+  - Players without the permission don't see the staff commands.
 - **Recovery.**
   - If the control plane forgets the proxy, for example after it expired or Redis was reset, the plugin registers again and re-reports its players.
   - Admitted players who never became live sessions are reported gone after 10 s.

@@ -12,8 +12,14 @@ use uuid::Uuid;
 pub enum NetworkCommand {
     /// Move a player to a server, wherever they are.
     Send { player: Uuid, server: String },
-    /// Show a chat message to one player.
-    Message { player: Uuid, text: String },
+    /// Show a chat message to one player. `from` names the player who sent
+    /// it, if one did, so the recipient can reply.
+    Message {
+        player: Uuid,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+    },
     /// Show a chat message to everyone, or to everyone on `servers` if set.
     Broadcast {
         text: String,
@@ -33,9 +39,12 @@ pub enum ProxyCommand {
         player: Uuid,
         server: String,
     },
+    /// `from` is the sending player's username, for `/r`.
     Message {
         player: Uuid,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
     /// Every player on this proxy, or only those on `servers` if set.
     Broadcast {
@@ -52,7 +61,7 @@ impl From<NetworkCommand> for ProxyCommand {
     fn from(command: NetworkCommand) -> Self {
         match command {
             NetworkCommand::Send { player, server } => Self::Send { player, server },
-            NetworkCommand::Message { player, text } => Self::Message { player, text },
+            NetworkCommand::Message { player, text, from } => Self::Message { player, text, from },
             NetworkCommand::Broadcast { text, servers } => Self::Broadcast { text, servers },
             NetworkCommand::Kick { player, reason } => Self::Kick { player, reason },
         }

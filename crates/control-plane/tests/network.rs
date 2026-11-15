@@ -231,6 +231,7 @@ async fn two_proxies_share_state() {
     let message = NetworkCommand::Message {
         player: p1,
         text: "§aHello".into(),
+        from: Some("someone".into()),
     };
     let res = two.post(routes::COMMANDS, &message).await;
     assert_eq!(res.status(), StatusCode::ACCEPTED);
@@ -254,6 +255,13 @@ async fn two_proxies_share_state() {
     assert_eq!(location.proxy, "proxy-a");
     assert_eq!(location.server.as_deref(), Some("hub-1"));
 
+    // Lookups by name ignore case, from either instance.
+    let username = format!("p{}", &p1.simple().to_string()[..6]);
+    let by_name: PlayerLocation = one
+        .get_json(&routes::player_by_name(&username.to_uppercase()))
+        .await;
+    assert_eq!(by_name, location);
+
     // A leave from the wrong proxy is ignored; the right one counts.
     for proxy in ["proxy-b", "proxy-a"] {
         let res = two
@@ -270,6 +278,10 @@ async fn two_proxies_share_state() {
     assert_eq!(one.count().await, 1);
     assert_eq!(
         two.get(&routes::player(&p1)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        two.get(&routes::player_by_name(&username)).await.status(),
         StatusCode::NOT_FOUND
     );
 

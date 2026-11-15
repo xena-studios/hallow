@@ -9,6 +9,7 @@
 //! | `proxy-alive:{id}` | string with TTL | present while the proxy heartbeats |
 //! | `online` | hash | player UUID → [`PlayerLocation`] JSON |
 //! | `proxy-players:{id}` | set | UUIDs on that proxy, to clean up when it goes |
+//! | `names` | hash | lower-case username → UUID of online players, for lookups by name |
 //! | `commands:{id}` | sorted set | `"{rev}\|{json}"` [`ProxyCommand`]s scored by revision, last [`COMMANDS_KEPT`] |
 //! | `commands:{id}:rev` | integer | that proxy's command revision |
 //!
@@ -94,6 +95,9 @@ impl Keys {
     fn online(&self) -> String {
         format!("{}:online", self.prefix)
     }
+    fn names(&self) -> String {
+        format!("{}:names", self.prefix)
+    }
     fn proxy_players(&self, id: &str) -> String {
         format!("{}:proxy-players:{id}", self.prefix)
     }
@@ -132,15 +136,21 @@ if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 return redis.call('HDEL', KEYS[1], ARGV[1])
 ";
 
-/// Removes player `ARGV[1]` from `online` (`KEYS[1]`) and from proxy set
-/// `KEYS[2]`, only if they are on proxy `ARGV[2]`. A late leave from an old
-/// session must not remove a newer login elsewhere. Returns 1 if removed.
+/// Removes player `ARGV[1]` from `online` (`KEYS[1]`), from proxy set
+/// `KEYS[2]` and from the name index `KEYS[3]`, only if they are on proxy
+/// `ARGV[2]`. A late leave from an old session must not remove a newer login
+/// elsewhere. Returns 1 if removed.
 const LEAVE: &str = r"
 local v = redis.call('HGET', KEYS[1], ARGV[1])
 if not v then return 0 end
-if cjson.decode(v).proxy ~= ARGV[2] then return 0 end
+local p = cjson.decode(v)
+if p.proxy ~= ARGV[2] then return 0 end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('SREM', KEYS[2], ARGV[1])
+local name = string.lower(p.username)
+if redis.call('HGET', KEYS[3], name) == ARGV[1] then
+  redis.call('HDEL', KEYS[3], name)
+end
 return 1
 ";
 
@@ -311,6 +321,7 @@ impl Store {
                 .leave
                 .key(self.keys.online())
                 .key(self.keys.proxy_players(id))
+                .key(self.keys.names())
                 .arg(&uuid)
                 .arg(id)
                 .invoke_async(&mut self.conn())
@@ -549,6 +560,7 @@ impl Store {
             }
         }
 
+        let name = req.username.to_ascii_lowercase();
         let location = serde_json::to_string(&PlayerLocation {
             uuid: req.uuid,
             username: req.username,
@@ -577,9 +589,13 @@ impl Store {
                     .await?;
             }
         }
-        let _: () = self
-            .conn()
+        let _: () = redis::pipe()
+            .atomic()
             .sadd(self.keys.proxy_players(&req.proxy), &uuid)
+            .ignore()
+            .hset(self.keys.names(), &name, &uuid)
+            .ignore()
+            .query_async(&mut self.conn())
             .await?;
         Ok(LoginOutcome::Decided(LoginDecision::Allow { server: hub }))
     }
@@ -617,6 +633,7 @@ impl Store {
             .leave
             .key(self.keys.online())
             .key(self.keys.proxy_players(&left.proxy))
+            .key(self.keys.names())
             .arg(left.uuid.to_string())
             .arg(&left.proxy)
             .invoke_async(&mut self.conn())
@@ -626,6 +643,18 @@ impl Store {
 
     pub async fn online(&self) -> Result<u32> {
         Ok(self.conn().hlen(self.keys.online()).await?)
+    }
+
+    /// Looks an online player up by username, ignoring ASCII case.
+    pub async fn player_by_name(&self, name: &str) -> Result<Option<PlayerLocation>> {
+        let uuid: Option<String> = self
+            .conn()
+            .hget(self.keys.names(), name.to_ascii_lowercase())
+            .await?;
+        match uuid.and_then(|uuid| Uuid::parse_str(&uuid).ok()) {
+            Some(uuid) => self.player(&uuid).await,
+            None => Ok(None),
+        }
     }
 
     pub async fn player(&self, uuid: &Uuid) -> Result<Option<PlayerLocation>> {
