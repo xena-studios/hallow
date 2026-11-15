@@ -62,3 +62,16 @@ The plugin API (v0.1) has no rotation in move events and no look-only event, no 
 | 1 | Signal collection: Vine and the server plugin record per-player timing, movement and combat data to the verdict service; no actions yet. Gives real data before thresholds are set |
 | 2 | Core checks (movement, reach, click rate, timer) in observe-only mode during the closed beta; cheat bots in CI; panel review page |
 | 3 | Actions on (setbacks, kicks, bans with review), tuning from beta data, more checks |
+
+## Proxy signals and the Vine API they need
+
+Vine's plugin API (`upstream/Vine/wit`) fires login, connect, disconnect, chat, command and plugin-message events, but nothing for other serverbound play packets. So today the Vine plugin (`crates/vine-plugin/src/signals.rs`) sends, per player and 30 s window, only what those events show: `chat_messages`, `chat_per_second_max`, `commands`, `commands_per_second_max`, `plugin_messages`, `server_switches`, `online_seconds` and `session_seconds`.
+
+The packet timing signals the proxy is meant to own (`packets_per_second_max`, `attacks`, `cps_max`, `rotation_snaps`, `swings`) need one addition to Vine. The smallest one:
+
+- **A serverbound play packet event** carrying the player, the packet id (with the client's protocol version, so ids can be mapped) and the receive time in milliseconds, taken where Vine's tunnel already reads every raw packet (`client_to_backend` in `src/backend/bridge.rs`).
+- **Delivered in batches, not per packet.** A WASM call per packet is what froze Pumpkin (see Constraints), so Vine buffers `(packet-id, received-ms)` pairs per player and hands them over as a list on a timer, for example once a second.
+- **Opt-in by packet id.** A plugin subscribes to the ids it wants (interact for attacks, swing arm, the movement and rotation packets, plus a count of all packets), so other packets cost one lookup.
+- **Rotations need the yaw and pitch.** `rotation_snaps` reads the payload of the rotation packets; the event could carry those two floats for them, or the raw payload for subscribed ids.
+
+With that, the window maths stays in the plugin next to today's metrics. The alternative is for Vine to compute the rates natively and expose a per-player summary; it's cheaper still but puts anticheat logic in Vine.

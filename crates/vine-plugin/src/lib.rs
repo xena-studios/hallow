@@ -10,6 +10,8 @@
 //!   mirrored into Vine's runtime registry, so every proxy can route to them.
 //! - **Commands.** Sends, messages, broadcasts and kicks queued for this
 //!   proxy are carried out.
+//! - **Signals.** Per-player anticheat measurements, one batch per window
+//!   ([`signals`]).
 //!
 //! Vine plugin calls are synchronous, so nothing here waits long: a repeating
 //! task polls the control plane every `poll_ms` with `?wait=0`, and each HTTP
@@ -29,6 +31,7 @@ wit_bindgen::generate!({
 mod commands;
 mod config;
 mod http;
+mod signals;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -42,12 +45,14 @@ use hallow_proto::{
     punishment::MuteInfo,
     routes,
     server::{ServerInfo, ServerState},
+    signal::{self, SignalBatch},
 };
 use uuid::Uuid;
 use vine::plugin::{
     event::{
-        EventType, PlayerChatEvent, PlayerDisconnectEvent, PlayerLoginEvent, PlayerPreLoginEvent,
-        ProxyPingEvent, ServerConnectEvent, ServerConnectedEvent,
+        EventType, PlayerChatEvent, PlayerCommandEvent, PlayerDisconnectEvent, PlayerLoginEvent,
+        PlayerPreLoginEvent, PluginMessageEvent, ProxyPingEvent, ServerConnectEvent,
+        ServerConnectedEvent,
     },
     logging::{self, Level},
     proxy, scheduler,
@@ -64,6 +69,8 @@ const CONNECT: u32 = 4;
 const CONNECTED: u32 = 5;
 const DISCONNECT: u32 = 6;
 const CHAT: u32 = 7;
+const COMMAND: u32 = 8;
+const PLUGIN_MESSAGE: u32 = 9;
 const TICK: u32 = 100;
 
 const HEARTBEAT: Duration = Duration::from_secs(routes::HEARTBEAT_SECONDS);
@@ -75,6 +82,10 @@ const COUNT_EVERY: Duration = Duration::from_secs(1);
 const SWEEP_AFTER: Duration = Duration::from_secs(10);
 /// Pre-login protocol versions are kept this long for the login that follows.
 const PROTOCOL_TTL: Duration = Duration::from_secs(30);
+/// How long a signal window runs.
+const SIGNAL_WINDOW_MS: u64 = signal::WINDOW_SECONDS * 1000;
+/// Samples per `POST /v1/signals`; the control plane takes up to 5000.
+const SIGNAL_BATCH: usize = 1000;
 
 const UNAVAILABLE: &str = "§cThe network is unavailable right now. Try again in a moment.";
 
@@ -105,6 +116,8 @@ struct State {
     permissions: HashMap<String, Vec<String>>,
     /// Muted players here, by UUID.
     mutes: HashMap<String, MuteInfo>,
+    /// Anticheat signals for the current window.
+    signals: signals::Recorder,
 }
 
 thread_local! {
@@ -156,6 +169,7 @@ impl Guest for Hallow {
                 last_from: HashMap::new(),
                 permissions: HashMap::new(),
                 mutes: HashMap::new(),
+                signals: signals::Recorder::new(now_ms()),
             });
         });
 
@@ -177,6 +191,13 @@ impl Guest for Hallow {
         );
 
         ctx.register_event(CHAT, EventType::PlayerChat, EventPriority::High);
+        // Signals only watch, so they see the final events.
+        ctx.register_event(COMMAND, EventType::PlayerCommand, EventPriority::Monitor);
+        ctx.register_event(
+            PLUGIN_MESSAGE,
+            EventType::PluginMessage,
+            EventPriority::Monitor,
+        );
         commands::register(&ctx);
 
         with_state(State::tick);
@@ -212,6 +233,14 @@ impl Guest for Hallow {
             Event::PlayerLogin(login) => Event::PlayerLogin(state.on_login(login)),
             Event::ServerConnect(connect) => Event::ServerConnect(state.on_connect(connect)),
             Event::PlayerChat(chat) => Event::PlayerChat(state.on_chat(chat)),
+            Event::PlayerCommand(command) => {
+                state.on_command(&command);
+                Event::PlayerCommand(command)
+            }
+            Event::PluginMessage(message) => {
+                state.on_plugin_message(&message);
+                Event::PluginMessage(message)
+            }
             Event::ServerConnected(connected) => {
                 state.on_connected(&connected);
                 Event::ServerConnected(connected)
@@ -310,6 +339,7 @@ impl State {
                 self.set_mute(&login.uuid, mute);
                 self.hubs.insert(login.uuid.clone(), server);
                 self.admitted.insert(login.uuid.clone(), Instant::now());
+                self.signals.joined(uuid, request.protocol, now_ms());
             }
             Ok(LoginDecision::Deny { reason }) => refuse(&mut login, &reason),
             Err(err) => {
@@ -326,8 +356,12 @@ impl State {
         login
     }
 
-    /// Muted players' chat goes nowhere.
+    /// Muted players' chat goes nowhere. Every message counts towards the
+    /// signals, blocked or not.
     fn on_chat(&mut self, mut chat: PlayerChatEvent) -> PlayerChatEvent {
+        if let Ok(uuid) = Uuid::parse_str(&chat.uuid) {
+            self.signals.chat(uuid, now_ms());
+        }
         if !chat.cancelled
             && let Some(notice) = self.muted(&chat.uuid)
         {
@@ -335,6 +369,23 @@ impl State {
             proxy::send_message(&chat.uuid, &notice);
         }
         chat
+    }
+
+    fn on_command(&mut self, command: &PlayerCommandEvent) {
+        if let Ok(uuid) = Uuid::parse_str(&command.uuid) {
+            self.signals.command(uuid, now_ms());
+        }
+    }
+
+    /// Vine only fires these for messages from the client.
+    fn on_plugin_message(&mut self, message: &PluginMessageEvent) {
+        if let Some(uuid) = message
+            .player_uuid
+            .as_deref()
+            .and_then(|uuid| Uuid::parse_str(uuid).ok())
+        {
+            self.signals.plugin_message(uuid, now_ms());
+        }
     }
 
     fn set_mute(&mut self, uuid: &str, mute: Option<MuteInfo>) {
@@ -351,9 +402,7 @@ impl State {
         let left = match mute.until_ms {
             None => None,
             Some(until) => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+                let now = now_ms();
                 if until <= now {
                     self.mutes.remove(uuid);
                     return None;
@@ -385,6 +434,7 @@ impl State {
         let Ok(uuid) = Uuid::parse_str(&connected.uuid) else {
             return;
         };
+        self.signals.connected(uuid, now_ms());
         let switched = PlayerSwitched {
             uuid,
             server: connected.server_name.clone(),
@@ -399,6 +449,9 @@ impl State {
         self.permissions.remove(&gone.uuid);
         self.mutes.remove(&gone.uuid);
         self.last_from.remove(&gone.uuid);
+        if let Ok(uuid) = Uuid::parse_str(&gone.uuid) {
+            self.signals.left(uuid, now_ms());
+        }
         if self.leave(&gone.uuid) {
             self.admitted.remove(&gone.uuid);
         }
@@ -440,6 +493,32 @@ impl State {
             self.refresh_count();
         }
         self.protocols.retain(|_, (_, at)| now - *at < PROTOCOL_TTL);
+        if self.signals.due(SIGNAL_WINDOW_MS, now_ms()) {
+            self.send_signals();
+        }
+    }
+
+    /// Ends the signal window and sends its samples. Measurement only: a
+    /// batch that fails is dropped.
+    fn send_signals(&mut self) {
+        let live: Vec<Uuid> = proxy::get_players()
+            .iter()
+            .filter_map(|player| Uuid::parse_str(&player.uuid).ok())
+            .collect();
+        let now = now_ms();
+        let grace = u64::try_from(SWEEP_AFTER.as_millis()).unwrap_or(u64::MAX);
+        self.signals.prune(&live, grace, now);
+        let samples = self.signals.flush(now);
+        for chunk in samples.chunks(SIGNAL_BATCH) {
+            let batch = SignalBatch {
+                source: self.config.proxy_id.clone(),
+                samples: chunk.to_vec(),
+            };
+            if let Err(err) = self.client.post_empty(routes::SIGNALS, &batch) {
+                log(Level::Debug, &format!("signal batch dropped: {err}"));
+                return;
+            }
+        }
     }
 
     /// Registers this proxy and reports the players already on it (after the
@@ -497,6 +576,7 @@ impl State {
                     self.permissions.insert(player.uuid.clone(), permissions);
                     self.set_mute(&player.uuid, mute);
                     self.admitted.insert(player.uuid.clone(), Instant::now());
+                    self.signals.joined(uuid, request.protocol, now_ms());
                     let switched = PlayerSwitched {
                         uuid,
                         server: player.current_server.clone(),
@@ -649,6 +729,13 @@ impl State {
             self.reported_down = true;
         }
     }
+}
+
+/// Wall-clock time, Unix milliseconds.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// The IP part of a client address Vine reports (`1.2.3.4`, `1.2.3.4:5678`,
