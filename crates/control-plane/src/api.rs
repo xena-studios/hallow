@@ -28,7 +28,7 @@ use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use crate::{
-    AppState,
+    AppState, accounts,
     error::Failure,
     events,
     store::{LoginOutcome, RegisterError},
@@ -156,6 +156,10 @@ async fn register_proxy(
 ) -> Reply<Body<ProxyRegistered>> {
     check_name("proxy id", &req.id)?;
     let id = req.id.clone();
+    // A proxy registering again restarted: its players are gone.
+    if let Some(db) = &state.db {
+        hallow_db::close_proxy_sessions(db, &id).await?;
+    }
     let registered = state.store.register_proxy(req).await?;
     tracing::info!(proxy = %id, "proxy registered");
     Ok(Body(registered))
@@ -191,6 +195,9 @@ async fn proxy_heartbeat(
 }
 
 async fn remove_proxy(State(state): Shared, Path(id): Path<String>) -> Reply<StatusCode> {
+    if let Some(db) = &state.db {
+        hallow_db::close_proxy_sessions(db, &id).await?;
+    }
     if state.store.remove_proxy(&id).await? {
         tracing::info!(proxy = %id, "proxy unregistered");
         Ok(StatusCode::NO_CONTENT)
@@ -280,16 +287,45 @@ async fn poll_servers(
 
 // Presence
 
+/// With a database, a banned account is refused before it touches presence,
+/// and an allowed login gets its permission nodes and an open session.
 async fn login(State(state): Shared, Body(req): Body<LoginRequest>) -> Reply<Body<LoginDecision>> {
-    match state.store.login(req, &state.config).await? {
-        LoginOutcome::Decided(decision) => Ok(Body(decision)),
-        LoginOutcome::UnknownProxy => {
-            Err(Failure::not_found("proxy isn't registered; register again"))
+    let mut permissions = Vec::new();
+    if let Some(db) = &state.db {
+        match accounts::check_login(db, &req, &state.config.admins).await? {
+            Ok(nodes) => permissions = nodes,
+            Err(reason) => return Ok(Body(LoginDecision::Deny { reason })),
         }
     }
+    let decision = match state.store.login(req.clone(), &state.config).await? {
+        LoginOutcome::Decided(decision) => decision,
+        LoginOutcome::UnknownProxy => {
+            return Err(Failure::not_found("proxy isn't registered; register again"));
+        }
+    };
+    let LoginDecision::Allow { server, .. } = decision else {
+        return Ok(Body(decision));
+    };
+    if let Some(db) = &state.db {
+        // A session left open by a lost leave ends here.
+        if let Some(old) = state.store.take_session(&req.uuid).await? {
+            hallow_db::close_session(db, old).await?;
+        }
+        let session = accounts::open_session(db, &req).await?;
+        state.store.set_session(&req.uuid, &session).await?;
+    }
+    Ok(Body(LoginDecision::Allow {
+        server,
+        permissions,
+    }))
 }
 
 async fn switch(State(state): Shared, Body(moved): Body<PlayerSwitched>) -> Reply<StatusCode> {
+    if let Some(db) = &state.db
+        && let Some(session) = state.store.session(&moved.uuid).await?
+    {
+        hallow_db::set_session_server(db, session, &moved.server).await?;
+    }
     if state.store.switch(moved).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -300,7 +336,13 @@ async fn switch(State(state): Shared, Body(moved): Body<PlayerSwitched>) -> Repl
 /// Always `204`: a leave for a player who already left, or who has since
 /// logged in on another proxy, is simply ignored.
 async fn leave(State(state): Shared, Body(left): Body<PlayerLeft>) -> Reply<StatusCode> {
-    state.store.leave(left).await?;
+    let uuid = left.uuid;
+    if state.store.leave(left).await?
+        && let Some(db) = &state.db
+        && let Some(session) = state.store.take_session(&uuid).await?
+    {
+        hallow_db::close_session(db, session).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

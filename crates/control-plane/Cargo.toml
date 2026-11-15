@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 hallow-proto = { path = "../proto" }
+hallow-db = { path = "../db" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 axum = { version = "0.8.9", features = ["macros"] }
 futures-util = { version = "0.3.31", default-features = false }
 redis = { version = "1.8.2", default-features = false, features = ["tokio-comp", "connection-manager", "script"] }

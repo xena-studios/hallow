@@ -10,6 +10,7 @@
 //!
 //! [Decisions]: https://github.com/xena-studios/hallow/blob/main/docs/DECISIONS.md
 
+mod accounts;
 mod agent;
 mod api;
 mod error;
@@ -45,6 +46,12 @@ pub struct Config {
     /// The network's player limit, shown in the server list.
     pub max_players: u32,
     pub duplicate_login: DuplicateLogin,
+    /// PostgreSQL for accounts, bans, ranks and sessions. Without it the
+    /// control plane keeps only live state and nobody has permissions.
+    pub database_url: Option<String>,
+    /// Usernames given the `admin` rank (`*`) when they log in, to bootstrap
+    /// a new network. Needs `database_url`.
+    pub admins: Vec<String>,
     /// A proxy or server that hasn't heartbeated for this long is removed.
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
@@ -63,6 +70,8 @@ impl Config {
             hub_kind: "hub".into(),
             max_players: 1000,
             duplicate_login: DuplicateLogin::Deny,
+            database_url: None,
+            admins: Vec::new(),
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
@@ -75,6 +84,7 @@ pub struct AppState {
     pub config: Config,
     pub store: store::Store,
     pub events: events::Events,
+    pub db: Option<hallow_db::PgPool>,
 }
 
 /// Connects to Redis, starts the event listener and the reaper, and serves the
@@ -95,10 +105,23 @@ pub async fn serve_all(
     let client = redis::Client::open(config.redis_url.as_str())?;
     let store = store::Store::new(&client, &config).await?;
     let events = events::Events::listen(client, store.keys().channel());
+    let db = match &config.database_url {
+        Some(url) => {
+            let pool = hallow_db::connect(url).await?;
+            hallow_db::migrate(&pool).await?;
+            tracing::info!("database connected and migrated");
+            Some(pool)
+        }
+        None => {
+            tracing::warn!("no database: accounts, bans, ranks and sessions are off");
+            None
+        }
+    };
     let state = Arc::new(AppState {
         config,
         store,
         events,
+        db,
     });
     tokio::spawn(reaper(state.clone()));
     tokio::spawn(matchmaker(state.clone()));
@@ -126,6 +149,11 @@ async fn reaper(state: Arc<AppState>) {
                 }
                 for id in &reaped.proxies {
                     tracing::info!(proxy = %id, "proxy expired");
+                    if let Some(db) = &state.db
+                        && let Err(err) = hallow_db::close_proxy_sessions(db, id).await
+                    {
+                        tracing::warn!(%err, proxy = %id, "couldn't close its sessions");
+                    }
                 }
             }
             Err(err) => tracing::warn!(%err, "reaper couldn't reach Redis"),

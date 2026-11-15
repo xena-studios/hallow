@@ -22,6 +22,12 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - A plain TCP port (`HALLOW_AGENT_LISTEN`, default `0.0.0.0:8081`) answers HAProxy's `agent-check`.
   - HAProxy sends a proxy id; the agent replies `up ready`, `drain` (weight 0: no new players, existing ones stay) or `down`.
   - The port carries no token and changes nothing. Keep it on the private network.
+- **Accounts, bans, ranks and sessions** (PostgreSQL through [`hallow-db`](../db/README.md), when `HALLOW_DATABASE_URL` is set):
+  - a login upserts the account and is refused while the account has an active ban, with the reason and time left;
+  - an allowed login gets the player's permission nodes and an open session, which records the servers they visit and closes at logout (or when their proxy dies);
+  - `HALLOW_ADMINS` gives the listed usernames the `admin` rank (`*`) at login, to bootstrap a network.
+
+  With a database configured, logins fail closed when it's down. Without one, these are all off and nobody has staff permissions.
 - **Lookups.** Online players can be looked up by UUID, or by username ignoring case, for `/find` and `/msg`.
 - **Commands.**
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.

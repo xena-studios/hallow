@@ -57,8 +57,3 @@ plugin_dir = "./plugins"
 # and reads config.toml, token and forwarding.secret from its data folder.
 [plugins.permissions]
 hallow_vine = ["http.outbound", "fs.read.data"]
-
-# Dev only: lets the netcheck bot named "netstaff" run the staff commands
-# (/find, /alert, /gkick) in the cross-proxy command test.
-[permissions.users]
-netstaff = { permissions = ["hallow.staff.*"] }

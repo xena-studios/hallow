@@ -756,7 +756,9 @@ name = "hallow-control-plane"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "futures-util",
+ "hallow-db",
  "hallow-proto",
  "redis",
  "reqwest 0.12.28",
@@ -773,6 +775,7 @@ name = "hallow-db"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hallow-proto",
  "ipnet",
  "sqlx",
  "tokio",

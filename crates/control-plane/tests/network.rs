@@ -144,6 +144,7 @@ impl Instance {
                 username: format!("p{}", &uuid.simple().to_string()[..6]),
                 proxy: proxy.into(),
                 protocol: Some(777),
+                ip: None,
             },
         )
         .await
@@ -222,6 +223,7 @@ async fn two_proxies_share_state() {
     let p2 = Uuid::new_v4();
     let hub = LoginDecision::Allow {
         server: "hub-1".into(),
+        permissions: vec![],
     };
     assert_eq!(one.login(p1, "proxy-a").await, hub);
     assert_eq!(two.login(p2, "proxy-b").await, hub);
@@ -458,6 +460,7 @@ async fn auth_and_errors() {
                 username: "x".into(),
                 proxy: "nobody".into(),
                 protocol: None,
+                ip: None,
             },
         )
         .await;
@@ -876,4 +879,144 @@ async fn disconnect_leaves_the_queue() {
         StatusCode::NOT_FOUND,
         "the entry went with the member"
     );
+}
+
+/// A fresh database for one test, or `None` (skip) without
+/// `HALLOW_TEST_DATABASE_URL`. Returns its URL and an admin pool to drop it.
+async fn test_database() -> Option<(String, String, hallow_db::PgPool)> {
+    use hallow_db::sqlx::{self, Executor, postgres::PgPoolOptions};
+    let url = std::env::var("HALLOW_TEST_DATABASE_URL").ok();
+    let Some(url) = url else {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "HALLOW_TEST_DATABASE_URL isn't set in CI"
+        );
+        eprintln!("HALLOW_TEST_DATABASE_URL isn't set; skipping");
+        return None;
+    };
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let name = format!("hallow_cp_test_{}", Uuid::new_v4().simple());
+    admin
+        .execute(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .await
+        .unwrap();
+    let (base, _) = url.rsplit_once('/').unwrap();
+    Some((format!("{base}/{name}"), name, admin))
+}
+
+async fn login_as(one: &Instance, uuid: Uuid, username: &str, proxy: &str) -> LoginDecision {
+    one.post_json(
+        routes::PRESENCE_LOGIN,
+        &LoginRequest {
+            uuid,
+            username: username.into(),
+            proxy: proxy.into(),
+            protocol: Some(777),
+            ip: Some("203.0.113.7".into()),
+        },
+    )
+    .await
+}
+
+/// With a database: admins get `*`, bans refuse logins, sessions are kept.
+#[tokio::test]
+async fn database_logins() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url.clone());
+    config.admins = vec!["Boss".into()];
+    let one = Instance::start(config).await;
+    let pool = hallow_db::connect(&db_url).await.unwrap();
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+
+    let (boss, player) = (Uuid::new_v4(), Uuid::new_v4());
+    let LoginDecision::Allow { permissions, .. } = login_as(&one, boss, "boss", "proxy-a").await
+    else {
+        panic!("boss refused")
+    };
+    assert_eq!(permissions, ["*"]);
+    let LoginDecision::Allow { permissions, .. } = login_as(&one, player, "pleb", "proxy-a").await
+    else {
+        panic!("player refused")
+    };
+    assert!(permissions.is_empty());
+
+    // Sessions follow the player and close at logout.
+    one.post(
+        routes::PRESENCE_SWITCH,
+        &PlayerSwitched {
+            uuid: player,
+            server: "hub-1".into(),
+        },
+    )
+    .await;
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: player,
+            proxy: "proxy-a".into(),
+        },
+    )
+    .await;
+    let (server, closed): (Option<String>, bool) = sqlx::query_as(
+        "SELECT last_server, logout_at IS NOT NULL FROM hallow.sessions WHERE account_uuid = $1",
+    )
+    .bind(player)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(server.as_deref(), Some("hub-1"));
+    assert!(closed);
+
+    // A ban refuses the next login, before it reaches presence.
+    hallow_db::add_punishment(
+        &pool,
+        &hallow_db::NewPunishment {
+            kind: hallow_db::PunishmentKind::Ban,
+            target: player,
+            issuer: hallow_db::Actor::Account(boss),
+            reason: "testing bans",
+            expires_at: Some(chrono::Utc::now() + chrono::TimeDelta::days(3)),
+        },
+    )
+    .await
+    .unwrap();
+    let LoginDecision::Deny { reason } = login_as(&one, player, "pleb", "proxy-a").await else {
+        panic!("banned player let in")
+    };
+    assert!(
+        reason.contains("testing bans") && reason.contains("2d 23h"),
+        "{reason}"
+    );
+    assert_eq!(one.count().await, 1);
+
+    // A lost leave: logging in again closes the stale session.
+    let LoginDecision::Allow { .. } = login_as(&one, boss, "boss", "proxy-a").await else {
+        panic!()
+    };
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM hallow.sessions WHERE account_uuid = $1 AND logout_at IS NULL",
+    )
+    .bind(boss)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(open, 1);
+
+    pool.close().await;
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
 }

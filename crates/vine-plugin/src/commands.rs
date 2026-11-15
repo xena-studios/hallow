@@ -12,9 +12,11 @@
 //! | `/play <game>` | | Queue for a game, with your party if you lead one |
 //! | `/leavequeue` (`/lq`) | | Leave the queue |
 //!
-//! Permissions are Vine's (`[permissions]` in `vine.toml`) until ranks come
-//! from the database.
+//! Staff permissions come from the player's ranks in the database, sent with
+//! their login (`hallow.staff.*` and the like; see `hallow_proto::permission`).
+//! The console may run everything.
 
+use hallow_proto::permission::has_permission;
 use hallow_proto::{
     command::NetworkCommand,
     party::{PartyAction, PartyReply},
@@ -67,27 +69,29 @@ pub fn register(ctx: &Context) {
         &["reply".into()],
         None,
     );
-    ctx.register_command(
-        FIND,
-        "find",
-        "Show which server a player is on",
-        &[],
-        Some("hallow.staff.find"),
-    );
+    ctx.register_command(FIND, "find", "Show which server a player is on", &[], None);
     ctx.register_command(
         ALERT,
         "alert",
         "Message every player on the network",
         &[],
-        Some("hallow.staff.alert"),
+        None,
     );
     ctx.register_command(
         GKICK,
         "gkick",
         "Disconnect a player from the network",
         &[],
-        Some("hallow.staff.kick"),
+        None,
     );
+}
+
+fn staff_node(id: u32) -> &'static str {
+    match id {
+        FIND => "hallow.staff.find",
+        ALERT => "hallow.staff.alert",
+        _ => "hallow.staff.kick",
+    }
 }
 
 /// Players can't inject colour codes into what others see.
@@ -120,6 +124,9 @@ impl State {
                 self.private_message(sender, &target, &plain(message))
             }
             (REPLY, _) => usage("/r <message>"),
+            (FIND | ALERT | GKICK, _) if !self.allowed(sender, staff_node(id)) => {
+                Err("§cYou don't have permission to do that.".into())
+            }
             (FIND, [name]) => {
                 let location = self.locate(name)?;
                 let place = location.server.as_deref().unwrap_or("between servers");
@@ -269,6 +276,18 @@ impl State {
             self.last_from.insert(uuid.clone(), location.username);
         }
         Ok(1)
+    }
+
+    /// Whether `sender` holds `node`. The console holds everything.
+    fn allowed(&self, sender: &CommandSender, node: &str) -> bool {
+        match (&sender.sender_type, &sender.player_uuid) {
+            (CommandSenderType::Console, _) => true,
+            (_, Some(uuid)) => self
+                .permissions
+                .get(uuid)
+                .is_some_and(|nodes| has_permission(nodes, node)),
+            (_, None) => false,
+        }
     }
 
     fn player_id(&self, sender: &CommandSender) -> Result<Uuid, String> {

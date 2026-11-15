@@ -8,15 +8,14 @@ checked into git; never reuse it on a network reachable from outside.
 - `forwarding.secret`: Vine's forwarding secret, the same default as
   `HALLOW_VINE_SECRET` in `compose.yaml`. If you set `HALLOW_VINE_SECRET`,
   change this file too.
-- `vine.toml`: both proxies' Vine config, with no static servers. It grants
-  the staff commands to a bot named `netstaff`, for the test below.
+- `vine.toml`: both proxies' Vine config, with no static servers.
 - `proxy-1.toml`, `proxy-2.toml`: each proxy's `hallow_vine` config.
 - `registrar.sh`: registers the Pumpkin servers with the control plane until
   the server plugin does it.
 
 ## Cross-proxy command test
 
-Two netcheck bots on different proxies (`~N` steps wait N seconds):
+Two netcheck bots on different proxies (`~N` steps wait N seconds). The control plane makes `netstaff` an admin when it logs in (`HALLOW_ADMINS` in `compose.hallow.yaml`), which gives it the staff commands:
 
 ```sh
 netcheck --proxy 127.0.0.1:25566 --name bob --route "~6,/r reply-cross" --stay 8 &
