@@ -4,7 +4,8 @@
 //! admin API key (`Authorization: Bearer c7sp_…`). The key needs the admin
 //! permissions `nodes.create`, `nodes.allocations`, `nodes.reset-token`
 //! (for enrollment codes) and `nodes.delete` (to undo a failed join), plus
-//! `nodes.read-token` when instances run on Wings.
+//! `nodes.read-token` when instances run on Wings and `nodes.update` with a
+//! node public URL ([`PanelConfig::node_public_url`]).
 //!
 //! | Call | Panel route |
 //! |---|---|
@@ -13,6 +14,7 @@
 //! | [`Panel::create_enrollment`] | `POST /api/admin/nodes/{node}/enrollment` |
 //! | [`Panel::delete_node`] | `DELETE /api/admin/nodes/{node}` |
 //! | [`Panel::node_token`] | `GET /api/admin/nodes/{node}/token` |
+//! | [`Panel::set_node_public_url`] | `PATCH /api/admin/nodes/{node}` (`nodes.update`) |
 
 use std::{collections::BTreeMap, fmt, future::Future, net::IpAddr, pin::Pin, time::Duration};
 
@@ -44,6 +46,14 @@ pub struct PanelConfig {
     /// panel: the control plane, which answers for its instances and passes
     /// the rest to the panel (docs/INSTANCES.md). `None` uses `public_url`.
     pub wings_remote: Option<String>,
+    /// The URL browsers use for each node's Wings (console, file downloads,
+    /// the node list's online check), with `{uuid}` (the panel's node UUID)
+    /// and `{name}` filled in. Wings listens on the node's private address,
+    /// which staff browsers can't reach, so this is normally the panel's own
+    /// Wings proxy: `https://panel.example.net/wings-proxy/{uuid}` (the panel
+    /// needs `APP_ENABLE_WINGS_PROXY=true`). `None` leaves the node's public
+    /// URL unset, so browsers use its private one.
+    pub node_public_url: Option<String>,
 }
 
 impl PanelConfig {
@@ -60,6 +70,7 @@ impl PanelConfig {
             sftp_port: 2022,
             game_ports: (30000, 30999),
             wings_remote: None,
+            node_public_url: None,
         }
     }
 
@@ -85,6 +96,7 @@ impl fmt::Debug for PanelConfig {
             .field("sftp_port", &self.sftp_port)
             .field("game_ports", &self.game_ports)
             .field("wings_remote", &self.wings_remote)
+            .field("node_public_url", &self.node_public_url)
             .finish()
     }
 }
@@ -170,6 +182,16 @@ pub trait Panel: Send + Sync {
     fn delete_node(&self, node: Uuid) -> PanelFuture<'_, ()>;
     /// A node's Wings credentials, to call its Wings API.
     fn node_token(&self, node: Uuid) -> PanelFuture<'_, NodeToken>;
+    /// Sets the URL browsers use for a node's Wings.
+    fn set_node_public_url<'a>(&'a self, node: Uuid, url: &'a str) -> PanelFuture<'a, ()>;
+}
+
+/// [`PanelConfig::node_public_url`] for one node.
+#[must_use]
+pub fn node_public_url(template: &str, node: Uuid, name: &str) -> String {
+    template
+        .replace("{uuid}", &node.to_string())
+        .replace("{name}", name)
 }
 
 /// The panel over HTTP.
@@ -322,6 +344,19 @@ impl Panel for HttpPanel {
                 None,
             )
             .await
+        })
+    }
+
+    fn set_node_public_url<'a>(&'a self, node: Uuid, url: &'a str) -> PanelFuture<'a, ()> {
+        Box::pin(async move {
+            let _: Empty = self
+                .call(
+                    reqwest::Method::PATCH,
+                    &format!("/api/admin/nodes/{node}"),
+                    Some(serde_json::json!({ "public_url": url })),
+                )
+                .await?;
+            Ok(())
         })
     }
 }

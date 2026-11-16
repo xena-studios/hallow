@@ -15,13 +15,14 @@
 //! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
 //! | `HALLOW_SIGNAL_RETENTION_DAYS` | `14` | How long anticheat signal samples are kept |
 //! | `HALLOW_PANEL_URL` | none | Where the control plane calls the panel's admin API; without it node joins are off |
-//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`; `nodes.read-token` for Wings instances) |
+//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`; `nodes.read-token` for Wings instances; `nodes.update` with `HALLOW_NODE_PUBLIC_URL`) |
 //! | `HALLOW_PANEL_PUBLIC_URL` | `HALLOW_PANEL_URL` | The panel URL nodes' Wings use |
 //! | `HALLOW_PANEL_LOCATIONS` | none | Panel location per region: `fsn1=<uuid>,nbg1=<uuid>`; `*=<uuid>` for any other |
 //! | `HALLOW_NODE_GAME_PORTS` | `30000-30999` | Game-port allocations made on each node; match `install.sh --game-ports` |
 //! | `HALLOW_NODE_WINGS_PORT` / `HALLOW_NODE_SFTP_PORT` | `8080` / `2022` | Wings' API and SFTP ports on nodes |
 //! | `HALLOW_JOIN_TOKEN_TTL_HOURS` | `24` | Default lifetime of a node join token (at most 168) |
 //! | `HALLOW_NODE_WINGS_REMOTE` | the panel's public URL | The remote URL new nodes' Wings are enrolled with; the control plane's own URL for Wings instances |
+//! | `HALLOW_NODE_PUBLIC_URL` | none | The URL browsers use for a new node's Wings, `{uuid}` and `{name}` filled in: the panel's Wings proxy, `https://panel.example.net/wings-proxy/{uuid}` (needs `nodes.update`) |
 //! | `HALLOW_ORCHESTRATOR` | `off` | `docker` or `wings` runs instances of registered kinds (docs/INSTANCES.md); needs the database |
 //! | `HALLOW_INSTANCE_CONTROL_PLANE` | required with an orchestrator | `host:port` instances reach the control plane at |
 //! | `HALLOW_INSTANCE_ENV` | none | Comma-separated `NAME=value` for every instance, such as `HALLOW_VINE_SECRET=...` |
@@ -199,6 +200,9 @@ fn panel_config() -> Result<Option<PanelConfig>, String> {
     }
     if let Ok(remote) = env::var("HALLOW_NODE_WINGS_REMOTE") {
         panel.wings_remote = Some(remote);
+    }
+    if let Ok(template) = env::var("HALLOW_NODE_PUBLIC_URL") {
+        panel.node_public_url = Some(template);
     }
     if let Ok(range) = env::var("HALLOW_NODE_GAME_PORTS") {
         let parsed = range
