@@ -55,6 +55,10 @@ struct Env {
 
 impl Env {
     async fn start() -> Option<Self> {
+        Self::start_with(|_| {}).await
+    }
+
+    async fn start_with(change: impl FnOnce(&mut Config)) -> Option<Self> {
         let redis = env_or_skip("HALLOW_TEST_REDIS_URL")?;
         let db_url = env_or_skip("HALLOW_TEST_DATABASE_URL")?;
         let admin = PgPoolOptions::new()
@@ -91,6 +95,7 @@ impl Env {
             stuck_ms: 5000,
         };
         config.instances = Some(setup);
+        change(&mut config);
         let mock = Arc::new(MockOrchestrator::new(&["dock"]));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -348,7 +353,10 @@ async fn a_queue_starts_a_fresh_instance_and_an_empty_game_deletes_it() {
     let spec = &ran[&instance.name].spec;
     assert_eq!(spec.env["HALLOW_SERVER_NAME"], instance.name);
     assert_eq!(spec.env["HALLOW_CONTROL_PLANE"], "control-plane:8080");
-    assert_eq!(spec.env["HALLOW_CONTROL_PLANE_TOKEN"], TOKEN);
+    // Its own scoped token, never the shared one.
+    let instance_token = &spec.env["HALLOW_CONTROL_PLANE_TOKEN"];
+    assert!(instance_token.starts_with("hit_"), "{instance_token}");
+    assert_ne!(instance_token, TOKEN);
     assert_eq!(spec.env["HALLOW_VINE_SECRET"], "s3cret");
     assert_eq!(spec.env["GAME_MODE"], "solo");
     assert_eq!(spec.memory_mb, 512);
@@ -512,5 +520,259 @@ async fn warm_pools_limits_endings_and_failures() {
         list.iter().all(|i| i.kind != "broken")
     })
     .await;
+    env.drop().await;
+}
+
+/// What an instance's own token can and can't do: only its own server's
+/// routes, and nothing once the instance is deleted.
+#[tokio::test]
+async fn an_instance_token_reaches_only_its_own_server() {
+    let Some(env) = Env::start().await else {
+        return;
+    };
+    let mut lobby = game_kind(1, 16, 1);
+    lobby.role = KindRole::Lobby;
+    lobby.lobby = None;
+    let res = env.put(&routes::kind("skylobby"), &lobby).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    setup_network(&env).await;
+    let started = env
+        .wait_for("the lobby instance", |list| {
+            list.len() == 1 && list[0].state == InstanceState::Starting
+        })
+        .await;
+    let name = started[0].name.clone();
+    let token = env.mock.instances()[&name].spec.env["HALLOW_CONTROL_PLANE_TOKEN"].clone();
+    assert!(token.starts_with("hit_"));
+
+    let url = |path: &str| format!("{}{path}", env.base);
+    let as_instance = |req: reqwest::RequestBuilder| {
+        let token = token.clone();
+        async move { req.bearer_auth(token).send().await.unwrap().status() }
+    };
+    let register = |name: &str, kind: &str| RegisterServer {
+        name: name.into(),
+        kind: kind.into(),
+        version: "dev".into(),
+        role: ServerRole::Lobby,
+        address: format!("{name}:25565"),
+        max_players: 16,
+    };
+    let beat = ServerHeartbeat {
+        players: 0,
+        state: ServerState::Ready,
+        tick_ms: None,
+        roster: Some(Vec::new()),
+    };
+
+    // Everything the server plugin does, as itself.
+    let ok = as_instance(
+        env.http
+            .post(url(routes::SERVERS))
+            .json(&register(&name, "skylobby")),
+    )
+    .await;
+    assert_eq!(ok, StatusCode::NO_CONTENT);
+    let ok = as_instance(
+        env.http
+            .post(url(&routes::server_heartbeat(&name)))
+            .json(&beat),
+    )
+    .await;
+    assert_eq!(ok, StatusCode::NO_CONTENT);
+    let ok = as_instance(env.http.get(url(&routes::server_players(&name)))).await;
+    assert_eq!(ok, StatusCode::OK);
+    let stats = hallow_proto::stats::StatsBatch {
+        source: name.clone(),
+        kind: "skylobby".into(),
+        players: Vec::new(),
+    };
+    let ok = as_instance(env.http.post(url(routes::STATS)).json(&stats)).await;
+    assert_ne!(ok, StatusCode::FORBIDDEN);
+    assert_ne!(ok, StatusCode::UNAUTHORIZED);
+    let signals = hallow_proto::signal::SignalBatch {
+        source: name.clone(),
+        samples: Vec::new(),
+    };
+    let ok = as_instance(env.http.post(url(routes::SIGNALS)).json(&signals)).await;
+    assert_ne!(ok, StatusCode::FORBIDDEN);
+    assert_ne!(ok, StatusCode::UNAUTHORIZED);
+    env.wait_for("the lobby to be ready", |list| {
+        list.len() == 1 && list[0].state == InstanceState::Ready
+    })
+    .await;
+
+    // Another server: refused, by path or by body.
+    let forbidden =
+        [
+            as_instance(
+                env.http
+                    .post(url(routes::SERVERS))
+                    .json(&register("lobby", "hub")),
+            )
+            .await,
+            as_instance(
+                env.http
+                    .post(url(routes::SERVERS))
+                    .json(&register(&name, "hub")),
+            )
+            .await,
+            as_instance(
+                env.http
+                    .post(url(&routes::server_heartbeat("lobby")))
+                    .json(&beat),
+            )
+            .await,
+            as_instance(env.http.delete(url(&routes::server("lobby")))).await,
+            as_instance(env.http.get(url(&routes::server_players("lobby")))).await,
+            as_instance(
+                env.http
+                    .post(url(routes::STATS))
+                    .json(&hallow_proto::stats::StatsBatch {
+                        source: "lobby".into(),
+                        kind: "skylobby".into(),
+                        players: Vec::new(),
+                    }),
+            )
+            .await,
+            as_instance(
+                env.http
+                    .post(url(routes::STATS))
+                    .json(&hallow_proto::stats::StatsBatch {
+                        source: name.clone(),
+                        kind: "skywars".into(),
+                        players: Vec::new(),
+                    }),
+            )
+            .await,
+            as_instance(env.http.post(url(routes::SIGNALS)).json(
+                &hallow_proto::signal::SignalBatch {
+                    source: "proxy-1".into(),
+                    samples: Vec::new(),
+                },
+            ))
+            .await,
+            // Admin and proxy routes.
+            as_instance(env.http.get(url(routes::INSTANCES))).await,
+            as_instance(env.http.delete(url(&routes::instance(&name)))).await,
+            as_instance(env.http.get(url(routes::KINDS))).await,
+            as_instance(env.http.put(url(&routes::kind("evil"))).json(&lobby)).await,
+            as_instance(env.http.get(url(&routes::since(routes::SERVERS, 0)))).await,
+            as_instance(env.http.get(url(routes::PROXIES))).await,
+            as_instance(env.http.get(url(&routes::proxy_commands("proxy-1")))).await,
+            as_instance(
+                env.http
+                    .post(url(routes::COMMANDS))
+                    .json(&serde_json::json!({})),
+            )
+            .await,
+            as_instance(
+                env.http
+                    .post(url(routes::NODE_JOIN_TOKENS))
+                    .json(&serde_json::json!({"role": "burst", "region": "x"})),
+            )
+            .await,
+            as_instance(env.http.get(url(routes::RANKS))).await,
+            as_instance(env.http.get(url(routes::FLEET_SETTINGS))).await,
+        ];
+    for (i, status) in forbidden.iter().enumerate() {
+        assert_eq!(*status, StatusCode::FORBIDDEN, "call {i}");
+    }
+    // The other server is untouched.
+    let servers: Poll<Vec<ServerInfo>> = env.get_json(&routes::since(routes::SERVERS, 0)).await;
+    let Poll::Changed { data, .. } = servers else {
+        panic!("no server list");
+    };
+    let other = data.iter().find(|s| s.name == "lobby").unwrap();
+    assert_eq!(other.kind, "hub");
+    assert_eq!(other.address, "lobby:25565");
+
+    // A made-up token of the same shape is nobody.
+    let fake = format!("hit_{}", "0".repeat(64));
+    let status = env
+        .http
+        .post(url(&routes::server_heartbeat(&name)))
+        .bearer_auth(fake)
+        .json(&beat)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Deleted: the token is revoked with the record.
+    let res = env.delete(&routes::instance(&name)).await;
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    env.wait_for("the lobby to go", |list| {
+        list.iter().all(|i| i.name != name)
+    })
+    .await;
+    let gone = as_instance(
+        env.http
+            .post(url(&routes::server_heartbeat(&name)))
+            .json(&beat),
+    )
+    .await;
+    assert_eq!(gone, StatusCode::UNAUTHORIZED);
+    let gone = as_instance(
+        env.http
+            .post(url(routes::SERVERS))
+            .json(&register(&name, "skylobby")),
+    )
+    .await;
+    assert_eq!(gone, StatusCode::UNAUTHORIZED);
+    env.drop().await;
+}
+
+/// A static scoped token from `HALLOW_SERVER_TOKENS` acts like an
+/// instance's, for the server it names.
+#[tokio::test]
+async fn a_static_server_token_reaches_only_its_server() {
+    let Some(env) = Env::start_with(|config| {
+        config.server_tokens =
+            hallow_control_plane::auth::parse_static_tokens("lobby:hub:static-lobby-token-0123")
+                .unwrap();
+    })
+    .await
+    else {
+        return;
+    };
+    let url = |path: &str| format!("{}{path}", env.base);
+    let register = |name: &str| RegisterServer {
+        name: name.into(),
+        kind: "hub".into(),
+        version: "dev".into(),
+        role: ServerRole::Lobby,
+        address: format!("{name}:25565"),
+        max_players: 100,
+    };
+    let send = |req: reqwest::RequestBuilder| async move {
+        req.bearer_auth("static-lobby-token-0123")
+            .send()
+            .await
+            .unwrap()
+            .status()
+    };
+    assert_eq!(
+        send(env.http.post(url(routes::SERVERS)).json(&register("lobby"))).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send(
+            env.http
+                .post(url(routes::SERVERS))
+                .json(&register("lobby-2"))
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(env.http.get(url(routes::INSTANCES))).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(env.http.delete(url(&routes::server("lobby")))).await,
+        StatusCode::NO_CONTENT
+    );
     env.drop().await;
 }

@@ -43,6 +43,9 @@ struct Mock {
     nodes: BTreeMap<Uuid, Value>,
     /// Answer the next enrollment with a 500.
     fail_enrollment: bool,
+    /// Method, path and `Authorization` of every Wings remote call that
+    /// reached the panel through the control plane.
+    remote: Vec<(String, String, String)>,
 }
 
 type Shared = Arc<Mutex<Mock>>;
@@ -116,15 +119,42 @@ async fn delete_node(State(mock): State<Shared>, Path(node): Path<Uuid>) -> Resp
     }
 }
 
+/// The panel's remote API, as Wings calls it (through the control plane).
+async fn remote(State(mock): State<Shared>, request: Request) -> Response {
+    let auth = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let path = request
+        .uri()
+        .path_and_query()
+        .map_or_else(String::new, ToString::to_string);
+    mock.lock()
+        .unwrap()
+        .remote
+        .push((request.method().to_string(), path, auth));
+    if request.method() == axum::http::Method::POST {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        errors(StatusCode::NOT_FOUND, "server not found")
+    }
+}
+
 async fn start_panel() -> (String, Shared) {
     let mock = Shared::default();
+    let remote_api = Router::new()
+        .route("/api/remote/{*rest}", axum::routing::any(remote))
+        .with_state(mock.clone());
     let app = Router::new()
         .route("/api/admin/nodes", post(create_node))
         .route("/api/admin/nodes/{node}", delete(delete_node))
         .route("/api/admin/nodes/{node}/allocations", post(allocations))
         .route("/api/admin/nodes/{node}/enrollment", post(enrollment))
         .layer(middleware::from_fn_with_state(mock.clone(), check_key))
-        .with_state(mock.clone());
+        .with_state(mock.clone())
+        .merge(remote_api);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -449,5 +479,69 @@ async fn joins_and_issues_are_checked() {
     // The name is taken by the node that just joined.
     let res = env.issue(&burst(Some("hallow-burst-1"))).await;
     assert_eq!(res.status(), StatusCode::CONFLICT);
+    env.drop().await;
+}
+
+/// Wings' remote calls that aren't about the control plane's instances go to
+/// the panel unchanged, whatever their method: `POST servers/reset` once
+/// answered 405 because it matched the `GET servers/{uuid}` route.
+#[tokio::test]
+async fn wings_remote_calls_pass_through_to_the_panel() {
+    let Some(env) = Env::start().await else {
+        return;
+    };
+    let node_auth = "Bearer abcdef.0123456789";
+    let call = |method: reqwest::Method, path: &str| {
+        env.http
+            .request(method, format!("{}{path}", env.base))
+            .header("authorization", node_auth)
+            .send()
+    };
+    let res = call(reqwest::Method::POST, "/api/remote/servers/reset")
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let other = Uuid::new_v4();
+    let res = call(
+        reqwest::Method::GET,
+        &format!("/api/remote/servers/{other}"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res = call(
+        reqwest::Method::POST,
+        &format!("/api/remote/servers/{other}/install"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = call(reqwest::Method::POST, "/api/remote/activity")
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let remote = env.mock.lock().unwrap().remote.clone();
+    let auth = node_auth.to_owned();
+    assert_eq!(
+        remote,
+        [
+            (
+                "POST".into(),
+                "/api/remote/servers/reset".into(),
+                auth.clone()
+            ),
+            (
+                "GET".into(),
+                format!("/api/remote/servers/{other}"),
+                auth.clone()
+            ),
+            (
+                "POST".into(),
+                format!("/api/remote/servers/{other}/install"),
+                auth.clone()
+            ),
+            ("POST".into(), "/api/remote/activity".into(), auth),
+        ]
+    );
     env.drop().await;
 }

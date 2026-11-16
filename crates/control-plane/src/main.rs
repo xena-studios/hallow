@@ -2,7 +2,8 @@
 //!
 //! | Variable | Default | |
 //! |---|---|---|
-//! | `HALLOW_TOKEN` or `HALLOW_TOKEN_FILE` | required | Bearer token every caller sends |
+//! | `HALLOW_TOKEN` or `HALLOW_TOKEN_FILE` | required | The shared bearer token, good for every route |
+//! | `HALLOW_SERVER_TOKENS` | none | Scoped tokens for servers the control plane doesn't start: `name:kind:token,...` (docs/INSTANCES.md#credentials) |
 //! | `HALLOW_REDIS_URL` | `redis://127.0.0.1:6379` | |
 //! | `HALLOW_LISTEN` | `0.0.0.0:8080` | |
 //! | `HALLOW_AGENT_LISTEN` | `0.0.0.0:8081` | HAProxy agent checks (plain TCP, no token); `off` disables |
@@ -98,6 +99,9 @@ fn config() -> Result<Config, String> {
     let redis_url =
         env::var("HALLOW_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     let mut config = Config::new(redis_url, token);
+    if let Ok(list) = env::var("HALLOW_SERVER_TOKENS") {
+        config.server_tokens = hallow_control_plane::auth::parse_static_tokens(&list)?;
+    }
     if let Ok(listen) = env::var("HALLOW_LISTEN") {
         config.listen = listen
             .parse()

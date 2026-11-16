@@ -54,7 +54,10 @@ COPY templates/server/pumpkin.toml /etc/hallow/pumpkin.toml
 # Checked against each server repo's base range (hallow.toml's base).
 COPY templates/server/VERSION /etc/hallow/base-version
 COPY templates/server/entrypoint.sh /usr/local/bin/hallow-entrypoint
-RUN install -d -o hallow -g hallow /server/plugins /server/plugins/data
+# Readable by any user: Wings runs containers as its own user (not hallow)
+# with a read-only root, and the entrypoint copies /server to the volume.
+RUN install -d -o hallow -g hallow /server/plugins /server/plugins/data \
+    && chmod 0755 /server
 WORKDIR /server
 USER hallow
 EXPOSE 25565

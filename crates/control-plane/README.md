@@ -6,6 +6,7 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
 
 ## What it does
 
+- **Callers** send `Authorization: Bearer <token>`: the shared token (`HALLOW_TOKEN`) can do anything; a server's scoped token (one per instance, or `HALLOW_SERVER_TOKENS`) can only register, heartbeat, report players, stats and signals, and unregister its own server ([Instances](../../docs/INSTANCES.md#credentials)).
 - **Servers** register when they accept players and heartbeat every 5 s. The list revision changes when a server is added or removed, or changes state, but not on player counts alone. Proxies long-poll the list and mirror it into Vine.
 - **Players per server.** Each server reports who is on it, independently of the proxies:
   - `POST /v1/servers/{name}/players` with who joined and left, as it happens;

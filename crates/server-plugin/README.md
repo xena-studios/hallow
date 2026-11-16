@@ -117,7 +117,7 @@ Environment variables come first. Any setting a variable leaves unset comes from
 | Variable | `config.toml` key | Default |
 |---|---|---|
 | `HALLOW_CONTROL_PLANE` | `control_plane` | none: the plugin stays idle. `host:port`, plain HTTP on the private network |
-| `HALLOW_CONTROL_PLANE_TOKEN` | `token` | |
+| `HALLOW_CONTROL_PLANE_TOKEN` | `token` | the shared token, or a scoped one (instances get their own; docs/INSTANCES.md#credentials) |
 | `HALLOW_CONTROL_PLANE_TOKEN_FILE` | `token_file` | a file name in the data folder |
 | `HALLOW_SERVER_NAME` | `name` | required; the base image sets it |
 | `HALLOW_SERVER_KIND` | `kind` | the name |

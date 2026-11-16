@@ -14,7 +14,7 @@
 //! which it reads from the panel (`GET /api/admin/nodes/{node}/token`,
 //! admin permission `nodes.read-token`) and caches.
 //!
-//! Untested against a live Wings: see docs/INSTANCES.md for what is.
+//! Run end to end against Wings 1.2.10 by `tools/wings-e2e` (docs/INSTANCES.md).
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -144,7 +144,7 @@ impl WingsOrchestrator {
                     continue;
                 };
                 if known.token_id == token_id
-                    && crate::api::constant_time_eq(known.token.as_bytes(), token.as_bytes())
+                    && crate::auth::constant_time_eq(known.token.as_bytes(), token.as_bytes())
                 {
                     return Some(node.clone());
                 }
