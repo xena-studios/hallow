@@ -39,6 +39,15 @@ impl Failure {
         Self::new(ErrorCode::NotFound, message)
     }
 
+    /// A `403`: the token is good but can't do this. The code stays
+    /// `unauthorized`, which every client already knows.
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            ..Self::new(ErrorCode::Unauthorized, message)
+        }
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::BadRequest, message)
     }

@@ -13,6 +13,7 @@
 mod accounts;
 mod agent;
 mod api;
+pub mod auth;
 mod error;
 pub mod events;
 mod fleet;
@@ -85,8 +86,11 @@ impl InstancesSetup {
 pub struct Config {
     pub listen: SocketAddr,
     pub redis_url: String,
-    /// The bearer token every request must carry.
+    /// The shared bearer token, good for every route.
     pub token: String,
+    /// Scoped tokens for servers the control plane doesn't start
+    /// (`HALLOW_SERVER_TOKENS`, see [`auth`]).
+    pub server_tokens: Vec<auth::StaticServerToken>,
     /// Prefix for every Redis key and channel, so several networks (or tests)
     /// can share one Redis.
     pub key_prefix: String,
@@ -124,6 +128,7 @@ impl Config {
             listen: SocketAddr::from(([0, 0, 0, 0], 8080)),
             redis_url: redis_url.into(),
             token: token.into(),
+            server_tokens: Vec::new(),
             key_prefix: "hallow".into(),
             hub_kind: "hub".into(),
             max_players: 1000,
@@ -294,7 +299,6 @@ async fn start_instances(
         instances::InstancesConfig {
             settings: setup.settings,
             control_plane: setup.control_plane.clone(),
-            token: config.token.clone(),
             env: setup.env.clone(),
         },
     )))

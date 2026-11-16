@@ -144,7 +144,7 @@ impl WingsOrchestrator {
                     continue;
                 };
                 if known.token_id == token_id
-                    && crate::api::constant_time_eq(known.token.as_bytes(), token.as_bytes())
+                    && crate::auth::constant_time_eq(known.token.as_bytes(), token.as_bytes())
                 {
                     return Some(node.clone());
                 }

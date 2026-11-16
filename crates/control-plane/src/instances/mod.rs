@@ -43,10 +43,9 @@ pub const DEFAULT_MEMORY_MB: u32 = 1024;
 pub struct InstancesConfig {
     pub settings: Settings,
     /// `host:port` instances reach the control plane at
-    /// (`HALLOW_CONTROL_PLANE`).
+    /// (`HALLOW_CONTROL_PLANE`). Each instance gets its own scoped token
+    /// for it, never the shared one (`auth`).
     pub control_plane: String,
-    /// The bearer token instances use.
-    pub token: String,
     /// Environment for every instance, such as `HALLOW_VINE_SECRET`.
     pub env: BTreeMap<String, String>,
 }
@@ -281,6 +280,13 @@ impl Manager {
         port: Option<u16>,
     ) -> Result<Option<String>, PlanError> {
         for _ in 0..4 {
+            let token = match crate::auth::new_instance_token() {
+                Ok(token) => token,
+                Err(err) => {
+                    tracing::error!(%err, "no randomness for an instance token");
+                    return Ok(None);
+                }
+            };
             let uuid = Uuid::new_v4();
             let name = format!("{kind}-{}", &uuid.simple().to_string()[..6]);
             let now = now_ms();
@@ -306,11 +312,15 @@ impl Manager {
                 uuid,
                 kind: kind.to_owned(),
                 image: spec.image.clone(),
-                env: self.env(&name, spec),
+                env: self.env(&name, spec, &token),
                 port,
                 memory_mb: spec.memory_mb.unwrap_or(DEFAULT_MEMORY_MB),
             };
-            if store.add_instance(&info, &instance_spec).await? {
+            let token_hash = crate::auth::token_hash(&token);
+            if store
+                .add_instance(&info, &instance_spec, &token_hash)
+                .await?
+            {
                 tracing::info!(instance = %name, %kind, %node, "creating instance");
                 return Ok(Some(name));
             }
@@ -318,9 +328,9 @@ impl Manager {
         Ok(None)
     }
 
-    /// The instance's environment: the server plugin's settings, then the
-    /// network's and the kind's extras.
-    fn env(&self, name: &str, spec: &KindSpec) -> BTreeMap<String, String> {
+    /// The instance's environment: the server plugin's settings, with the
+    /// instance's own scoped token, then the network's and the kind's extras.
+    fn env(&self, name: &str, spec: &KindSpec, token: &str) -> BTreeMap<String, String> {
         let mut env = self.config.env.clone();
         env.extend(spec.env.clone());
         env.insert("HALLOW_SERVER_NAME".into(), name.to_owned());
@@ -328,10 +338,7 @@ impl Manager {
             "HALLOW_CONTROL_PLANE".into(),
             self.config.control_plane.clone(),
         );
-        env.insert(
-            "HALLOW_CONTROL_PLANE_TOKEN".into(),
-            self.config.token.clone(),
-        );
+        env.insert("HALLOW_CONTROL_PLANE_TOKEN".into(), token.to_owned());
         env
     }
 

@@ -4,10 +4,10 @@
 use std::{future::Future, sync::Arc};
 
 use axum::{
-    Router,
-    extract::{FromRequest, FromRequestParts, Path, Query, Request, State},
+    Extension, Router,
+    extract::{FromRequest, FromRequestParts, Path, Query, State},
     http::{StatusCode, header, request::Parts},
-    middleware::{self, Next},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -39,6 +39,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState, accounts,
+    auth::Caller,
     error::Failure,
     events, fleet, friends, kinds, nodes, punish, ranks, signals, stats,
     store::{LoginOutcome, RegisterError},
@@ -156,7 +157,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             &routes::instance("{name}"),
             axum::routing::delete(kinds::end_instance),
         )
-        .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::authorize,
+        ));
     Router::new()
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))
@@ -170,26 +174,12 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 /// The bearer token in `Authorization`, or `""`.
-fn bearer(headers: &axum::http::HeaderMap) -> &str {
+pub(crate) fn bearer(headers: &axum::http::HeaderMap) -> &str {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default()
-}
-
-/// Checks `Authorization: Bearer <token>` in constant time.
-async fn authorize(State(state): Shared, request: Request, next: Next) -> Response {
-    let given = bearer(request.headers());
-    if !constant_time_eq(given.as_bytes(), state.config.token.as_bytes()) {
-        return Failure::new(ErrorCode::Unauthorized, "missing or wrong bearer token")
-            .into_response();
-    }
-    next.run(request).await
-}
-
-pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Names and ids go into URLs and Redis keys: 1 to 64 of `A-Z a-z 0-9 . _ -`.
@@ -306,10 +296,12 @@ async fn poll_commands(
 
 async fn register_server(
     State(state): Shared,
+    Extension(caller): Extension<Caller>,
     Body(req): Body<RegisterServer>,
 ) -> Reply<StatusCode> {
     check_name("server name", &req.name)?;
     check_name("server kind", &req.kind)?;
+    caller.check_server(&req.name, Some(&req.kind))?;
     let name = req.name.clone();
     match state.store.register_server(req).await? {
         Ok(()) => {
@@ -495,8 +487,13 @@ async fn player_by_name(
 
 // Anticheat signals
 
-async fn add_signals(State(state): Shared, Body(batch): Body<SignalBatch>) -> Reply<StatusCode> {
+async fn add_signals(
+    State(state): Shared,
+    Extension(caller): Extension<Caller>,
+    Body(batch): Body<SignalBatch>,
+) -> Reply<StatusCode> {
     check_name("signal source", &batch.source)?;
+    caller.check_server(&batch.source, None)?;
     if batch.samples.len() > signals::MAX_BATCH {
         return Err(Failure::bad_request(format!(
             "at most {} samples per batch",
@@ -522,9 +519,14 @@ async fn signal_history(
 
 // Stats
 
-async fn add_stats(State(state): Shared, Body(batch): Body<StatsBatch>) -> Reply<StatusCode> {
+async fn add_stats(
+    State(state): Shared,
+    Extension(caller): Extension<Caller>,
+    Body(batch): Body<StatsBatch>,
+) -> Reply<StatusCode> {
     check_name("stats source", &batch.source)?;
     check_name("server kind", &batch.kind)?;
+    caller.check_server(&batch.source, Some(&batch.kind))?;
     stats::check(&batch).map_err(Failure::bad_request)?;
     let db = database(&state)?;
     stats::store(db, &batch).await?;

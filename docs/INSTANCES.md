@@ -80,12 +80,34 @@ The quick decisions are written to Redis under the lock: new records, `ready`, b
 Every instance gets the server plugin's settings in its environment:
 
 - `HALLOW_SERVER_NAME` (the instance name);
-- `HALLOW_CONTROL_PLANE` (`HALLOW_INSTANCE_CONTROL_PLANE`) and `HALLOW_CONTROL_PLANE_TOKEN`;
+- `HALLOW_CONTROL_PLANE` (`HALLOW_INSTANCE_CONTROL_PLANE`) and `HALLOW_CONTROL_PLANE_TOKEN`, the instance's own scoped token ([Credentials](#credentials));
 - `HALLOW_SERVER_ADDRESS`, set by the orchestrator;
 - the network's `HALLOW_INSTANCE_ENV`, such as the Vine forwarding secret;
 - the kind's `env`.
 
-The instance token is the control plane's shared token for now, visible to anyone who can inspect the container; per-instance tokens are still to do.
+## Credentials
+
+An instance never gets the control plane's shared token (`HALLOW_TOKEN`), which can do anything: ban players, change kinds, end instances, issue node join tokens. Anyone who can inspect a container (`docker inspect`, the Wings API, a plugin with `sys.env`) can read its environment, so each instance gets a **scoped token** of its own instead (`crates/control-plane/src/auth.rs`):
+
+- **Minted** when the instance is recorded: `hit_` and 32 random bytes in hex.
+- **Stored hashed.** Redis keeps its SHA-256 with the instance's name, kind and creation time (`instance-tokens`, plus `instance-token-of` from the name back to the hash). The raw token is in the instance's spec (`instance-specs`), because that is the environment Wings fetches on every start ([above](#wings-without-a-panel-record-per-instance)); Redis is as trusted as the control plane itself.
+- **Lives as long as the instance.** A token works only while its instance record exists. Deleting the record (the instance ended, or a stuck one was cleaned up) removes the token in the same Lua script, and every lookup also checks the record is still there.
+- **Scoped to what the server plugin does** (audited from `crates/server-plugin`: register, heartbeat, player reports, stats, signals, unregister), for its own name only:
+
+  | Route | Allowed when |
+  |---|---|
+  | `POST /v1/servers` | the body's `name` and `kind` are the instance's |
+  | `POST /v1/servers/{name}/heartbeat` (state, players, roster) | `{name}` is the instance's |
+  | `DELETE /v1/servers/{name}` | `{name}` is the instance's |
+  | `POST`/`GET /v1/servers/{name}/players` | `{name}` is the instance's |
+  | `POST /v1/stats` | the batch's `source` and `kind` are the instance's |
+  | `POST /v1/signals` | the batch's `source` is the instance's |
+
+  Everything else answers `403` (code `unauthorized`): other servers' routes, the server list, presence, commands, kinds, instances, punishments, ranks, fleet settings and node tokens. An unknown or revoked token answers `401`.
+
+`tests/instances.rs` checks a scoped token against every one of those, and that it stops working once its instance is deleted.
+
+**Servers the control plane doesn't start**, such as the dev network's compose hub (`lobby`), keep working with the shared token. To give one a scoped token instead, list it in `HALLOW_SERVER_TOKENS` as `name:kind:token` (comma-separated, tokens at least 16 characters) and pass that token as the server's `HALLOW_CONTROL_PLANE_TOKEN`. A static token has the same scope as an instance's and lives as long as the setting. The dev network still gives its hub the shared token.
 
 Players queued for a kind that has no server yet are accepted when the kind is registered as a game; the queue then starts one. `players.min` isn't used yet: the matchmaker sends players as soon as there's room, and a game plugin decides when its match starts.
 
@@ -130,7 +152,6 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 ## Still to do
 
 - Run the Wings orchestrator against a real node, with the node bootstrap's first real run.
-- Per-instance tokens for the server plugin, instead of the shared token.
 - Scale lobbies and hubs on players per instance, not just `warm`.
 - Draining nodes: no new instances there (the fleet manager).
 - `players.min` and match start, with `hallow-sdk`.
