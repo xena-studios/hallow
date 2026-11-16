@@ -73,12 +73,13 @@ The panel can mint single-use Wings enrollment codes, but only for a node that a
 3. On first boot `install.sh` sends `POST /v1/nodes/join` with `Authorization: Bearer hjt_…`: the hostname, private IP, public IP, WireGuard public key, memory, disk and architecture.
 4. The control plane claims the token for two minutes (one atomic `UPDATE`, so two machines can't both win). Then it calls the panel's admin API with its own key:
    - creates the node, at `http://<private ip>:8080`, in the panel location mapped to the token's region;
+   - with `HALLOW_NODE_PUBLIC_URL`, sets the node's public URL (what browsers use for Wings) to the panel's Wings proxy, since staff browsers can't reach the private address ([Instances](../../docs/INSTANCES.md#consoles));
    - adds the game-port allocations on the private IP;
    - mints a Wings enrollment code.
 
    In one transaction it records the node in `hallow.nodes` and marks the token used. It answers with the panel URL and the enrollment code.
 5. `install.sh` runs `wings configure --enroll <code> --panel-url <url>`. Wings redeems the code with the panel (`POST /api/remote/enroll`), which rotates the node's token and hands it to Wings directly. When the control plane runs instances on Wings (`HALLOW_ORCHESTRATOR=wings`), the code also tells Wings to use the control plane as its remote (`HALLOW_NODE_WINGS_REMOTE`). The control plane then answers for its instances, passes every other call to the panel, and reads the node's token from the panel (`nodes.read-token`) to call Wings ([Instances](../../docs/INSTANCES.md)).
-6. Wings starts and the panel shows the node online.
+6. Wings starts and the panel shows the node online: the panel calls Wings at the private address, and the node list's check from the browser goes through the panel's Wings proxy.
 
 If a panel call fails half way, the control plane deletes the half-made panel node and gives the token back. It answers 503, so the script's retries (curl, 10 attempts) try again with the same token. A bad request or a conflict (a node of that name exists) doesn't spend the token either. Only a finished join spends it. A used, expired or unknown token gets 401.
 
@@ -128,11 +129,12 @@ provider.create(&NodeSpec { user_data, .. }).await?;
 |---|---|
 | `HALLOW_DATABASE_URL` | Required for tokens |
 | `HALLOW_PANEL_URL` | Where the control plane calls the panel's admin API |
-| `HALLOW_PANEL_API_KEY` or `_FILE` | Admin API key with `nodes.create`, `nodes.allocations`, `nodes.reset-token` and `nodes.delete` |
+| `HALLOW_PANEL_API_KEY` or `_FILE` | Admin API key with `nodes.create`, `nodes.allocations`, `nodes.reset-token` and `nodes.delete`; `nodes.read-token` when instances run on Wings, `nodes.update` with `HALLOW_NODE_PUBLIC_URL` |
 | `HALLOW_PANEL_PUBLIC_URL` | The URL Wings uses for the panel (default `HALLOW_PANEL_URL`) |
 | `HALLOW_PANEL_LOCATIONS` | `fsn1=<location uuid>,nbg1=<uuid>,*=<uuid>` |
 | `HALLOW_NODE_GAME_PORTS` | Allocations per node, default `30000-30999` |
 | `HALLOW_NODE_WINGS_PORT`, `HALLOW_NODE_SFTP_PORT` | Default 8080 and 2022 |
+| `HALLOW_NODE_PUBLIC_URL` | The URL browsers use for each new node's Wings, `{uuid}` filled in: `https://panel.example.net/wings-proxy/{uuid}`, with `APP_ENABLE_WINGS_PROXY=true` on the panel. Unset, browsers use the private URL |
 | `HALLOW_JOIN_TOKEN_TTL_HOURS` | Default 24, at most 168 |
 
 `GET /v1/nodes` lists joined nodes with their private IP and WireGuard public key.
@@ -161,12 +163,14 @@ docker exec hwe2e-node bash /root/install.sh \
 
 Result (2026-11-16, OrbStack on arm64): packages installed; Wings 1.2.10 downloaded and its SHA-256 checked; the join created the node, 20 game-port allocations and an enrollment code in the panel through the control plane's panel client (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, then `nodes.read-token` for Wings' token), with the control plane as Wings' remote; `wings configure --enroll` wrote the config (API port and SFTP port from the panel node); Wings started, and the control plane ran hub and game instances on it. The run found and fixed a remote-shim bug that stopped Wings booting ([Instances](../../docs/INSTANCES.md#wings-without-a-panel-record-per-instance)).
 
+A later run (2026-11-16) gave the node an address of the Docker host that the panel reaches, as a WireGuard address would be: the panel shows the node online (also through its Wings proxy, the node's public URL), and staff use a panel server's console, files and power actions and an instance's console through the panel ([tools/wings-e2e](../../tools/wings-e2e/README.md#what-it-checks)).
+
 ## Not done yet
 
 - **Run on real machines.** The script has run for real only in a container, with Docker, the kernel tuning, WireGuard, the firewall and systemd skipped. A real Debian or Ubuntu machine should still check:
   - Docker installs from its repository and Wings runs under `wings.service`;
   - `nft -c` accepts the ruleset;
-  - Wings shows online in the panel (in the local run the panel couldn't reach the node's address);
+  - Wings shows online in the panel over WireGuard (locally it does over the Docker host's address);
   - game ports are unreachable from the public address.
 - **The WireGuard hub learning new peers.** A node sends its public key and the control plane stores it (`GET /v1/nodes`). Nothing yet adds it to the hub's `wg0`. Until then a node's WireGuard peers must already accept it: add it by hand, or give the hub a sync job that reads `GET /v1/nodes`. Picking a free WireGuard address per node is the fleet manager's job and isn't built either.
 - **TLS to Wings.** The panel talks to Wings over plain HTTP on the private address, inside WireGuard.

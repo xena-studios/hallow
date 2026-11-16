@@ -32,6 +32,7 @@ How it fits together:
 - **Calling Wings.** The control plane calls each node's Wings API (`create`, `power`, `delete`, `GET /api/servers`) with the node's token. It reads the token from the panel (`GET /api/admin/nodes/{node}/token`, admin permission `nodes.read-token`) and caches it. The token also authenticates Wings' remote calls: `Bearer <token_id>.<token>` must match a joined node before the control plane answers for an instance, and that instance must be on that node.
 - **The container.** Wings runs the image's own `ENTRYPOINT` (the configuration's `entrypoint` is unset) and makes the rest of the filesystem read-only apart from the server's volume at `/home/container`. It binds the node's game port to the same port in the container. So instances get `HALLOW_SERVER_DIR=/home/container` (the base image copies `/server` there and runs from it) and `HALLOW_SERVER_PORT=<port>` (Pumpkin listens on it). Both default to the old behaviour, so compose and other uses are unchanged.
 - **Ports.** Instances take the lowest free port in the node's game-port range (`HALLOW_NODE_GAME_PORTS`), tracked in the instance records. The panel's allocation records for that range stay as they are; panel-made servers should use other ports.
+- **The panel's own servers** on such a node work as on any other: Wings asks the control plane for their configuration, install status and the rest, and gets the panel's answer. Staff open their consoles, files and power actions in the panel as usual (below).
 
 **What is verified, and what isn't.** `tools/wings-e2e/run.sh` runs this whole path against a real Wings (the pinned 1.2.10 release) on one machine: the real panel, a node joined with the real `install.sh` and `wings configure --enroll`, Wings fetching configurations from the control plane, pulling images from a registry and running instances as its own user on a read-only root, servers registering with their scoped tokens, a bot routed to a Wings instance through Vine, and deletion removing the container. The first run found three bugs, all fixed:
 
@@ -39,7 +40,17 @@ How it fits together:
 - Every Wings instance exited at once: the base image's `/server` was `0700` for the `hallow` user, and Wings runs containers as its own user, so the entrypoint's copy to `/home/container` failed. `/server` is now `0755`.
 - With a node unreachable, the planner created a new lobby instance on every pass (twice a second) while failed ones waited out their retry time. A kind with a failed instance now waits for it to be cleaned up.
 
-Still untested: the panel calling Wings (console, files) for a node joined this way, several nodes, x86_64, and a real machine's WireGuard and firewall ([tools/wings-e2e](../tools/wings-e2e/README.md#limits)).
+The run also covers the panel calling Wings for a node joined this way ([tools/wings-e2e](../tools/wings-e2e/README.md#what-it-checks)): the node online in the panel, a panel server's console (history, commands over the socket and through the API), a restart, and its files, all through the panel's API and its Wings proxy; and an instance's console from the panel ([Consoles](#consoles)).
+
+Still untested: several nodes, x86_64, and a real machine's WireGuard and firewall ([tools/wings-e2e](../tools/wings-e2e/README.md#limits)).
+
+### Consoles
+
+Staff reach Wings through the panel; no browser needs to reach a node:
+
+- **Browsers go through the panel's Wings proxy.** Wings listens only on the node's private (WireGuard) address. The panel's node list checks Wings from the browser, and its console websocket and file downloads open the node's *public* URL directly, so a node created with only its private URL shows offline and its consoles don't open. The control plane therefore sets each new node's public URL to the panel's own Wings proxy, `HALLOW_NODE_PUBLIC_URL=https://panel.example.net/wings-proxy/{uuid}` (Calagopus, with `APP_ENABLE_WINGS_PROXY=true` on the panel; the key needs `nodes.update`). The panel forwards those requests, websockets included, to the node's private URL.
+- **Panel servers** (long-lived servers staff make in the panel) use the stock pages: console, files, power, everything.
+- **Instances** have no panel server record, so the stock server pages can't open them. What a console needs is a Wings websocket token, signed with the node's token, for the server's Wings UUID, and the panel holds every node's token. So the Hallow extension's `GET /api/admin/hallow/instances/{name}/websocket` (admin permission `hallow.instances.console`) looks the instance up in the control plane (`/v1/instances`, `/v1/nodes`), signs the same token the stock console gets, limited to `websocket.connect`, `control.read-console` and `control.console`, and answers it with the websocket URL at the node's public URL. The Instances page opens it in a console window: the history and live output, and a command line. Power and files stay out on purpose: the control plane owns an instance's lifecycle (end one with the Instances page's power button), and an instance's files are thrown away with it. Opening a console is in the panel's admin activity log (`hallow:instance.console`); Wings' own activity for the instance is dropped by the panel, which doesn't know the server.
 
 ## Kinds
 
@@ -157,11 +168,11 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 | `HALLOW_DOCKER_NETWORK` | required | Docker only |
 | `HALLOW_DOCKER_OWNER` | the network | Docker only |
 | `HALLOW_NODE_WINGS_REMOTE` | the panel's public URL | Wings only: the remote URL new nodes are enrolled with, the control plane's URL as nodes reach it |
+| `HALLOW_NODE_PUBLIC_URL` | none | The URL browsers use for a new node's Wings, `{uuid}` and `{name}` filled in: the panel's Wings proxy, `https://panel.example.net/wings-proxy/{uuid}` ([Consoles](#consoles)) |
 
 ## Still to do
 
 - Run the Wings orchestrator on a real (cloud or dedicated) node; it has run end to end locally (`tools/wings-e2e`).
 - Draining nodes: no new instances there (the fleet manager).
 - `players.min` and match start, with `hallow-sdk`.
-- Console and logs in the panel: the panel reads `GET /v1/instances` for each instance's node and Wings UUID, and talks to Wings with the node's token.
 - Canary channels: a share of new instances on a second image.
