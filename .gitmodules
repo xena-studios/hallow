@@ -7,7 +7,8 @@
 	branch = hallow
 [submodule "upstream/pumpkin-java-multiversion"]
 	path = upstream/pumpkin-java-multiversion
-	url = https://github.com/Pumpkin-MC/pumpkin-java-multiversion
+	url = https://github.com/xena-studios/pumpkin-java-multiversion
+	branch = feat/library-build
 [submodule "upstream/wings"]
 	path = upstream/wings
 	url = https://github.com/calagopus/wings
