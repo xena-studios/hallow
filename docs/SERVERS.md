@@ -100,7 +100,7 @@ The base image's entrypoint runs `hallow-manifest apply` on every start. It:
    - `HALLOW_RETURN_LOBBY`: from `lobby`;
    - then `[env]`.
 
-Variables the container already sets win, so the control plane (or Wings) sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token. A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The plugin doesn't read `HALLOW_RETURN_LOBBY` yet, and `queues`, `players.min`, `scaling` and `maps` are for the matchmaker, the fleet manager and `hallow-sdk`, which don't read them yet either.
+Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The plugin doesn't read `HALLOW_RETURN_LOBBY` yet, and `queues`, `players.min` and `maps` are for the matchmaker and `hallow-sdk`, which don't read them yet either.
 
 ## From repo to running server
 
@@ -135,7 +135,7 @@ A game server runs one match and then stops. Resetting a map means starting a fr
 
 ## Lifecycle
 
-The control plane owns every proxy and server instance. It creates them through Wings, registers servers with every Vine, routes players by role and repo, and deletes them when they're done or no longer needed. The panel shows all of them live, with consoles and logs through Wings. Only the platform services on the floor node (PostgreSQL, Redis, control plane, panel, load balancer) run outside this, under Docker Compose.
+The control plane owns every proxy and server instance. It creates them through Wings, registers servers with every Vine, routes players by role and repo, and deletes them when they're done or no longer needed ([Instances](INSTANCES.md)). The panel shows all of them live, with consoles and logs through Wings. Only the platform services on the floor node (PostgreSQL, Redis, control plane, panel, load balancer) run outside this, under Docker Compose.
 
 ## The SDK
 

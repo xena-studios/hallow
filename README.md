@@ -63,6 +63,7 @@ Old Java clients are translated on each backend by [pumpkin-java-multiversion](h
 - [Multi-proxy](docs/MULTI-PROXY.md): how several Vine proxies act as one
 - [Fleet](docs/FLEET.md): buying, setting up and returning machines on demand
 - [Servers](docs/SERVERS.md): proxies and servers, and how lobbies and games are built from their own repos
+- [Instances](docs/INSTANCES.md): how the control plane starts, keeps warm and deletes instances through Wings, without a panel record per instance
 - [Panel](docs/PANEL.md): one panel for nodes, servers, players, staff and bans
 - [Upstream](docs/UPSTREAM.md): what Pumpkin, Vine, multiversion and Calagopus do today, from their source
 - [Roadmap](docs/ROADMAP.md): phases, gates and every task
