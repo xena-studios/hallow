@@ -1,0 +1,18 @@
+[package]
+name = "hallow-manifest"
+version = "0.1.0"
+description = "Parses and validates a server repo's hallow.toml, and applies it in the server base image (the hallow-manifest CLI)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hallow-manifest"
+path = "src/main.rs"
+
+[dependencies]
+hallow-proto = { path = "../proto" }
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.1"

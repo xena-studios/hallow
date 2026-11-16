@@ -1,0 +1,25 @@
+name: Image
+
+# Checks hallow.toml, builds this server's image on Hallow's server base image
+# and publishes it to GHCR as ghcr.io/<owner>/<name in hallow.toml>:
+#   - a vX.Y.Z tag publishes X.Y.Z, a version the panel can make live;
+#   - a push to main publishes sha-<commit> and dev, for staging only;
+#   - pull requests build and check without publishing.
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+
+jobs:
+  image:
+    uses: xena-studios/hallow/.github/workflows/server-image.yml@main
+    permissions:
+      contents: read
+      packages: write
+    # With a game plugin, build it into plugins/ first:
+    # with:
+    #   rust: true
+    #   prepare: |
+    #     cargo build --release --target wasm32-wasip2
+    #     cp target/wasm32-wasip2/release/example.wasm plugins/

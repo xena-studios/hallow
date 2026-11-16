@@ -45,7 +45,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Load balancer with PROXY protocol and health checks (HAProxy, drain-aware agent checks against the control plane)
 - [x] Matchmaker: queues that fill ready game servers, parties kept together
 - [ ] Matchmaker: warm instances, start and delete server images through the Wings API
-- [ ] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow
+- [x] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow (template contents in `templates/server-repo`; the GitHub repo and the first base image tag are still to create)
 - [x] Hallow server plugin: the link to the control plane (register, heartbeat, state, unregister), in the base image
 - [ ] Hallow server plugin: presence and stats
 - [ ] `hub` server repo

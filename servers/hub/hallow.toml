@@ -1,0 +1,21 @@
+# The hub: the lobby every player lands in after login. The control plane
+# sends new players to ready servers of the hub kind (HALLOW_HUB_KIND, "hub"),
+# so this name must match it. See docs/SERVERS.md#hallowtoml.
+name = "hub"
+role = "hub"                 # a lobby that players return to from everywhere
+base = "^0.1"                # works with base image 0.1.x
+
+[players]
+max = 100                    # per instance
+
+[scaling]
+warm = 1                     # the network's floor: one hub is always up
+
+# Merged over the base image's pumpkin.toml.
+[pumpkin]
+default_gamemode = "Adventure"   # Pumpkin's spelling
+allow_nether = false
+allow_end = false
+
+[pumpkin.pvp]
+enabled = false

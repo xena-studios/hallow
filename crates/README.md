@@ -13,6 +13,7 @@ Hallow's Cargo workspace.
 | `vine-plugin/` | `hallow-vine`: presence, global ping, duplicate-login check, server-list sync and cross-proxy commands, linking each proxy to the control plane (WASM); parties and queues later. See its [README](vine-plugin/README.md) |
 | `hallow-sdk/` | For server repos: minigame library (arenas, teams, kits, scoreboards, spectating, stats) and control-plane client (WASM) |
 | `server-plugin/` | `hallow-server`: Hallow's Pumpkin plugin in every server image. Registers the server with the control plane, heartbeats its player count and state, and unregisters it on shutdown (WASM); presence and stats later. See its [README](server-plugin/README.md) |
+| `server-manifest/` | `hallow-manifest`: parses and validates a server repo's `hallow.toml`, and the `hallow-manifest` CLI that checks it in CI and applies it in the server base image. See its [README](server-manifest/README.md) |
 | `netcheck/` | Smoke test and load test: joins through the proxy as a bot and switches servers; `--stay` keeps it connected; `--bots N` runs N wandering bots and reports join times |
 | `tickwatch/` | Pumpkin plugin that logs tick time, TPS and players once a second, for load tests |
 | `vineprobe/` | Vine plugin for tests: commands that register and unregister servers, drain the proxy, and make a `wasi:http` request (to check plugin permissions) |

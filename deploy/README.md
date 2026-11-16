@@ -24,7 +24,7 @@ docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.y
 | `control-plane` | 127.0.0.1:18090 | `hallow-control-plane:dev` from `control-plane/Dockerfile` |
 | `valkey` | none | The control plane's Redis |
 | `postgres` | none | The control plane's PostgreSQL (accounts, bans, ranks, sessions). `HALLOW_ADMINS=netstaff` makes the netcheck bot `netstaff` an admin |
-| `lobby`, `game-1` | none | The server image with the dev build of `hallow_server` mounted, registering with the control plane; config in `compose/config/hallow/` |
+| `lobby`, `game-1` | none | The `hub` and `test-game` server images (from `servers/`) with the dev build of `hallow_server` mounted, registering with the control plane as kinds `hub` and `test-game`. Kind, role and max players come from each `hallow.toml`; name, address and the control plane from `compose/config/hallow/` |
 
 To see what the control plane knows:
 

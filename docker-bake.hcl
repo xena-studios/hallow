@@ -1,10 +1,11 @@
-# Hallow's images. `docker buildx bake` builds the proxy and server from the
-# repo root; the dev network in deploy/compose uses the same Dockerfiles and
-# tags. `docker buildx bake control-plane` builds the control plane, which the
+# Hallow's images. `docker buildx bake` builds the proxy, the server base
+# image and the in-tree servers (servers/hub, servers/test-game) from the repo
+# root; the dev network in deploy/compose uses the same Dockerfiles and tags.
+# `docker buildx bake control-plane` builds the control plane, which the
 # two-proxy override (deploy/compose/compose.hallow.yaml) uses.
 
 group "default" {
-  targets = ["proxy", "server"]
+  targets = ["proxy", "server", "hub", "test-game"]
 }
 
 target "proxy" {
@@ -13,10 +14,31 @@ target "proxy" {
   tags       = ["hallow-proxy:dev"]
 }
 
+# The server base image, published as ghcr.io/xena-studios/hallow-server-base.
 target "server" {
   context    = "."
   dockerfile = "templates/server/Dockerfile"
-  tags       = ["hallow-server:dev"]
+  tags       = ["hallow-server-base:dev"]
+}
+
+# Server repos build FROM the published base; here the base target stands in
+# for it under the same name.
+target "_server-repo" {
+  contexts = {
+    "ghcr.io/xena-studios/hallow-server-base:0.1" = "target:server"
+  }
+}
+
+target "hub" {
+  inherits = ["_server-repo"]
+  context  = "servers/hub"
+  tags     = ["hallow-hub:dev"]
+}
+
+target "test-game" {
+  inherits = ["_server-repo"]
+  context  = "servers/test-game"
+  tags     = ["hallow-test-game:dev"]
 }
 
 target "control-plane" {

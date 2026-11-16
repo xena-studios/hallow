@@ -1,0 +1,80 @@
+name: Server base image
+
+# Publishes the server base image every server repo builds on,
+# ghcr.io/xena-studios/hallow-server-base. A server-base-vX.Y.Z tag publishes
+# X.Y.Z and X.Y (the tag must match templates/server/VERSION); a push to main
+# that touches the image publishes dev and sha-<commit>. Not a required check.
+on:
+  push:
+    branches: [main]
+    tags: ["server-base-v*"]
+    paths:
+      - templates/server/**
+      - crates/proto/**
+      - crates/server-plugin/**
+      - crates/server-manifest/**
+      - upstream/Pumpkin
+      - upstream/pumpkin-java-multiversion
+      - Cargo.lock
+      - .github/workflows/server-base.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: server-base-${{ github.ref }}
+
+jobs:
+  image:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Check the tag against VERSION
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(cat templates/server/VERSION)
+          if [ "$GITHUB_REF_NAME" != "server-base-v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match templates/server/VERSION ($version)"
+            exit 1
+          fi
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/hallow-server-base
+          tags: |
+            type=match,pattern=server-base-v(\d+\.\d+\.\d+),group=1
+            type=match,pattern=server-base-v(\d+\.\d+)\.\d+,group=1
+            type=sha,prefix=sha-,enable={{is_default_branch}}
+            type=raw,value=dev,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=hallow-server-base
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: templates/server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Also reads the network workflow's cache for the same Dockerfile.
+          cache-from: |
+            type=gha,scope=server-base
+            type=gha,scope=server
+          cache-to: type=gha,scope=server-base,mode=max
