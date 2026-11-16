@@ -5,7 +5,7 @@
 //!
 //! | Message | Effect | Reply |
 //! |---|---|---|
-//! | `ready`, `in_game` or `draining` | Sets the state; the next tick (within a second) reports it | The new state |
+//! | `ready`, `in_game` or `draining` | Sets the state; the next heartbeat, within a second or two, reports it | The new state |
 //! | empty | Nothing | The current state |
 //!
 //! Anything else is an error. From a Rust plugin:

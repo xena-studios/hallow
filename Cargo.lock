@@ -830,6 +830,7 @@ dependencies = [
  "serde_json",
  "toml",
  "tracing",
+ "uuid",
  "wasip2",
 ]
 

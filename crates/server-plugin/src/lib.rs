@@ -6,24 +6,32 @@
 //! - **Heartbeat.** Every 5 s, `POST /v1/servers/{name}/heartbeat` with the
 //!   player count and state. A `404` means the control plane forgot the
 //!   server (it expired, or Redis was reset), so it registers again.
+//! - **Signals.** Every 30 s, `POST /v1/signals` with each player's movement
+//!   and combat numbers for the window, for the anticheat to learn from
+//!   (see [`signals`]). Nothing acts on them yet.
 //! - **Unregister.** `DELETE /v1/servers/{name}` when the plugin unloads,
 //!   which Pumpkin does on shutdown after kicking players.
 //!
 //! The state is `ready` until something changes it: another plugin sends
 //! this one an IPC message (see [`state`]), or code in this crate calls
-//! [`state::set`]. A change is reported on the next tick, not after 5 s.
+//! [`state::set`]. A change is reported within a second or two, not after
+//! 5 s.
 //!
 //! **Not on the tick.** Pumpkin runs a plugin's scheduled tasks on Tokio
-//! tasks (`server.spawn_task`), not inside the tick, and its `wasi:http` is
-//! async on the host. A slow control plane holds up this plugin, never the
-//! server. Calls still time out after 2 s, and a failed call is logged and
-//! retried on the next heartbeat.
+//! tasks, not inside the tick, but it runs one call into a plugin at a time,
+//! and the signal event handlers are called from inside the tick. So the task
+//! never waits on the network: it starts a request and checks for the answer
+//! on its next run, a second later (see [`http`]). Requests time out after
+//! 2 s; a failed one is logged and retried on the next heartbeat, and a
+//! failed signal batch is dropped.
 //!
 //! It needs `http.outbound`, `fs.read.data` and a `sys.env.<NAME>`
 //! permission for each variable it reads; settings are in [`config`].
 
+mod collect;
 mod config;
 mod http;
+mod signals;
 pub mod state;
 
 use std::sync::Mutex;
@@ -32,6 +40,7 @@ use std::time::{Duration, Instant};
 use hallow_proto::{
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerState},
+    signal::SignalBatch,
 };
 use pumpkin_plugin_api::{
     Context, Plugin, PluginMetadata, Server, permissions, register_plugin, scheduler, wit,
@@ -41,8 +50,9 @@ use config::{Config, Sandbox};
 
 const NAME: &str = "hallow_server";
 const HEARTBEAT: Duration = Duration::from_secs(routes::HEARTBEAT_SECONDS);
-/// The task runs once a second and heartbeats when one is due, so a server
-/// running behind on ticks still heartbeats close to every 5 s.
+/// The task runs once a second: it checks the request in flight, then
+/// heartbeats when one is due, so a server running behind on ticks still
+/// heartbeats close to every 5 s.
 const TASK_PERIOD_TICKS: u64 = 20;
 
 /// Every permission the plugin asks for: `http.outbound`, `fs.read.data`
@@ -66,11 +76,18 @@ struct Link {
     client: http::Client,
     task: u32,
     registered: bool,
+    /// When the last register or heartbeat started.
     last_heartbeat: Option<Instant>,
     /// The state the control plane last accepted.
     reported: Option<ServerState>,
     /// Log a lost connection once, not every heartbeat.
     reported_down: bool,
+    /// The register or heartbeat waiting for an answer.
+    in_flight: Option<(http::Pending, Call)>,
+    /// The signal batch waiting for an answer.
+    signals_in_flight: Option<http::Pending>,
+    /// Log failed signal batches once, until one gets through.
+    signals_down: bool,
 }
 
 /// Never held across a call out of the plugin, so nothing re-entering the
@@ -84,16 +101,36 @@ fn with_link<R>(f: impl FnOnce(&mut Link) -> R) -> Option<R> {
         .map(f)
 }
 
-enum Step {
-    Register(http::Client, RegisterServer),
-    Heartbeat(http::Client, String),
+/// What a request in flight was for.
+enum Call {
+    Register(RegisterServer),
+    Heartbeat(String, ServerState),
 }
 
-/// Runs once a second: registers, or heartbeats when one is due or the
-/// state changed.
+/// Runs once a second, off the tick.
 fn tick(server: &Server) {
+    heartbeat(server);
+    send_signals(server);
+}
+
+/// Checks the register or heartbeat in flight, then starts the next one if
+/// it's due or the state changed.
+fn heartbeat(server: &Server) {
+    let Some(in_flight) = with_link(|link| link.in_flight.take()) else {
+        return;
+    };
+    if let Some((pending, call)) = in_flight {
+        match pending.poll() {
+            None => {
+                with_link(|link| link.in_flight = Some((pending, call)));
+                return;
+            }
+            Some(result) => answered(call, result),
+        }
+    }
+
     let state = state::get();
-    let Some(Some(step)) = with_link(|link| {
+    let Some(Some(call)) = with_link(|link| {
         let due = link
             .last_heartbeat
             .is_none_or(|last| last.elapsed() >= HEARTBEAT);
@@ -102,95 +139,148 @@ fn tick(server: &Server) {
             // unreachable control plane is tried every 5 s, not every second.
             due.then(|| {
                 let config = &link.config;
-                Step::Register(
-                    link.client.clone(),
-                    RegisterServer {
-                        name: config.name.clone(),
-                        kind: config.kind.clone(),
-                        version: config.version.clone(),
-                        role: config.role,
-                        address: config.address.clone(),
-                        max_players: config.max_players,
-                    },
-                )
+                Call::Register(RegisterServer {
+                    name: config.name.clone(),
+                    kind: config.kind.clone(),
+                    version: config.version.clone(),
+                    role: config.role,
+                    address: config.address.clone(),
+                    max_players: config.max_players,
+                })
             })
         } else if due || link.reported != Some(state) {
-            Some(Step::Heartbeat(
-                link.client.clone(),
-                link.config.name.clone(),
-            ))
+            Some(Call::Heartbeat(link.config.name.clone(), state))
         } else {
             None
         }
     }) else {
         return;
     };
-
-    let (client, name) = match step {
-        Step::Register(client, request) => {
-            let result = client.post_empty(routes::SERVERS, &request);
-            let ok = result.is_ok();
-            match result {
-                Ok(()) => {
-                    succeeded();
-                    tracing::info!(
-                        "hallow-server: registered {} ({} {}, {:?}) at {}",
-                        request.name,
-                        request.kind,
-                        request.version,
-                        request.role,
-                        request.address
-                    );
-                }
-                Err(err) => failed(&err),
-            }
-            with_link(|link| {
-                link.registered = ok;
-                link.last_heartbeat = Some(Instant::now());
-            });
-            if !ok {
-                return;
-            }
-            (client, request.name)
-        }
-        Step::Heartbeat(client, name) => (client, name),
+    let Some(client) = with_link(|link| link.client.clone()) else {
+        return;
     };
-
-    // Also sent right after registering, which resets the server to ready
-    // with no players.
-    let beat = ServerHeartbeat {
-        players: server.get_player_count(),
-        state,
-        // For the monitoring dashboard's tick-time graphs.
-        #[allow(clippy::cast_possible_truncation)]
-        tick_ms: Some(server.get_mspt() as f32),
+    let started = match &call {
+        Call::Register(request) => client.start_post(routes::SERVERS, request),
+        Call::Heartbeat(name, state) => {
+            let beat = ServerHeartbeat {
+                players: server.get_player_count(),
+                state: *state,
+                // For the monitoring dashboard's tick-time graphs.
+                #[allow(clippy::cast_possible_truncation)]
+                tick_ms: Some(server.get_mspt() as f32),
+            };
+            client.start_post(&routes::server_heartbeat(name), &beat)
+        }
     };
-    let result = client.post_empty(&routes::server_heartbeat(&name), &beat);
-    let mut forgotten = false;
-    match &result {
-        Ok(()) => {
-            if succeeded() {
-                tracing::info!("hallow-server: the control plane is back");
-            }
+    with_link(|link| link.last_heartbeat = Some(Instant::now()));
+    match started {
+        Ok(pending) => {
+            with_link(|link| link.in_flight = Some((pending, call)));
         }
-        Err(err) if err.is_not_found() => {
-            tracing::warn!("hallow-server: the control plane forgot {name}; registering again");
-            forgotten = true;
-        }
-        Err(err) => failed(err),
+        Err(err) => answered(call, Err(err)),
     }
-    with_link(|link| {
-        link.last_heartbeat = Some(Instant::now());
-        if result.is_ok() {
-            link.reported = Some(state);
+}
+
+/// Handles the answer to a register or heartbeat.
+fn answered(call: Call, result: Result<(), http::Error>) {
+    match call {
+        Call::Register(request) => match result {
+            Ok(()) => {
+                succeeded();
+                tracing::info!(
+                    "hallow-server: registered {} ({} {}, {:?}) at {}",
+                    request.name,
+                    request.kind,
+                    request.version,
+                    request.role,
+                    request.address
+                );
+                // Heartbeat straight away, which resets the server to ready
+                // with no players on the control plane.
+                with_link(|link| {
+                    link.registered = true;
+                    link.reported = None;
+                    link.last_heartbeat = None;
+                });
+            }
+            Err(err) => failed(&err),
+        },
+        Call::Heartbeat(name, state) => match result {
+            Ok(()) => {
+                if succeeded() {
+                    tracing::info!("hallow-server: the control plane is back");
+                }
+                with_link(|link| link.reported = Some(state));
+            }
+            Err(err) if err.is_not_found() => {
+                tracing::warn!("hallow-server: the control plane forgot {name}; registering again");
+                with_link(|link| {
+                    link.registered = false;
+                    link.reported = None;
+                    // Register on the next run rather than in 5 s.
+                    link.last_heartbeat = None;
+                });
+            }
+            Err(err) => failed(&err),
+        },
+    }
+}
+
+/// Checks the last signal batch, then sends the window's samples when it's
+/// over. A batch that fails is dropped, not retried.
+fn send_signals(server: &Server) {
+    let Some(in_flight) = with_link(|link| link.signals_in_flight.take()) else {
+        return;
+    };
+    let mut still_in_flight = false;
+    if let Some(pending) = in_flight {
+        match pending.poll() {
+            None => {
+                still_in_flight = true;
+                with_link(|link| link.signals_in_flight = Some(pending));
+            }
+            Some(result) => signals_answered(result),
         }
-        if forgotten {
-            link.registered = false;
-            link.reported = None;
-            // Register on the next tick rather than in 5 s.
-            link.last_heartbeat = None;
+    }
+
+    let Some(samples) = collect::take_due(server) else {
+        return;
+    };
+    if samples.is_empty() {
+        return;
+    }
+    if still_in_flight {
+        tracing::warn!(
+            "hallow-server: the last signal batch is still in flight; dropping {} samples",
+            samples.len()
+        );
+        return;
+    }
+    let Some((client, source)) = with_link(|link| (link.client.clone(), link.config.name.clone()))
+    else {
+        return;
+    };
+    let batch = SignalBatch { source, samples };
+    match client.start_post(routes::SIGNALS, &batch) {
+        Ok(pending) => {
+            with_link(|link| link.signals_in_flight = Some(pending));
         }
-    });
+        Err(err) => signals_answered(Err(err)),
+    }
+}
+
+/// Logs the first failed batch in a row, and when batches get through again.
+fn signals_answered(result: Result<(), http::Error>) {
+    let failed = result.as_ref().err();
+    let was_down = with_link(|link| std::mem::replace(&mut link.signals_down, failed.is_some()))
+        .unwrap_or(false);
+    match failed {
+        Some(err) if !was_down => {
+            tracing::warn!("hallow-server: couldn't send signals: {err}; dropping them");
+        }
+        None if was_down => tracing::info!("hallow-server: signals are getting through again"),
+        _ => {}
+    }
 }
 
 /// Logs the first failure in a row; later ones are quiet until a success.
@@ -218,7 +308,7 @@ impl Plugin for HallowServer {
             name: NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             authors: vec!["Xena Studios".into()],
-            description: "Registers this server with Hallow's control plane and heartbeats it."
+            description: "Registers this server with Hallow's control plane, heartbeats it and sends anticheat signals."
                 .into(),
             dependencies: vec![],
             permissions: permissions(),
@@ -257,7 +347,11 @@ impl Plugin for HallowServer {
             last_heartbeat: None,
             reported: None,
             reported_down: false,
+            in_flight: None,
+            signals_in_flight: None,
+            signals_down: false,
         });
+        collect::register(&context);
         Ok(())
     }
 
@@ -266,6 +360,7 @@ impl Plugin for HallowServer {
             return Ok(());
         };
         scheduler::cancel_task(link.task);
+        collect::stop();
         if link.registered {
             match link.client.delete(&routes::server(&link.config.name)) {
                 Ok(()) => tracing::info!("hallow-server: unregistered {}", link.config.name),
