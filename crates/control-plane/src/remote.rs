@@ -35,7 +35,9 @@ type Shared = State<Arc<AppState>>;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/remote/servers", get(list_servers))
-        .route("/api/remote/servers/{uuid}", get(server))
+        // `any`, not `get`: `POST /api/remote/servers/reset` matches this
+        // route too, and must reach the panel rather than answer 405.
+        .route("/api/remote/servers/{uuid}", any(server))
         .route("/api/remote/servers/{uuid}/install", any(install))
         .route("/api/remote/{*rest}", any(pass_through))
 }
@@ -171,27 +173,37 @@ async fn our_server(
 
 async fn server(
     State(state): Shared,
-    Path(uuid): Path<Uuid>,
+    Path(segment): Path<String>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
-    match our_server(&state, &headers, uuid).await {
+    let ours = match segment.parse::<Uuid>() {
+        Ok(uuid) if method == Method::GET => our_server(&state, &headers, uuid).await,
+        // `servers/reset` and anything else that isn't a configuration.
+        _ => Ok(None),
+    };
+    match ours {
         Ok(Some(raw)) => axum::Json(raw).into_response(),
-        Ok(None) => pass_through(State(state), method, uri, headers, Bytes::new()).await,
+        Ok(None) => pass_through(State(state), method, uri, headers, body).await,
         Err(response) => *response,
     }
 }
 
 async fn install(
     State(state): Shared,
-    Path(uuid): Path<Uuid>,
+    Path(segment): Path<String>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match our_server(&state, &headers, uuid).await {
+    let ours = match segment.parse::<Uuid>() {
+        Ok(uuid) => our_server(&state, &headers, uuid).await,
+        Err(_) => Ok(None),
+    };
+    match ours {
         // Created with skip_scripts; an empty script counts as installed.
         Ok(Some(raw)) if method == Method::GET => axum::Json(json!({
             "container_image": raw["settings"]["container"]["image"],
