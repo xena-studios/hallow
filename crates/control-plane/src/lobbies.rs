@@ -215,12 +215,14 @@ pub async fn send(
         target = state.store.pick_lobby(&catalog.hub).await?;
     }
     let Some(server) = target else {
+        let what = if kind == catalog.hub {
+            "hub".to_owned()
+        } else {
+            format!("{} lobby", catalog.label(&kind))
+        };
         return Err(Failure::new(
             ErrorCode::Conflict,
-            format!(
-                "No {} lobby has room right now. Try again in a moment.",
-                catalog.label(&kind)
-            ),
+            format!("No {what} has room right now. Try again in a moment."),
         ));
     };
     state

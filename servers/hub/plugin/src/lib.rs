@@ -226,10 +226,10 @@ fn setup(player: &Player) {
         player.set_gamemode(GameMode::Adventure);
     }
     to_spawn(player, true);
+    // Hunger and damage are cancelled by the event handlers. Setting food or
+    // health from here would fire those events back into this plugin from
+    // inside its own task, which can hang the server (found on the dev network).
     player.set_invulnerable(true);
-    player.set_food_level(20);
-    player.set_saturation(20.0);
-    player.set_health(player.get_max_health());
     let inventory = player.get_inventory();
     inventory.as_inventory().clear();
     player.set_inventory_item(menu::ITEM_SLOT, Some(menu_item()));

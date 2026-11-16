@@ -76,9 +76,10 @@ cargo run --release -p netcheck -- --name hubbot --stay 0 \
 
 The bot lands in the hub (the static `lobby`), `/lobby test-game` sends it to the warm `test-game-lobby-xxxxxx` instance, `/play test-game` queues it and the matchmaker moves it into a `test-game-xxxxxx` instance. The match ends after 20 s: the server turns `draining`, its server plugin sends the bot back to the lobby, and the emptied game instance is deleted. `/hub` brings it back to the hub from anywhere. `GET /v1/lobbies` shows the modes and their player counts, as the hub's menu does.
 
-Instances aren't compose services, so `down` doesn't remove them. Delete them first:
+Instances aren't compose services, so `down` doesn't remove them. Stop the control plane first, so it doesn't start a new warm lobby meanwhile, then delete them:
 
 ```sh
+docker compose -p gatetest $files stop control-plane
 docker rm -f $(docker ps -aq --filter label=hallow.owner=$HALLOW_DOCKER_NETWORK)
 docker compose -p gatetest $files down -v
 ```

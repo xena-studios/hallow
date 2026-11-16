@@ -16,7 +16,8 @@
 #
 # Instances join the network named by HALLOW_DOCKER_NETWORK (default
 # hallow-dev) and are labelled hallow.owner=<that name>. `down` doesn't
-# remove them; delete them first:
+# remove them; stop the control plane, then delete them:
+#   docker compose ... stop control-plane
 #   docker rm -f $(docker ps -aq --filter label=hallow.owner=hallow-dev)
 
 x-proxy-deps: &proxy-deps
