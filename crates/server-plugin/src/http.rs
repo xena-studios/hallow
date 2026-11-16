@@ -72,6 +72,13 @@ pub struct Pending {
 impl Pending {
     /// `None` while there's no answer yet, then the result once.
     pub fn poll(&self) -> Option<Result<(), Error>> {
+        // The host only notices the answer when the future's pollable is
+        // checked; `get` alone returns `None` forever (wasmtime-wasi-http).
+        // `ready` checks once without waiting.
+        if !self.response.subscribe().ready() {
+            return (self.started.elapsed() >= GIVE_UP)
+                .then(|| Err(Error::Transport("no answer in time".into())));
+        }
         match self.response.get() {
             None if self.started.elapsed() >= GIVE_UP => {
                 Some(Err(Error::Transport("no answer in time".into())))
