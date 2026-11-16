@@ -11,7 +11,9 @@
 //! - `creating`, `ending` and `deleting` are owned by a task; if one stays
 //!   longer than [`Settings::stuck_ms`] (its control plane died) the
 //!   instance is ended again, and `failed` ones are ended (deleted) after
-//!   [`Settings::retry_ms`].
+//!   [`Settings::retry_ms`]. While a kind has a `failed` instance waiting
+//!   out that time, no new instance of the kind is created: an unreachable
+//!   node or a missing image is retried every `retry_ms`, not every pass.
 //!
 //! Per game kind: the queue's entries are placed the way the matchmaker
 //! would (fullest ready server with room for the whole entry, then into
@@ -146,10 +148,16 @@ pub fn plan(world: &World<'_>) -> Vec<Action> {
                 reason: "not needed".into(),
             });
         }
-        let room = spec
-            .scaling
-            .max_instances
-            .map_or(u32::MAX, |max| max.saturating_sub(live.len() as u32));
+        let backing_off = instances.iter().any(|i| {
+            i.kind == *kind && i.state == InstanceState::Failed && !ended.contains(i.name.as_str())
+        });
+        let room = if backing_off {
+            0
+        } else {
+            spec.scaling
+                .max_instances
+                .map_or(u32::MAX, |max| max.saturating_sub(live.len() as u32))
+        };
         for _ in 0..wanted.min(room) {
             let Some((node, port)) = pick_node(world.nodes, &load, &ports) else {
                 break;
@@ -738,6 +746,22 @@ mod tests {
             ends(&case.plan()),
             [("tg-a", "stuck creating"), ("tg-f", "no such image")]
         );
+    }
+
+    #[test]
+    fn a_failure_holds_off_new_instances_until_it_is_cleaned_up() {
+        let mut spec = game(1, 50, None);
+        spec.role = KindRole::Lobby;
+        let mut case = Case::new(spec);
+        case.instances = vec![instance("tg-f", InstanceState::Failed, NOW - 5000)];
+        // Not every pass: the failure waits out retry_ms first.
+        assert_eq!(creates(&case.plan()), 0);
+        assert!(ends(&case.plan()).is_empty());
+        // Then it is ended, and a new one goes in its place.
+        case.instances[0].state_since_ms = NOW - 11_000;
+        let actions = case.plan();
+        assert_eq!(ends(&actions), [("tg-f", "failed")]);
+        assert_eq!(creates(&actions), 1);
     }
 
     #[test]
