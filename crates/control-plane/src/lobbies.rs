@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use hallow_proto::{
     ErrorCode,
     instance::{KindRole, KindSpec},
@@ -31,6 +31,7 @@ use hallow_proto::{
 
 use crate::{
     AppState,
+    auth::Caller,
     error::Failure,
     store::{Store, StoreError},
 };
@@ -178,15 +179,26 @@ pub async fn overview(
     }))
 }
 
-/// `POST /v1/lobbies/send`.
+/// `POST /v1/lobbies/send`. A server's scoped token may only send players
+/// who are on that server, by the proxy's view or the server's own.
 pub async fn send(
     State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
     req: Result<axum::Json<SendToLobby>, axum::extract::rejection::JsonRejection>,
 ) -> Result<axum::Json<LobbySent>, Failure> {
     let axum::Json(req) = req?;
     let Some(location) = state.store.player(&req.player).await? else {
         return Err(Failure::not_found("player isn't online"));
     };
+    if let Caller::Server { name, .. } = &caller {
+        let here = location.server.as_deref() == Some(name.as_str())
+            || state.store.server_of(&req.player).await?.as_deref() == Some(name.as_str());
+        if !here {
+            return Err(Failure::forbidden(format!(
+                "server {name} can only send its own players"
+            )));
+        }
+    }
     let (catalog, servers) = catalog(&state).await?;
     let kind = match &req.lobby {
         None => catalog.hub.clone(),

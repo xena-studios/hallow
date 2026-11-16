@@ -37,6 +37,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 const TOKEN: &str = "test-token-0123456789";
+/// The hub server's scoped token.
+const HUB_TOKEN: &str = "hub-scoped-token-0123456789";
 
 fn env_or_skip(var: &str) -> Option<String> {
     let value = std::env::var(var).ok();
@@ -73,6 +75,10 @@ impl Env {
 
         let mut config = Config::new(redis, TOKEN);
         config.key_prefix = format!("test-{}", Uuid::new_v4());
+        // The hub's own scoped token, as the compose hub would have.
+        config.server_tokens =
+            hallow_control_plane::auth::parse_static_tokens(&format!("lobby:hub:{HUB_TOKEN}"))
+                .unwrap();
         config.database_url = Some(format!("{base_url}/{db_name}"));
         // The choice is replaced by the mock below.
         let mut setup = InstancesSetup::new(
@@ -520,5 +526,79 @@ async fn an_ending_game_sends_its_players_to_its_lobby_first() {
     })
     .await;
     assert!(env.mock.calls().contains(&Call::Stop(game.clone())));
+    env.drop().await;
+}
+
+/// A kind registered a moment ago can be queued for at once, before the
+/// next plan has read it.
+#[tokio::test]
+async fn a_game_kind_can_be_queued_for_as_soon_as_it_is_registered() {
+    let Some(env) = Env::start().await else {
+        return;
+    };
+    setup_network(&env).await;
+    let player = env.online_player("proxy-1").await;
+    let join = JoinQueue {
+        kind: "fresh-game".into(),
+        player,
+    };
+    // Not registered: refused.
+    assert_eq!(
+        env.post(routes::QUEUES, &join).await.status(),
+        StatusCode::CONFLICT
+    );
+    let res = env
+        .put(
+            &routes::kind("fresh-game"),
+            &kind(KindRole::Game, Some("hub"), 0, 4),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        env.post(routes::QUEUES, &join).await.status(),
+        StatusCode::OK
+    );
+    env.drop().await;
+}
+
+/// The hub's scoped token reads the modes and sends its own players, and
+/// nobody else's.
+#[tokio::test]
+async fn a_servers_token_sends_only_its_own_players() {
+    let Some(env) = Env::start().await else {
+        return;
+    };
+    setup_network(&env).await;
+    let here = env.online_player("proxy-1").await;
+    env.switched(here, "lobby").await;
+    let elsewhere = env.online_player("proxy-1").await;
+    env.switched(elsewhere, "some-game").await;
+    let as_hub = |req: reqwest::RequestBuilder| async move {
+        req.bearer_auth(HUB_TOKEN).send().await.unwrap()
+    };
+    let url = |path: &str| format!("{}{path}", env.base);
+
+    let res = as_hub(env.http.get(url(routes::LOBBIES))).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let overview: LobbyOverview = res.json().await.unwrap();
+    assert_eq!(overview.online, 2);
+    let send = |player| SendToLobby {
+        player,
+        lobby: Some("nope".into()),
+        fallback_hub: true,
+    };
+    // Its own player: through to the handler (already on the hub, so a
+    // fallback finds no other hub with room than itself).
+    let res = as_hub(env.http.post(url(routes::LOBBIES_SEND)).json(&send(here))).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = as_hub(
+        env.http
+            .post(url(routes::LOBBIES_SEND))
+            .json(&send(elsewhere)),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let res = as_hub(env.http.get(url(routes::INSTANCES))).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
     env.drop().await;
 }

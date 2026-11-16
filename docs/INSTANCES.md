@@ -99,7 +99,7 @@ An instance never gets the control plane's shared token (`HALLOW_TOKEN`), which 
 - **Minted** when the instance is recorded: `hit_` and 32 random bytes in hex.
 - **Stored hashed.** Redis keeps its SHA-256 with the instance's name, kind and creation time (`instance-tokens`, plus `instance-token-of` from the name back to the hash). The raw token is in the instance's spec (`instance-specs`), because that is the environment Wings fetches on every start ([above](#wings-without-a-panel-record-per-instance)); Redis is as trusted as the control plane itself.
 - **Lives as long as the instance.** A token works only while its instance record exists. Deleting the record (the instance ended, or a stuck one was cleaned up) removes the token in the same Lua script, and every lookup also checks the record is still there.
-- **Scoped to what the server plugin does** (audited from `crates/server-plugin`: register, heartbeat, player reports, stats, signals, unregister), for its own name only:
+- **Scoped to what the server plugin does** (audited from `crates/server-plugin`: register, heartbeat, player reports, stats, signals, the lobby list and sending players to lobbies, unregister), for its own name only:
 
   | Route | Allowed when |
   |---|---|
@@ -109,10 +109,12 @@ An instance never gets the control plane's shared token (`HALLOW_TOKEN`), which 
   | `POST`/`GET /v1/servers/{name}/players` | `{name}` is the instance's |
   | `POST /v1/stats` | the batch's `source` and `kind` are the instance's |
   | `POST /v1/signals` | the batch's `source` is the instance's |
+  | `GET /v1/lobbies` | always: the game modes, for the hub's menu |
+  | `POST /v1/lobbies/send` | the player is on the instance's server (a finished game sending players back, the hub's menu) |
 
   Everything else answers `403` (code `unauthorized`): other servers' routes, the server list, presence, commands, kinds, instances, punishments, ranks, fleet settings and node tokens. An unknown or revoked token answers `401`.
 
-`tests/instances.rs` checks a scoped token against every one of those, and that it stops working once its instance is deleted.
+`tests/instances.rs` checks a scoped token against every one of those, and that it stops working once its instance is deleted; `tests/lobbies.rs` checks that a server's token sends only its own players.
 
 **Servers the control plane doesn't start**, such as the dev network's compose hub (`lobby`), keep working with the shared token. To give one a scoped token instead, list it in `HALLOW_SERVER_TOKENS` as `name:kind:token` (comma-separated, tokens at least 16 characters) and pass that token as the server's `HALLOW_CONTROL_PLANE_TOKEN`. A static token has the same scope as an instance's and lives as long as the setting. The dev network still gives its hub the shared token.
 

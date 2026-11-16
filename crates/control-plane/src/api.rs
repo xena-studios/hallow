@@ -778,10 +778,10 @@ async fn party_of(State(state): Shared, Path(uuid): Path<String>) -> Reply<Body<
 /// A refusal (`409`) carries a message for the player.
 async fn join_queue(State(state): Shared, Body(req): Body<JoinQueue>) -> Reply<Body<QueueStatus>> {
     check_name("game kind", &req.kind)?;
-    let startable = state
-        .instances
-        .as_ref()
-        .is_some_and(|m| m.is_game_kind(&req.kind));
+    let startable = match &state.instances {
+        Some(instances) => instances.is_game_kind(&req.kind).await,
+        None => false,
+    };
     match state.store.join_queue(req, startable).await? {
         Ok(status) => Ok(Body(status)),
         Err(message) => Err(Failure::new(ErrorCode::Conflict, message)),

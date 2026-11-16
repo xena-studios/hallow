@@ -145,16 +145,23 @@ impl Manager {
             .at = None;
     }
 
-    /// Whether `kind` is a registered game, from the cache (refreshed by
-    /// every plan).
-    #[must_use]
-    pub fn is_game_kind(&self, kind: &str) -> bool {
-        self.kinds
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .value
-            .get(kind)
-            .is_some_and(|k| k.role == KindRole::Game)
+    /// Whether `kind` is a registered game. Reads the database when the
+    /// cache is stale or a kind changed since, so a kind registered a moment
+    /// ago can be queued for before the next plan; the cache if the
+    /// database can't be read.
+    pub async fn is_game_kind(&self, kind: &str) -> bool {
+        let kinds = match self.kinds().await {
+            Ok(kinds) => kinds,
+            Err(err) => {
+                tracing::warn!(%err, "can't read the kinds; using the cached ones");
+                self.kinds
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .value
+                    .clone()
+            }
+        };
+        kinds.get(kind).is_some_and(|k| k.role == KindRole::Game)
     }
 
     async fn kinds(&self) -> Result<BTreeMap<String, KindSpec>, PlanError> {

@@ -13,6 +13,8 @@
 //! | `POST`/`GET /v1/servers/{name}/players` | `{name}` is the token's |
 //! | `POST /v1/stats` | the batch's `source` and `kind` are the token's |
 //! | `POST /v1/signals` | the batch's `source` is the token's |
+//! | `GET /v1/lobbies` | always: the game modes, for the hub's menu |
+//! | `POST /v1/lobbies/send` | the player is on the token's server (a game sending players back, the hub's menu) |
 //!
 //! Anything else answers `403`. The path checks happen here; the body checks
 //! in the handlers, through [`Caller`].
@@ -186,8 +188,11 @@ pub fn server_may(method: &Method, route: &str, path_name: Option<&str>, own: &s
     if route == routes::server_players("{name}") {
         return (method == Method::POST || method == Method::GET) && own_path;
     }
-    if route == routes::STATS || route == routes::SIGNALS {
+    if route == routes::STATS || route == routes::SIGNALS || route == routes::LOBBIES_SEND {
         return method == Method::POST;
+    }
+    if route == routes::LOBBIES {
+        return method == Method::GET;
     }
     false
 }
@@ -278,6 +283,10 @@ mod tests {
         assert!(may(Method::POST, routes::STATS, None));
         assert!(may(Method::POST, routes::SIGNALS, None));
         assert!(!may(Method::GET, routes::SIGNALS, None));
+        assert!(may(Method::GET, routes::LOBBIES, None));
+        assert!(!may(Method::POST, routes::LOBBIES, None));
+        assert!(may(Method::POST, routes::LOBBIES_SEND, None));
+        assert!(!may(Method::GET, routes::LOBBIES_SEND, None));
         for admin in [
             routes::KINDS,
             routes::INSTANCES,
