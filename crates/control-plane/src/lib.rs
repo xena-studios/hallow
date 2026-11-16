@@ -20,6 +20,7 @@ mod fleet;
 mod friends;
 pub mod instances;
 mod kinds;
+pub mod lobbies;
 mod metrics;
 mod nodes;
 pub mod orchestrator;

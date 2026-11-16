@@ -1116,17 +1116,55 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The in-tree servers and the template must stay valid.
+    /// The in-tree servers and the template must stay valid. A plugin that
+    /// isn't built yet must be the one the server's own `plugin/` crate
+    /// builds (`servers/build-plugins.sh` builds it before the images).
     #[test]
     fn repo_manifests_are_valid() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for dir in ["servers/hub", "servers/test-game", "templates/server-repo"] {
+        let mut kinds = std::collections::BTreeMap::new();
+        for dir in [
+            "servers/hub",
+            "servers/test-game",
+            "servers/test-game-lobby",
+            "templates/server-repo",
+        ] {
             let dir = root.join(dir);
             let manifest = Manifest::load(&dir.join(FILE_NAME))
                 .unwrap_or_else(|err| panic!("{}: {err}", dir.display()));
-            manifest
-                .check_files(&dir)
-                .unwrap_or_else(|err| panic!("{}: {err}", dir.display()));
+            for plugin in &manifest.plugins {
+                let built = dir.join(&plugin.file);
+                if built.is_file() {
+                    continue;
+                }
+                let crate_toml = std::fs::read_to_string(dir.join("plugin/Cargo.toml"))
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "{}: {} isn't built and there's no plugin/ crate",
+                            dir.display(),
+                            plugin.file.display()
+                        )
+                    });
+                let package: toml::Table = toml::from_str(&crate_toml).unwrap();
+                let name = package["package"]["name"]
+                    .as_str()
+                    .unwrap()
+                    .replace('-', "_");
+                assert_eq!(
+                    plugin.file,
+                    Path::new("plugins").join(format!("{name}.wasm")),
+                    "{}: plugin/ builds {name}.wasm",
+                    dir.display()
+                );
+            }
+            kinds.insert(manifest.name.clone(), manifest);
         }
+        // The dev network's kinds point at each other.
+        assert_eq!(kinds["hub"].role, Role::Hub);
+        assert_eq!(kinds["test-game"].lobby.as_deref(), Some("test-game-lobby"));
+        let lobby = &kinds["test-game-lobby"];
+        assert_eq!(lobby.role, Role::Lobby);
+        assert_eq!(lobby.queues, ["test-game"]);
+        assert_eq!(lobby.lobby.as_deref(), Some("hub"));
     }
 }

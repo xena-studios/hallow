@@ -14,6 +14,7 @@
 //! | `HALLOW_SERVER_ROLE` | `role` | `game` (or `lobby`) |
 //! | `HALLOW_SERVER_ADDRESS` | `address` | `<name>:25565` |
 //! | `HALLOW_MAX_PLAYERS` | `max_players` | `100` |
+//! | `HALLOW_RETURN_LOBBY` | `return_lobby` | none: a hub |
 //!
 //! ```toml
 //! control_plane = "control-plane:8080"   # host:port, plain HTTP on the private network
@@ -24,6 +25,7 @@
 //! role = "lobby"                         # lobby or game
 //! address = "lobby:25565"                # where proxies reach this server
 //! max_players = 100
+//! return_lobby = "skywars-lobby"         # games: where players go when the game ends
 //! ```
 //!
 //! Without `control_plane` set anywhere the plugin loads and does nothing, so
@@ -35,7 +37,7 @@ use serde::Deserialize;
 pub const FILE: &str = "config.toml";
 
 /// Every variable the plugin reads; each needs a `sys.env.<NAME>` permission.
-pub const ENV_VARS: [&str; 9] = [
+pub const ENV_VARS: [&str; 10] = [
     CONTROL_PLANE,
     TOKEN,
     TOKEN_FILE,
@@ -45,6 +47,7 @@ pub const ENV_VARS: [&str; 9] = [
     ROLE,
     ADDRESS,
     MAX_PLAYERS,
+    RETURN_LOBBY,
 ];
 
 const CONTROL_PLANE: &str = "HALLOW_CONTROL_PLANE";
@@ -56,6 +59,7 @@ const VERSION: &str = "HALLOW_SERVER_VERSION";
 const ROLE: &str = "HALLOW_SERVER_ROLE";
 const ADDRESS: &str = "HALLOW_SERVER_ADDRESS";
 const MAX_PLAYERS: &str = "HALLOW_MAX_PLAYERS";
+const RETURN_LOBBY: &str = "HALLOW_RETURN_LOBBY";
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +73,7 @@ struct File {
     role: Option<String>,
     address: Option<String>,
     max_players: Option<u32>,
+    return_lobby: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -82,6 +87,9 @@ pub struct Config {
     pub role: ServerRole,
     pub address: String,
     pub max_players: u32,
+    /// The lobby kind (or game mode) players go to when the game ends; a
+    /// hub when unset.
+    pub return_lobby: Option<String>,
 }
 
 /// Where settings come from, so tests can stand in for the sandbox.
@@ -168,6 +176,7 @@ impl Config {
             role,
             address: pick(ADDRESS, file.address).unwrap_or_else(|| format!("{name}:25565")),
             max_players,
+            return_lobby: pick(RETURN_LOBBY, file.return_lobby),
             name,
         }))
     }
@@ -225,6 +234,7 @@ mod tests {
                 role: ServerRole::Game,
                 address: "skywars-7f3a:25565".into(),
                 max_players: 100,
+                return_lobby: None,
             }
         );
     }
@@ -232,7 +242,12 @@ mod tests {
     #[test]
     fn file_with_environment_overrides() {
         let source = Fake {
-            vars: HashMap::from([(NAME, "lobby-2"), (MAX_PLAYERS, "50"), (TOKEN_FILE, "")]),
+            vars: HashMap::from([
+                (NAME, "lobby-2"),
+                (MAX_PLAYERS, "50"),
+                (TOKEN_FILE, ""),
+                (RETURN_LOBBY, "sw-lobby"),
+            ]),
             files: HashMap::from([
                 (
                     FILE,
@@ -255,6 +270,7 @@ mod tests {
         assert_eq!(config.token, "secret");
         assert_eq!(config.max_players, 50);
         assert_eq!(config.address, "lobby-2:25565");
+        assert_eq!(config.return_lobby.as_deref(), Some("sw-lobby"));
     }
 
     #[test]

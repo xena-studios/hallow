@@ -35,6 +35,9 @@ pub use plan::Settings;
 
 /// How long kinds and nodes are cached between reads.
 const CACHE_FOR: Duration = Duration::from_secs(2);
+/// How long an ending instance waits for the players it sent to a lobby to
+/// leave before it is stopped.
+const EVACUATE_WAIT: Duration = Duration::from_secs(5);
 /// Memory per instance unless the kind says.
 pub const DEFAULT_MEMORY_MB: u32 = 1024;
 
@@ -142,16 +145,23 @@ impl Manager {
             .at = None;
     }
 
-    /// Whether `kind` is a registered game, from the cache (refreshed by
-    /// every plan).
-    #[must_use]
-    pub fn is_game_kind(&self, kind: &str) -> bool {
-        self.kinds
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .value
-            .get(kind)
-            .is_some_and(|k| k.role == KindRole::Game)
+    /// Whether `kind` is a registered game. Reads the database when the
+    /// cache is stale or a kind changed since, so a kind registered a moment
+    /// ago can be queued for before the next plan; the cache if the
+    /// database can't be read.
+    pub async fn is_game_kind(&self, kind: &str) -> bool {
+        let kinds = match self.kinds().await {
+            Ok(kinds) => kinds,
+            Err(err) => {
+                tracing::warn!(%err, "can't read the kinds; using the cached ones");
+                self.kinds
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .value
+                    .clone()
+            }
+        };
+        kinds.get(kind).is_some_and(|k| k.role == KindRole::Game)
     }
 
     async fn kinds(&self) -> Result<BTreeMap<String, KindSpec>, PlanError> {
@@ -399,7 +409,7 @@ impl Manager {
                 let store = &state.store;
                 let result = match &item {
                     Work::Create { name } => manager.create(store, name).await,
-                    Work::End { name } => manager.end(store, name).await,
+                    Work::End { name } => manager.end(store, name, &state.config.hub_kind).await,
                 };
                 if let Err(err) = result {
                     tracing::warn!(%err, ?item, "instance work failed");
@@ -452,12 +462,24 @@ impl Manager {
         Ok(())
     }
 
-    async fn end(&self, store: &Store, name: &str) -> Result<(), StoreError> {
+    async fn end(&self, store: &Store, name: &str, hub: &str) -> Result<(), StoreError> {
         let Some(info) = store.instance(name).await? else {
             return Ok(());
         };
         if info.state != InstanceState::Ending {
             return Ok(());
+        }
+        // Anyone still on it goes to its kind's lobby first, so the stop
+        // drops nobody.
+        let lobby = self
+            .kinds()
+            .await
+            .ok()
+            .and_then(|kinds| kinds.get(&info.kind).and_then(|k| k.lobby.clone()));
+        if let Err(err) =
+            crate::lobbies::evacuate(store, name, lobby.as_deref(), hub, EVACUATE_WAIT).await
+        {
+            tracing::warn!(instance = %name, %err, "couldn't send its players to a lobby");
         }
         let handle = Handle {
             node: &info.node,

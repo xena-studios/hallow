@@ -8,3 +8,8 @@
 image = "hallow-test-game:${HALLOW_IMAGE_TAG:-dev}"
 manifest = "test-game/hallow.toml"
 memory_mb = 1024
+
+[[kind]]
+image = "hallow-test-game-lobby:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "test-game-lobby/hallow.toml"
+memory_mb = 1024

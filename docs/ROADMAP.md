@@ -48,7 +48,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow (template contents in `templates/server-repo`; the GitHub repo and the first base image tag are still to create)
 - [x] Hallow server plugin: the link to the control plane (register, heartbeat, state, unregister), in the base image
 - [x] Hallow server plugin: presence (joins, leaves and the full list in heartbeats) and stats (play time, joins, game counters into `hallow.player_stats`)
-- [ ] `hub` server repo
+- [x] `hub` server repo (in-tree as `servers/hub` with its plugin: game menu, `/lobby` and `/hub`, return to the game's lobby; `test-game-lobby` as the first gamemode lobby. Moving it to its own GitHub repo is still to do)
 - [x] Parties: invite, accept, leave, kick, disband, warp, chat; parties queue together
 - [x] Friends and online status: `/friend`, join and leave notices
 - [x] PostgreSQL schema: accounts, ranks, sessions, punishments

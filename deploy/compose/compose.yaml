@@ -1,5 +1,6 @@
 # Hallow dev network: one proxy and two servers on one machine.
 #
+#   servers/build-plugins.sh               # the servers' own plugins, into servers/*/plugins
 #   docker compose -f deploy/compose/compose.yaml up --build
 #   cargo run --release -p netcheck        # join through the proxy and switch servers
 #

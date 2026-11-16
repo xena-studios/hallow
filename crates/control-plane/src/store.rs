@@ -28,7 +28,7 @@ use hallow_proto::{
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy},
     server::{
         RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged,
-        ServerRole, ServerState,
+        ServerState,
     },
 };
 use redis::{AsyncCommands, Script, aio::ConnectionManager};
@@ -37,6 +37,7 @@ use uuid::Uuid;
 use crate::{Config, DuplicateLogin, events};
 
 mod instances;
+mod lobby;
 mod party;
 mod queue;
 
@@ -851,19 +852,9 @@ impl Store {
         }))
     }
 
-    /// The emptiest hub that is ready and has room.
+    /// The emptiest hub that is ready, has room and isn't ending.
     async fn pick_hub(&self, kind: &str) -> Result<Option<String>> {
-        let (_, servers) = self.read_servers().await?;
-        Ok(servers
-            .into_iter()
-            .filter(|s| {
-                s.role == ServerRole::Lobby
-                    && s.kind == kind
-                    && s.state == ServerState::Ready
-                    && s.players < s.max_players
-            })
-            .min_by_key(|s| s.players)
-            .map(|s| s.name))
+        Ok(self.pick_lobby(kind).await?.map(|s| s.name))
     }
 
     /// Returns false if the player isn't online.

@@ -11,9 +11,16 @@ max = 100                    # per instance
 [scaling]
 warm = 1                     # the network's floor: one hub is always up
 
+# The hub's plugin (plugin/, built into plugins/): the game menu, welcome,
+# tab list and safe spawn. It reads its instance's name for the tab list.
+[[plugins]]
+file = "plugins/hallow_hub.wasm"
+permissions = ["sys.env.HALLOW_SERVER_NAME"]
+
 # Merged over the base image's pumpkin.toml.
 [pumpkin]
 default_gamemode = "Adventure"   # Pumpkin's spelling
+default_difficulty = "Peaceful"
 allow_nether = false
 allow_end = false
 

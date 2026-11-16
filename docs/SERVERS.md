@@ -27,7 +27,7 @@ skywars/
 └── .github/workflows/   # calls Hallow's reusable image workflow
 ```
 
-[`templates/server-repo`](../templates/server-repo) is the starting point (it becomes the `hallow-server-template` repo), and [`servers/hub`](../servers/hub) and [`servers/test-game`](../servers/test-game) are in-tree examples the dev network runs.
+[`templates/server-repo`](../templates/server-repo) is the starting point (it becomes the `hallow-server-template` repo), and [`servers/hub`](../servers/hub), [`servers/test-game-lobby`](../servers/test-game-lobby) and [`servers/test-game`](../servers/test-game) are in-tree examples the dev network runs ([servers](../servers/README.md)).
 
 ## hallow.toml
 
@@ -75,7 +75,7 @@ A lobby's file has `role = "lobby"`, a `players.max` per instance, and the games
 | `queues` | no | Lobbies and hubs: the game kinds they queue players for |
 | `players.max` | yes | Players per instance (Pumpkin's `networking.java.max_players`, and the capacity the control plane sees) |
 | `players.min` | no | Games: players needed to start a match. Default 1 |
-| `scaling.warm` | no | Idle instances kept ready while players are online. Default 1 for a hub (the network's floor, Decisions 19), else 0 |
+| `scaling.warm` | no | Games: idle instances kept ready while players are online. Hubs and lobbies: the fewest instances kept up; more start as players fill them ([Hubs and lobbies](#hubs-and-lobbies)). Default 1 for a hub (the network's floor, Decisions 19), else 0 |
 | `scaling.max_instances` | no | The most instances of the kind at once |
 | `maps.dir`, `maps.pick` | no | Games: the folder of map worlds and how one is picked (`random` or `vote`), read by `hallow-sdk` |
 | `[[plugins]]` | no | The repo's WASM plugins: `file` (a `.wasm` path), `name` (Pumpkin's plugin name, default the file name without `.wasm`) and `permissions`, pre-approved so Pumpkin doesn't ask on the console. `hallow_server` and the multiversion plugin come with the base image |
@@ -100,7 +100,31 @@ The base image's entrypoint runs `hallow-manifest apply` on every start. It:
    - `HALLOW_RETURN_LOBBY`: from `lobby`;
    - then `[env]`.
 
-Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The plugin doesn't read `HALLOW_RETURN_LOBBY` yet, and `queues`, `players.min` and `maps` are for the matchmaker and `hallow-sdk`, which don't read them yet either.
+Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The server plugin sends players to `HALLOW_RETURN_LOBBY` when a game ends ([Hubs and lobbies](#hubs-and-lobbies)). `queues`, `players.min` and `maps` are for the matchmaker and `hallow-sdk`, which don't read them yet.
+
+## Hubs and lobbies
+
+Players land in the **hub** (`role = "hub"`), pick a **game mode**, and go to that mode's **lobby** (`role = "lobby"`, such as `skywars-lobby`), where they queue for its **games**. A game mode is a lobby kind; its name is the kind without `-lobby` (`skywars`). Hubs and lobbies are server kinds like any other, so the control plane runs them as instances: at least `scaling.warm` of each, and more as players fill them past 80 % on average ([Instances](INSTANCES.md#lifecycle)).
+
+**Getting there.** Everything goes through the control plane's `POST /v1/lobbies/send`, which picks the least full ready instance of the lobby kind and has the player's proxy move them, so a player never lands on an instance that is ending:
+
+| From | How |
+|---|---|
+| Anywhere | `/lobby <mode>` (Vine's command, so it works on every server), by mode name (`skywars`), lobby kind (`skywars-lobby`) or a game kind whose `lobby` names one |
+| Anywhere | `/hub`, or `/lobby` with no mode: back to a hub |
+| The hub | The **Game Menu** compass in the hotbar: right-click for a chest listing every mode with how many are playing, click one to go. The welcome message lists the modes as clickable text that runs `/lobby <mode>` |
+| A finished game | Its server goes `draining`; Hallow's server plugin sends everyone to `HALLOW_RETURN_LOBBY` (`hallow.toml`'s `lobby`), or to a hub if none of those is up. The control plane ends the instance once it is empty |
+| An instance ending early | Staff ended it, or it timed out: the control plane sends anyone still on it to its kind's `lobby` (or a hub), waits up to 5 s, then stops it |
+
+`GET /v1/lobbies` lists the modes with their players (in the mode's lobbies and its games) and ready lobby instances, plus the network's player count. The modes are the lobby kinds of registered servers and of the kinds registry, so a mode shows while its first instance starts.
+
+**The hub's plugin.** Hub-only gameplay lives in the hub's own WASM plugin ([`servers/hub/plugin`](../servers/hub/plugin), listed in its `hallow.toml`), not in Hallow's server plugin, because it is the hub repo's business: when the hub moves to its own repo the plugin goes with it, the way a game's plugin lives in the game's repo. What every server needs (the control plane link, the mode list, moving players, the way back from a game) stays in Hallow's server plugin, which the hub's plugin asks over IPC (`lobbies`, `send <uuid> <mode>`), so the hub's plugin needs no network access or token. The hub plugin gives:
+
+- the game menu and the clickable mode list;
+- a title on join with the network's player count, and a tab list header and footer with the count and the instance's name;
+- spawn at the world spawn in adventure mode (creative and spectator staff keep theirs), no damage or hunger, the menu item fixed in place, and back to spawn after a fall out of the world.
+
+Pumpkin's plugin API (WIT v0.1) has what this needs: GUIs (`gui` with `generic-9x3` chests), item stacks with names and lore, inventory click and close events, interact events, titles, tab list header and footer, clickable text, and cancellable damage, hunger, drop and swap-hand events. One gap: there is no call to close a player's open chest, so the menu stays open until the proxy moves the player.
 
 ## From repo to running server
 

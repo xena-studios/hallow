@@ -12,7 +12,7 @@
   - Players already on them aren't affected.
 - **Commands.** Sends, messages, broadcasts and kicks queued for this proxy are carried out.
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
-  - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`.
+  - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`, `/lobby [mode]` to go to a game mode's lobby and `/hub` to go back to a hub.
   - Staff: `/find`, `/alert` and `/gkick`, for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
 - **Friends** (needs the control plane's database):
   - `/friend` (`/f`): add, accept, deny, remove, list and requests; `/friend <player>` adds.

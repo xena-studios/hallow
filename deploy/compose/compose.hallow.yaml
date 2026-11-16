@@ -4,7 +4,7 @@
 # hallow_server plugin. DEV ONLY: the token and secret in config/hallow are
 # checked-in defaults.
 #
-#   cargo build --release --target wasm32-wasip2 -p hallow-vine -p hallow-server
+#   servers/build-plugins.sh
 #   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml up --build -d
 #
 # Proxies: localhost:25565 (proxy-1) and localhost:25566 (proxy-2).

@@ -75,13 +75,14 @@ Each instance is a record in Redis (`instances`, plus `instance-specs`: what it 
 The control plane decides every half second, under the matchmaker's Redis lock, just before each matchmaker pass. A pure planner (`crates/control-plane/src/instances/plan.rs`, unit tested like the fleet planner) reads the kinds, the instance records, the server list, the queues and the online count, and decides:
 
 - **Queue demand, game kinds.** It places each queue entry the way the matchmaker would: the fullest ready server with room for the whole entry, then instances still on their way up. Entries that still don't fit need new instances, packed `players.max` to an instance.
-- **Warm instances.** It keeps `scaling.warm` unused instances of each game kind while anyone is online, and `warm` instances of each lobby or hub kind. Unused instances beyond that are ended after `HALLOW_INSTANCE_IDLE_SECS`.
+- **Warm instances.** It keeps `scaling.warm` unused instances of each game kind while anyone is online. Unused instances beyond that are ended after `HALLOW_INSTANCE_IDLE_SECS`.
+- **Lobbies and hubs.** At least `warm` instances of each lobby or hub kind, and enough that their players fill them to no more than 80 % on average, so a busy lobby gets another instance before it is full. Empty ones beyond that are ended after `HALLOW_INSTANCE_IDLE_SECS`. Players are spread over them by `POST /v1/lobbies/send`, which picks the least full ([Servers](SERVERS.md#hubs-and-lobbies)).
 - **Limits.** Nothing goes past `scaling.max_instances`.
 - **A game is over** when its server reports `draining` with nobody on it, when it has been empty for `HALLOW_INSTANCE_EMPTY_SECS` after having had players, or when its server unregistered.
 - **Clean-up.** An instance whose server hasn't registered within `HALLOW_INSTANCE_START_TIMEOUT_SECS` is ended. So is one stuck in a task-owned state, because the control plane running the task died.
 - **Placement.** A new instance goes on the node with the fewest instances, on its lowest free game port. Its name is `<kind>-<6 hex>`. Draining nodes come with the fleet manager.
 
-The quick decisions are written to Redis under the lock: new records, `ready`, bookkeeping, `ending`. Because the matchmaker pass that follows skips instances that are `ending`, nobody is sent to an instance that's going away, and a placement it makes is counted by the next plan. The slow calls (create, stop, delete) run on their own tasks outside the lock and move the records on with a compare-and-set on the state. A sweep every 30 s deletes containers the orchestrator runs for this network that have no record, such as ones left behind when Redis was reset.
+The quick decisions are written to Redis under the lock: new records, `ready`, bookkeeping, `ending`. Because the matchmaker pass that follows skips instances that are `ending`, nobody is sent to an instance that's going away, and a placement it makes is counted by the next plan. Before an instance is stopped, anyone still on it is sent to its kind's `lobby` (or a hub), and the stop waits up to 5 s for them to leave; a game that ends normally has already sent its players on (the server plugin does that when the server turns `draining`). The slow calls (create, stop, delete) run on their own tasks outside the lock and move the records on with a compare-and-set on the state. A sweep every 30 s deletes containers the orchestrator runs for this network that have no record, such as ones left behind when Redis was reset.
 
 Every instance gets the server plugin's settings in its environment:
 
@@ -98,7 +99,7 @@ An instance never gets the control plane's shared token (`HALLOW_TOKEN`), which 
 - **Minted** when the instance is recorded: `hit_` and 32 random bytes in hex.
 - **Stored hashed.** Redis keeps its SHA-256 with the instance's name, kind and creation time (`instance-tokens`, plus `instance-token-of` from the name back to the hash). The raw token is in the instance's spec (`instance-specs`), because that is the environment Wings fetches on every start ([above](#wings-without-a-panel-record-per-instance)); Redis is as trusted as the control plane itself.
 - **Lives as long as the instance.** A token works only while its instance record exists. Deleting the record (the instance ended, or a stuck one was cleaned up) removes the token in the same Lua script, and every lookup also checks the record is still there.
-- **Scoped to what the server plugin does** (audited from `crates/server-plugin`: register, heartbeat, player reports, stats, signals, unregister), for its own name only:
+- **Scoped to what the server plugin does** (audited from `crates/server-plugin`: register, heartbeat, player reports, stats, signals, the lobby list and sending players to lobbies, unregister), for its own name only:
 
   | Route | Allowed when |
   |---|---|
@@ -108,10 +109,12 @@ An instance never gets the control plane's shared token (`HALLOW_TOKEN`), which 
   | `POST`/`GET /v1/servers/{name}/players` | `{name}` is the instance's |
   | `POST /v1/stats` | the batch's `source` and `kind` are the instance's |
   | `POST /v1/signals` | the batch's `source` is the instance's |
+  | `GET /v1/lobbies` | always: the game modes, for the hub's menu |
+  | `POST /v1/lobbies/send` | the player is on the instance's server (a finished game sending players back, the hub's menu) |
 
   Everything else answers `403` (code `unauthorized`): other servers' routes, the server list, presence, commands, kinds, instances, punishments, ranks, fleet settings and node tokens. An unknown or revoked token answers `401`.
 
-`tests/instances.rs` checks a scoped token against every one of those, and that it stops working once its instance is deleted.
+`tests/instances.rs` checks a scoped token against every one of those, and that it stops working once its instance is deleted; `tests/lobbies.rs` checks that a server's token sends only its own players.
 
 **Servers the control plane doesn't start**, such as the dev network's compose hub (`lobby`), keep working with the shared token. To give one a scoped token instead, list it in `HALLOW_SERVER_TOKENS` as `name:kind:token` (comma-separated, tokens at least 16 characters) and pass that token as the server's `HALLOW_CONTROL_PLANE_TOKEN`. A static token has the same scope as an instance's and lives as long as the setting. The dev network still gives its hub the shared token.
 
@@ -133,11 +136,11 @@ Docker containers are labelled `hallow.instance`, `hallow.kind` and `hallow.owne
 
 `deploy/compose/compose.instances.yaml`, over `compose.yaml` and `compose.hallow.yaml`, makes games dynamic:
 
-- The control plane gets the Docker socket (dev only: that's root on the host), `HALLOW_ORCHESTRATOR=docker`, and a kinds file that registers `test-game`.
+- The control plane gets the Docker socket (dev only: that's root on the host), `HALLOW_ORCHESTRATOR=docker`, and a kinds file that registers `test-game` and `test-game-lobby` (one lobby instance always warm).
 - `game-1` is built but not started.
 - The hub (`lobby`) stays a static compose service: the network's floor, which compose keeps up.
 
-See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate runs on it, with a bot joining through one of two proxies, queueing with `/play test-game` and landing in a fresh instance.
+See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate runs on it, with a bot joining through one of two proxies, queueing with `/play test-game` and landing in a fresh instance. So does the hub's path: hub, `/lobby test-game` to a lobby instance, queue, game, and back to the lobby when the match ends.
 
 ## Settings
 
@@ -158,7 +161,6 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 ## Still to do
 
 - Run the Wings orchestrator on a real (cloud or dedicated) node; it has run end to end locally (`tools/wings-e2e`).
-- Scale lobbies and hubs on players per instance, not just `warm`.
 - Draining nodes: no new instances there (the fleet manager).
 - `players.min` and match start, with `hallow-sdk`.
 - Console and logs in the panel: the panel reads `GET /v1/instances` for each instance's node and Wings UUID, and talks to Wings with the node's token.

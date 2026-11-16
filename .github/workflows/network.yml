@@ -41,6 +41,18 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install Rust
+        if: steps.changes.outputs.run == 'true'
+        run: rustup toolchain install stable --profile minimal --target wasm32-wasip2 && rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changes.outputs.run == 'true'
+
+      # The in-tree servers' images copy their plugins from plugins/.
+      - name: Build the servers' plugins
+        if: steps.changes.outputs.run == 'true'
+        run: servers/build-plugins.sh
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.changes.outputs.run == 'true'
 
@@ -56,13 +68,6 @@ jobs:
             proxy.cache-to=type=gha,scope=proxy,mode=max
             server.cache-from=type=gha,scope=server
             server.cache-to=type=gha,scope=server,mode=max
-
-      - name: Install Rust
-        if: steps.changes.outputs.run == 'true'
-        run: rustup toolchain install stable --profile minimal && rustup default stable
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: steps.changes.outputs.run == 'true'
 
       - name: Build netcheck
         if: steps.changes.outputs.run == 'true'

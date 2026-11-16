@@ -59,6 +59,7 @@ pub struct Client {
 }
 
 enum Method {
+    Get,
     Post,
     Delete,
 }
@@ -72,6 +73,20 @@ pub struct Pending {
 impl Pending {
     /// `None` while there's no answer yet, then the result once.
     pub fn poll(&self) -> Option<Result<(), Error>> {
+        self.answer()
+            .map(|answer| answer.and_then(|a| finish(a, false)))
+    }
+
+    /// Like [`Pending::poll`], with a `2xx` answer's body. The body is read
+    /// once the answer's head is in, waiting for the rest of it: the control
+    /// plane sends small bodies along with the head, so this doesn't wait on
+    /// the network in practice.
+    pub fn poll_body(&self) -> Option<Result<Vec<u8>, Error>> {
+        self.answer()
+            .map(|answer| answer.and_then(finish_with_body))
+    }
+
+    fn answer(&self) -> Option<Result<Answer, Error>> {
         // The host only notices the answer when the future's pollable is
         // checked; `get` alone returns `None` forever (wasmtime-wasi-http).
         // `ready` checks once without waiting.
@@ -84,7 +99,7 @@ impl Pending {
                 Some(Err(Error::Transport("no answer in time".into())))
             }
             None => None,
-            Some(answer) => Some(finish(answer, false)),
+            Some(answer) => Some(Ok(answer)),
         }
     }
 }
@@ -95,6 +110,15 @@ impl Client {
         let json = serde_json::to_vec(body).map_err(|err| Error::Body(err.to_string()))?;
         Ok(Pending {
             response: self.start(Method::Post, path, Some(&json))?,
+            started: Instant::now(),
+        })
+    }
+
+    /// Starts a GET, without waiting for it; read the answer with
+    /// [`Pending::poll_body`].
+    pub fn start_get(&self, path: &str) -> Result<Pending, Error> {
+        Ok(Pending {
+            response: self.start(Method::Get, path, None)?,
             started: Instant::now(),
         })
     }
@@ -135,6 +159,7 @@ impl Client {
         let headers = types::Fields::from_list(&headers).map_err(|err| transport(&err))?;
         let request = types::OutgoingRequest::new(headers);
         let method = match method {
+            Method::Get => types::Method::Get,
             Method::Post => types::Method::Post,
             Method::Delete => types::Method::Delete,
         };
@@ -194,6 +219,22 @@ fn finish(answer: Answer, wait: bool) -> Result<(), Error> {
         return Ok(());
     }
     let message = read_body(&response, wait)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    Err(Error::Status(status, message))
+}
+
+/// A `2xx` answer's whole body, or the error.
+fn finish_with_body(answer: Answer) -> Result<Vec<u8>, Error> {
+    let response = answer
+        .map_err(|()| transport(&"response already taken"))?
+        .map_err(|err| transport(&err))?;
+    let status = response.status();
+    let body = read_body(&response, true).map_err(Error::Transport);
+    if (200..300).contains(&status) {
+        return body;
+    }
+    let message = body
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok());
     Err(Error::Status(status, message))

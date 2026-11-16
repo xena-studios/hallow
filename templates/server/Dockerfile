@@ -29,6 +29,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # reuse artifacts built from other sources when their timestamps are newer.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# The in-tree servers' plugins are workspace members too.
+COPY servers/hub/plugin servers/hub/plugin
+COPY servers/test-game/plugin servers/test-game/plugin
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-server-plugin-target,target=/src/target,sharing=locked \
     cargo build --release --locked --target wasm32-wasip2 -p hallow-server \

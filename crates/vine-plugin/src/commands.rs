@@ -12,6 +12,8 @@
 //! | `/friend [add\|accept\|deny\|remove\|list\|requests] [player]` (`/f`; `/friend <player>` adds) | | Friends (needs the database) |
 //! | `/play <game>` | | Queue for a game, with your party if you lead one |
 //! | `/leavequeue` (`/lq`) | | Leave the queue |
+//! | `/lobby [mode]` | | Go to a game mode's lobby (`/lobby skywars`), or to a hub without one |
+//! | `/hub` | | Go to a hub, from anywhere |
 //! | `/ban <player> [duration] <reason>` | `hallow.staff.ban` | Ban; permanent without a duration (`30m`, `2h`, `7d`, `1w`) |
 //! | `/unban <player> [reason]` | `hallow.staff.ban` | Lift a ban |
 //! | `/mute <player> [duration] <reason>` | `hallow.staff.mute` | Mute: no chat, `/msg`, `/r` or party chat |
@@ -30,6 +32,7 @@ use hallow_proto::permission::has_permission;
 use hallow_proto::{
     command::NetworkCommand,
     friend::{FriendAction, FriendReply},
+    lobby::{LobbySent, SendToLobby},
     party::{PartyAction, PartyReply},
     presence::PlayerLocation,
     punishment::{
@@ -59,6 +62,8 @@ const UNMUTE: u32 = 22;
 const WARN: u32 = 23;
 const HISTORY: u32 = 24;
 const FRIEND: u32 = 25;
+const LOBBY: u32 = 26;
+const HUB: u32 = 27;
 
 const FRIEND_USAGE: &str = "/friend <player> | add <player> | accept <player> | deny <player> | remove <player> | list | requests";
 const FRIEND_SUBCOMMANDS: [&str; 6] = ["add", "accept", "deny", "remove", "list", "requests"];
@@ -83,6 +88,8 @@ pub fn register(ctx: &Context) {
     ctx.register_command(PARTY, "party", "Play with friends", &["p".into()], None);
     ctx.register_command(PARTY_CHAT, "pc", "Message your party", &[], None);
     ctx.register_command(PLAY, "play", "Queue for a game", &[], None);
+    ctx.register_command(LOBBY, "lobby", "Go to a game mode's lobby", &[], None);
+    ctx.register_command(HUB, "hub", "Go to the hub", &[], None);
     ctx.register_command(
         LEAVE_QUEUE,
         "leavequeue",
@@ -366,6 +373,10 @@ impl State {
                 }
             }
             (LEAVE_QUEUE, _) => usage("/leavequeue"),
+            (LOBBY, []) | (HUB, []) => self.to_lobby(sender, None),
+            (LOBBY, [mode]) => self.to_lobby(sender, Some(mode)),
+            (LOBBY, _) => usage("/lobby [mode]"),
+            (HUB, _) => usage("/hub"),
             _ => Err("§cUnknown command.".into()),
         }
     }
@@ -431,6 +442,30 @@ impl State {
             self.last_from.insert(uuid.clone(), location.username);
         }
         Ok(1)
+    }
+
+    /// Sends the player to a lobby of `mode`, or to a hub. The control plane
+    /// tells them where they're going and moves them.
+    fn to_lobby(&self, sender: &CommandSender, mode: Option<&String>) -> Result<i32, String> {
+        let request = SendToLobby {
+            player: self.player_id(sender)?,
+            lobby: mode.map(|m| m.to_ascii_lowercase()),
+            fallback_hub: false,
+        };
+        match self
+            .client
+            .post::<_, LobbySent>(routes::LOBBIES_SEND, &request)
+        {
+            Ok(_) => Ok(1),
+            Err(http::Error::Status(404 | 409, Some(err))) => Err(format!("§c{}", err.message)),
+            Err(err) => {
+                crate::log(
+                    crate::Level::Warn,
+                    &format!("sending to a lobby failed: {err}"),
+                );
+                Err(crate::UNAVAILABLE.into())
+            }
+        }
     }
 
     fn issuer(&self, sender: &CommandSender) -> Option<Uuid> {
@@ -541,7 +576,7 @@ impl State {
             .player_uuid
             .as_deref()
             .and_then(|uuid| Uuid::parse_str(uuid).ok())
-            .ok_or_else(|| "§cOnly players can use parties.".to_owned())
+            .ok_or_else(|| "§cOnly players can do that.".to_owned())
     }
 
     fn party(&self, sender: &CommandSender, action: &PartyAction) -> Result<i32, String> {
