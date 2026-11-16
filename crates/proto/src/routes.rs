@@ -12,6 +12,8 @@
 //! | `POST` | [`SERVERS`] | [`RegisterServer`](crate::server::RegisterServer) | `204` |
 //! | `POST` | [`server_heartbeat`] | [`ServerHeartbeat`](crate::server::ServerHeartbeat) | `204` |
 //! | `DELETE` | [`server`] | | `204` |
+//! | `POST` | [`server_players`] | [`ServerPlayersChanged`](crate::server::ServerPlayersChanged) | `204`, or `404` if the server isn't registered |
+//! | `GET` | [`server_players`] | | `Vec<`[`ServerPlayer`](crate::server::ServerPlayer)`>` by username, or `404` |
 //! | `GET` | [`SERVERS`]`?since=` | | [`Poll`](crate::Poll)`<Vec<`[`ServerInfo`](crate::server::ServerInfo)`>>` |
 //! | `POST` | [`PRESENCE_LOGIN`] | [`LoginRequest`](crate::presence::LoginRequest) | [`LoginDecision`](crate::presence::LoginDecision) |
 //! | `POST` | [`PRESENCE_SWITCH`] | [`PlayerSwitched`](crate::presence::PlayerSwitched) | `204` |
@@ -27,6 +29,8 @@
 //! | `GET` | [`punishment_history`] | | `Vec<`[`PunishmentRecord`](crate::punishment::PunishmentRecord)`>` |
 //! | `POST` | [`SIGNALS`] | [`SignalBatch`](crate::signal::SignalBatch) | `204` |
 //! | `GET` | [`signals_of`] | | `Vec<`[`SignalRecord`](crate::signal::SignalRecord)`>` |
+//! | `POST` | [`STATS`] | [`StatsBatch`](crate::stats::StatsBatch) | `204` |
+//! | `GET` | [`stats_of`] | | [`PlayerStats`](crate::stats::PlayerStats) or `404`; by UUID or username |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
@@ -65,6 +69,7 @@ pub const PLAYERS: &str = "/v1/players";
 pub const PARTIES: &str = "/v1/parties";
 pub const FRIENDS: &str = "/v1/friends";
 pub const SIGNALS: &str = "/v1/signals";
+pub const STATS: &str = "/v1/stats";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 pub const FLEET_SETTINGS: &str = "/v1/fleet/settings";
@@ -109,6 +114,12 @@ pub fn server_heartbeat(name: &str) -> String {
     format!("{SERVERS}/{name}/heartbeat")
 }
 
+/// Who is on a server: `POST` reports joins and leaves, `GET` lists them.
+#[must_use]
+pub fn server_players(name: &str) -> String {
+    format!("{SERVERS}/{name}/players")
+}
+
 #[must_use]
 pub fn player(uuid: &uuid::Uuid) -> String {
     format!("{PLAYERS}/{uuid}")
@@ -119,13 +130,7 @@ pub fn player(uuid: &uuid::Uuid) -> String {
 #[must_use]
 pub fn player_by_name(name: &str) -> String {
     let mut path = format!("{PLAYERS}?name=");
-    for byte in name.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.') {
-            path.push(char::from(byte));
-        } else {
-            path.push_str(&format!("%{byte:02X}"));
-        }
-    }
+    encode_into(&mut path, name);
     path
 }
 
@@ -139,6 +144,25 @@ pub fn punishment_history(name: &str) -> String {
 #[must_use]
 pub fn signals_of(name: &str) -> String {
     player_by_name(name).replacen(PLAYERS, SIGNALS, 1)
+}
+
+/// A player's stats, by UUID or username, percent-encoded like
+/// [`player_by_name`].
+#[must_use]
+pub fn stats_of(player: &str) -> String {
+    let mut path = format!("{STATS}/");
+    encode_into(&mut path, player);
+    path
+}
+
+fn encode_into(path: &mut String, text: &str) {
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.') {
+            path.push(char::from(byte));
+        } else {
+            path.push_str(&format!("%{byte:02X}"));
+        }
+    }
 }
 
 /// The party `uuid` is in.
@@ -179,6 +203,9 @@ mod tests {
     #[test]
     fn paths() {
         assert_eq!(proxy_heartbeat("proxy-1"), "/v1/proxies/proxy-1/heartbeat");
+        assert_eq!(server_players("hub-1"), "/v1/servers/hub-1/players");
+        assert_eq!(stats_of("Steve_1"), "/v1/stats/Steve_1");
+        assert_eq!(stats_of(".Bedrock Guy"), "/v1/stats/.Bedrock%20Guy");
         assert_eq!(since(SERVERS, 12), "/v1/servers?since=12");
         assert_eq!(
             fleet_settings_history(20),

@@ -1,6 +1,6 @@
 # hallow-db
 
-Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions and punishments. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
+Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions, punishments, anticheat signals and player stats. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
 
 - Migrations are in [`migrations/`](migrations), embedded with `sqlx::migrate!` and applied by `hallow_db::migrate`.
 - Queries are checked at runtime (`sqlx::query_as`), not by sqlx's compile-time macros, so building needs no database.
@@ -38,6 +38,7 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `fleet_settings_history` | Every change to `fleet_settings`, append-only, with the settings before (`NULL` for the first change) and after | `id` |
 | `node_join_tokens` | One-time node join tokens: SHA-256 of the token, role, region, optional node name, labels, expiry, a short claim lease while a join runs, and when it was used; deleted a week after expiry | `id` (hash unique) |
 | `nodes` | Every node that joined: name, panel UUID, role, region, labels, private and public IP, WireGuard public key, the token it used | `name` |
+| `player_stats` | Running totals per account, server kind and stat name (`play_time_s`, `joins`, `kills`, ...). `add_stats` adds a batch of increases in one upsert (`value = value + n`); increases for accounts that never joined are skipped | `(account_uuid, kind, stat)` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 
 A punishment's issuer and revoker are an actor: a staff `account` (with its UUID), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.
@@ -51,6 +52,8 @@ A punishment's issuer and revoker are an actor: a staff `account` (with its UUID
 | An account by username, ignoring case | `accounts_username_lower_idx` on `lower(username)`; `account_usernames_username_lower_idx` for past names |
 | An account's ranks | the `account_ranks` primary key, which starts with `account_uuid` |
 | A player's sessions; accounts seen on an IP; open sessions on a proxy | `sessions_account_idx`, `sessions_ip_idx`, `sessions_open_by_proxy_idx` |
+| A player's stats | the `player_stats` primary key, which starts with `account_uuid` |
+| Leaderboards (top values of one stat in one kind) | `player_stats_kind_stat_value_idx`: `(kind, stat, value DESC)` |
 
 A test checks that the planner uses the first group of indexes for those queries.
 

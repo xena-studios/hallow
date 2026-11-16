@@ -25,6 +25,7 @@ pub mod queue;
 pub mod routes;
 pub mod server;
 pub mod signal;
+pub mod stats;
 
 use std::collections::BTreeMap;
 

@@ -3,13 +3,13 @@
 `hallow-server`, Hallow's Pumpkin plugin (`hallow_server.wasm`). It links each lobby and game server to the [control plane](../control-plane/README.md), so proxies can route players to it.
 
 - **Register.** About a second after the server starts, it registers with `POST /v1/servers`: name, kind, version, role, address and player limit.
-- **Heartbeat.** Every 5 s it sends the player count and state to `POST /v1/servers/{name}/heartbeat`.
+- **Heartbeat.** Every 5 s it sends the player count, the state and everyone on the server to `POST /v1/servers/{name}/heartbeat`.
   - If the control plane answers `404` (the server expired, or Redis was reset), it registers again.
   - A state change is sent within a second or two, without waiting for the next heartbeat.
+- **Presence.** Within a second or two of a player joining or leaving, it reports who joined and left to `POST /v1/servers/{name}/players` (see [Presence](#presence)).
+- **Stats.** Every 30 s it sends each player's increases for this server's kind to `POST /v1/stats` (see [Stats](#stats)).
 - **Signals.** Every 30 s it sends each player's movement and combat numbers to `POST /v1/signals`, for the anticheat (see [Anticheat signals](#anticheat-signals)).
 - **Unregister.** On unload, which Pumpkin does on shutdown after kicking players, it sends `DELETE /v1/servers/{name}`. If that fails, the control plane drops the server after 15 s without heartbeats.
-
-Presence and stats come later.
 
 ## Server state
 
@@ -26,6 +26,37 @@ send_ipc_message("hallow_server", b"in_game")??;
 ```
 
 The Hallow SDK will wrap this. Within this crate, the seam is `state::set` in [`src/state.rs`](src/state.rs).
+
+## Presence
+
+The control plane learns who is on each server from the server itself, not only from the proxies' view of where they sent players.
+
+- `PlayerJoinEvent` and `PlayerLeaveEvent` are collected (joins and leaves of the same player before a report cancel out) and sent as one `ServerPlayersChanged` on the task's next run.
+- Every heartbeat carries the full list from `get_all_players` as `roster`. The control plane replaces its list with it, so a lost report, or one sent while the control plane was down, is corrected within 5 s. Pending joins and leaves are dropped when a heartbeat goes, since it covers them.
+- Reports and heartbeats share one request slot, so they reach the control plane in order. A failed report isn't retried; the next heartbeat corrects it. A `404` means the server was forgotten: it registers again, and the first heartbeat after that carries the list.
+
+## Stats
+
+The plugin counts per-player stats on this server and sends the increases every 30 s as a `StatsBatch` with `kind` set to the server kind. The control plane adds them to the player's totals for that kind (`GET /v1/stats/{player}` reads them).
+
+| Stat | Counted |
+|---|---|
+| `play_time_s` | Seconds online, sent in whole seconds; the rest carries into the next batch |
+| `joins` | Joins to this server (world changes don't count) |
+| anything else | What a game bumps over IPC, such as `kills`, `deaths` or `wins` |
+
+A game bumps a counter by sending `hallow_server` an IPC message `stat <uuid> <name> [amount]`. The amount defaults to 1 and can't be negative; names are 1 to 64 of `a-z 0-9 _ .`. The reply is `ok`, or an error for a bad message.
+
+```rust
+use pumpkin_plugin_api::wit::pumpkin::plugin::ipc::send_ipc_message;
+send_ipc_message("hallow_server", format!("stat {killer} kills").as_bytes())??;
+send_ipc_message("hallow_server", format!("stat {winner} wins 1").as_bytes())??;
+```
+
+- **Failures.** A batch that fails is merged back and goes with the next one. After 10 failures in a row (5 minutes) its increases are dropped and logged, so an outage can't grow memory without bound. A batch that timed out after the control plane applied it would be counted twice; batches are small and timeouts rare, so this is accepted for now.
+- **Size.** A batch carries at most 1000 players; any more wait for the next.
+- **Shutdown.** Pumpkin kicks players before unloading the plugin, so their leave events close their stay; `on_unload` then sends what's left and waits for it (2 s timeout), before unregistering.
+- **Accounts.** Totals are kept per account, so increases for a player who never joined through a proxy (an offline-mode test client straight to the server) are skipped.
 
 ## Anticheat signals
 
@@ -58,8 +89,8 @@ The plugin targets Pumpkin's plugin API v0.1, the version `pumpkin-plugin-api` b
 
 - **Off the tick.** A repeating task runs every 20 ticks and heartbeats, or sends signals, when due. Pumpkin runs plugin tasks on Tokio tasks, not inside the tick. But it runs one call into a plugin at a time, and the signal handlers are called from the tick, so the task never waits on the network: it starts a request and picks up the answer on its next run. A slow control plane can't hold up the tick.
 - **Timeouts.** Every HTTP call has a 2 s timeout (connect, first byte, between bytes), and the plugin gives up on one after 10 s regardless.
-- **Failures.** A failed heartbeat is logged once and retried on the next heartbeat; failed signal batches are logged once and dropped. A missing or unreachable control plane never stops the server.
-- **Unload.** `on_unload` waits for the `DELETE`, up to that 2 s timeout, before Pumpkin moves on with shutdown.
+- **Failures.** A failed heartbeat is logged once and retried on the next heartbeat; a failed presence report waits for the next heartbeat's full list; failed signal batches are logged once and dropped; failed stats batches go with the next one. A missing or unreachable control plane never stops the server.
+- **Unload.** `on_unload` sends the last stats and the `DELETE`, waiting up to that 2 s timeout for each, before Pumpkin moves on with shutdown.
 
 ## Setup
 
@@ -103,4 +134,4 @@ Lobbies that new players should land on need the kind the control plane uses for
 cargo test -p hallow-server
 ```
 
-They cover the config (environment, file, overrides and errors), the IPC state messages, and the signal windows and metrics.
+They cover the config (environment, file, overrides and errors), the IPC state and stat messages, joins and leaves coalescing, stat counting (play time carry, joins, caps, retries), and the signal windows and metrics.

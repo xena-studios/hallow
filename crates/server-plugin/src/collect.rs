@@ -41,7 +41,7 @@ static COLLECTOR: Mutex<Option<Collector>> = Mutex::new(None);
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 
 /// Milliseconds on a monotonic clock that starts with the plugin.
-fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     let origin = CLOCK.get_or_init(Instant::now);
     u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -54,7 +54,7 @@ fn unix_ms() -> u64 {
         })
 }
 
-fn uuid(id: &WitUuid) -> Uuid {
+pub fn uuid(id: &WitUuid) -> Uuid {
     Uuid::from_u64_pair(id.high, id.low)
 }
 

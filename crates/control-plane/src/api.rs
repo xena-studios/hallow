@@ -25,8 +25,9 @@ use hallow_proto::{
     punishment::{IssuePunishment, PunishmentRecord, PunishmentReply, RevokePunishment},
     queue::{JoinQueue, QueueStatus},
     routes,
-    server::{RegisterServer, ServerHeartbeat, ServerInfo},
+    server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged},
     signal::{SignalBatch, SignalRecord},
+    stats::{PlayerStats, StatsBatch},
 };
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
@@ -35,7 +36,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, fleet, friends, nodes, punish, signals,
+    events, fleet, friends, nodes, punish, signals, stats,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -94,6 +95,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::delete(remove_server),
         )
         .route(&routes::server_heartbeat("{name}"), post(server_heartbeat))
+        .route(
+            &routes::server_players("{name}"),
+            post(server_players_changed).get(server_players),
+        )
         .route(routes::PRESENCE_LOGIN, post(login))
         .route(routes::PRESENCE_SWITCH, post(switch))
         .route(routes::PRESENCE_LEAVE, post(leave))
@@ -104,6 +109,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::PARTIES, post(party_action))
         .route(routes::FRIENDS, post(friend_action))
         .route(routes::SIGNALS, post(add_signals).get(signal_history))
+        .route(routes::STATS, post(add_stats))
+        .route("/v1/stats/{player}", get(player_stats))
         .route(
             routes::PUNISHMENTS,
             post(issue_punishment).get(punishment_history),
@@ -307,6 +314,32 @@ async fn remove_server(State(state): Shared, Path(name): Path<String>) -> Reply<
     }
 }
 
+async fn server_players_changed(
+    State(state): Shared,
+    Path(name): Path<String>,
+    Body(changed): Body<ServerPlayersChanged>,
+) -> Reply<StatusCode> {
+    if state.store.server_players_changed(&name, &changed).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(Failure::not_found(
+            "server isn't registered; register again",
+        ))
+    }
+}
+
+async fn server_players(
+    State(state): Shared,
+    Path(name): Path<String>,
+) -> Reply<Body<Vec<ServerPlayer>>> {
+    state
+        .store
+        .server_players(&name)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("server isn't registered"))
+}
+
 async fn poll_servers(
     State(state): Shared,
     Since(params): Since,
@@ -455,6 +488,28 @@ async fn signal_history(
         .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
 }
 
+// Stats
+
+async fn add_stats(State(state): Shared, Body(batch): Body<StatsBatch>) -> Reply<StatusCode> {
+    check_name("stats source", &batch.source)?;
+    check_name("server kind", &batch.kind)?;
+    stats::check(&batch).map_err(Failure::bad_request)?;
+    let db = database(&state)?;
+    stats::store(db, &batch).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn player_stats(
+    State(state): Shared,
+    Path(player): Path<String>,
+) -> Reply<Body<PlayerStats>> {
+    let db = database(&state)?;
+    stats::of(db, &state.store, &player)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("nobody by that name or UUID has joined"))
+}
+
 // Friends
 
 async fn friend_action(
@@ -476,7 +531,7 @@ fn database(state: &AppState) -> Reply<&hallow_db::PgPool> {
     state.db.as_ref().ok_or_else(|| {
         Failure::new(
             ErrorCode::Unavailable,
-            "punishments need a database (HALLOW_DATABASE_URL)",
+            "this needs a database (HALLOW_DATABASE_URL)",
         )
     })
 }

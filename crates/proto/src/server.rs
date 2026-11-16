@@ -1,8 +1,14 @@
 //! Servers (Pumpkin) register when they're ready for players and heartbeat
 //! while they run. Proxies long-poll the list and mirror it into Vine's
 //! runtime server registry.
+//!
+//! Each server also reports who is on it: a join or leave as it happens
+//! ([`ServerPlayersChanged`]) and the whole list with every heartbeat
+//! ([`ServerHeartbeat::roster`]), which corrects anything a lost report
+//! left wrong. That view is the server's own, independent of the proxies'.
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// What a server is for, from its repo's `hallow.toml`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -48,6 +54,29 @@ pub struct ServerHeartbeat {
     /// server measures it. Shown on the monitoring dashboard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tick_ms: Option<f32>,
+    /// Everyone on the server now. When present, the control plane replaces
+    /// its list of the server's players with this one; when absent, it keeps
+    /// the list as the join and leave reports left it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster: Option<Vec<ServerPlayer>>,
+}
+
+/// A player on a server, as the server sees them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerPlayer {
+    pub uuid: Uuid,
+    pub username: String,
+}
+
+/// `POST /v1/servers/{name}/players`: players who joined or left the server
+/// since the last report. A player who joins one server is taken off any
+/// other server's list straight away.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerPlayersChanged {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joined: Vec<ServerPlayer>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left: Vec<Uuid>,
 }
 
 /// One entry in `GET /v1/servers`.
@@ -88,5 +117,27 @@ mod tests {
         assert_eq!(value["role"], json!("game"));
         assert_eq!(value["state"], json!("in_game"));
         assert_eq!(serde_json::from_value::<ServerInfo>(value).unwrap(), info);
+    }
+
+    #[test]
+    fn heartbeat_roster_is_optional() {
+        let old: ServerHeartbeat =
+            serde_json::from_value(json!({"players": 2, "state": "ready"})).unwrap();
+        assert_eq!(old.roster, None);
+        let beat = ServerHeartbeat {
+            players: 1,
+            state: ServerState::Ready,
+            tick_ms: None,
+            roster: Some(vec![ServerPlayer {
+                uuid: Uuid::nil(),
+                username: "Steve".into(),
+            }]),
+        };
+        let value = serde_json::to_value(&beat).unwrap();
+        assert_eq!(value["roster"][0]["username"], json!("Steve"));
+        assert_eq!(
+            serde_json::to_value(ServerPlayersChanged::default()).unwrap(),
+            json!({})
+        );
     }
 }

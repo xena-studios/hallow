@@ -7,6 +7,12 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
 ## What it does
 
 - **Servers** register when they accept players and heartbeat every 5 s. The list revision changes when a server is added or removed, or changes state, but not on player counts alone. Proxies long-poll the list and mirror it into Vine.
+- **Players per server.** Each server reports who is on it, independently of the proxies:
+  - `POST /v1/servers/{name}/players` with who joined and left, as it happens;
+  - every heartbeat carries the whole list (`roster`), which replaces the stored one, so a lost report is corrected within 5 s;
+  - a player reported joining one server comes off any other server's list, and a late leave from the old server doesn't touch the new one;
+  - a server that registers again (restarted), unregisters or expires takes its list with it;
+  - `GET /v1/servers/{name}/players` lists them by username, for the panel.
 - **Proxies** register on start and heartbeat. Re-registering after a restart drops the players the proxy had.
 - **Expiry.** Anything that misses three heartbeats (15 s) is removed. A removed proxy takes its players and queued commands with it.
 - **Login.**
@@ -48,6 +54,11 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `POST /v1/nodes/join-tokens` issues a one-time token for a node's role, region and labels; only its SHA-256 is kept;
   - `POST /v1/nodes/join`, with the token as the bearer, creates the node and its game-port allocations in the panel and returns a Wings enrollment code; the token is claimed atomically and spent only when the join finishes, so a failed join can be retried;
   - `GET /v1/nodes` lists joined nodes.
+- **Stats** (with the database):
+  - servers `POST /v1/stats` batches of per-player increases for their kind (`play_time_s`, `joins`, and whatever a game counts, such as `kills`, `deaths` or `wins`);
+  - they're added to running totals in `hallow.player_stats` in one upsert; increases for players who never joined are skipped;
+  - stat names are 1 to 64 of `a-z 0-9 _ .`, increases can't be negative, and a batch carries at most 1000 players with 64 stats each; a batch breaking a rule is refused whole (`400`);
+  - `GET /v1/stats/{player}` (UUID or username) returns every total, by kind then stat.
 - **Metrics.** `GET /metrics` (no token) serves Prometheus' text format, read from live state:
   - players online and the limit;
   - players per proxy;
