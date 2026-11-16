@@ -37,7 +37,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 
 - [x] Vine fork: runtime `register-server` / `unregister-server`, drain mode
 - [x] Vine fork: plugin scheduler (delayed and repeating tasks), so plugins can heartbeat and poll
-- [ ] Vine: translate old Java clients on the proxy, using the multiversion plugin's tables (Decisions 29)
+- [x] Vine: translate old Java clients on the proxy, using the multiversion plugin's translation as a library (Decisions 29, 33); 1.7.10 to 26.1 bots join, chat, walk and switch twice with no plugin on the servers ([Validation](VALIDATION.md#client-versions))
 - [x] `crates/proto`: HTTP/JSON API types for the control plane
 - [x] Control plane: server registry, proxy registry, presence in Redis
 - [x] Vine plugin: presence, global ping, duplicate-login check, server-list sync

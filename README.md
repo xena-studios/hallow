@@ -26,14 +26,14 @@ flowchart TB
     panel["Hallow Panel<br/>Calagopus fork + extensions"] --> cp & wings & pg
 ```
 
-Old Java clients are translated on each backend by [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion). Vine instances share state through the control plane and Redis, so any number of proxies act as one network. The fleet manager adds hourly cloud machines for peaks and returns them when load drops, down to a single machine when nobody is online, all within a set budget. The full picture is in [Architecture](docs/ARCHITECTURE.md).
+Old Java clients (1.7.2 to 26.2) are translated on the proxy: Vine links [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion)'s translation, so servers only see 26.3. Vine instances share state through the control plane and Redis, so any number of proxies act as one network. The fleet manager adds hourly cloud machines for peaks and returns them when load drops, down to a single machine when nobody is online, all within a set budget. The full picture is in [Architecture](docs/ARCHITECTURE.md).
 
 ## Stack
 
 | Layer | Choice | Language |
 |---|---|---|
 | Game servers | [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) | Rust |
-| Old Java clients | [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion) | Rust → WASM |
+| Old Java clients | [pumpkin-java-multiversion](https://github.com/Pumpkin-MC/pumpkin-java-multiversion), linked into Vine | Rust |
 | Bedrock | Pumpkin native, or [Geyser](https://geysermc.org) (decided in Phase 0) | Rust / Java |
 | Proxy | [Vine](https://github.com/Pumpkin-MC/Vine), forked for a runtime server registry | Rust |
 | Proxy plugins | presence, parties, queues, cross-proxy commands | Rust → WASM |
