@@ -44,6 +44,10 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `GET /v1/fleet/settings` returns the settings in force with who changed them last and when, or the defaults if nobody has;
   - `PUT /v1/fleet/settings` with `{settings, updated_by}` replaces them; invalid settings get a `400` whose `fields` names each bad field;
   - every change goes in an append-only history, `GET /v1/fleet/settings/history?limit=` (newest first, 50 by default, at most 500).
+- **Node joins** (with the database and the panel, `HALLOW_PANEL_*`; see [deploy/node](../../deploy/node/README.md)):
+  - `POST /v1/nodes/join-tokens` issues a one-time token for a node's role, region and labels; only its SHA-256 is kept;
+  - `POST /v1/nodes/join`, with the token as the bearer, creates the node and its game-port allocations in the panel and returns a Wings enrollment code; the token is claimed atomically and spent only when the join finishes, so a failed join can be retried;
+  - `GET /v1/nodes` lists joined nodes.
 - **Metrics.** `GET /metrics` (no token) serves Prometheus' text format, read from live state:
   - players online and the limit;
   - players per proxy;
@@ -87,5 +91,7 @@ The tests in `tests/network.rs` start two instances against one Redis and drive 
 ```sh
 HALLOW_TEST_REDIS_URL=redis://127.0.0.1:6379 cargo test -p hallow-control-plane
 ```
+
+`tests/nodes.rs` also needs `HALLOW_TEST_DATABASE_URL`. It runs node joins against a mock of the panel's admin API.
 
 Without the variable they skip, except in CI, which provides Valkey.

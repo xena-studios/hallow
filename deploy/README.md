@@ -2,7 +2,7 @@
 
 - `compose/`: Docker Compose for a full local network on one machine (Phase 0).
 - Production configs: load balancer, Redis, PostgreSQL, monitoring (Phase 1).
-- `node/`: cloud-init and install scripts that turn a new machine into a Hallow node (Phase 1). See [Fleet](../docs/FLEET.md).
+- `node/`: the install script and cloud-init template that turn a blank Debian or Ubuntu machine into a Hallow node and join it with a one-time token. See [node/README.md](node/README.md) and [Fleet](../docs/FLEET.md#setting-up-a-new-node).
 - `control-plane/`: the control plane's image (`docker buildx bake control-plane`).
 
 ## Two-proxy dev network

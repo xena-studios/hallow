@@ -347,6 +347,46 @@ async fn create_sends_the_spec_with_hallows_labels() {
     );
 }
 
+/// The node bootstrap's cloud-init goes to Hetzner as the server's user data,
+/// unchanged and under Hetzner's 32 KiB limit.
+#[tokio::test]
+async fn create_sends_the_rendered_node_bootstrap() {
+    let h = Harness::start().await;
+    let user_data = hallow_fleet::render_cloud_init(&hallow_fleet::NodeBootstrap {
+        control_plane_url: "https://cp.example.net".into(),
+        join_token: "hjt_0123456789abcdef".into(),
+        role: NodeKind::Burst,
+        region: "fsn1".into(),
+        labels: BTreeMap::new(),
+        wireguard: Some(hallow_fleet::WireGuard {
+            address: "10.42.1.7/16".into(),
+            listen_port: None,
+            peers: vec![hallow_fleet::WireGuardPeer {
+                public_key: "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=".into(),
+                endpoint: Some("hub.example.net:51820".into()),
+                allowed_ips: vec!["10.42.0.0/16".into()],
+                persistent_keepalive: Some(25),
+            }],
+        }),
+        private_interfaces: vec![],
+        ssh_allow: vec![],
+        wings_allow: vec![],
+        game_ports: None,
+        wings: None,
+        ssh_authorized_keys: vec![],
+    })
+    .unwrap();
+    assert!(user_data.len() <= hallow_fleet::bootstrap::USER_DATA_LIMIT);
+    let mut spec = spec("hallow-burst-1");
+    spec.user_data = user_data.clone();
+    h.provider().create(&spec).await.unwrap();
+    let requests = h.requests();
+    assert_eq!(
+        requests[0].body.as_ref().unwrap()["user_data"].as_str(),
+        Some(user_data.as_str())
+    );
+}
+
 #[tokio::test]
 async fn list_sees_only_hallows_servers_across_pages() {
     let h = Harness::start().await;

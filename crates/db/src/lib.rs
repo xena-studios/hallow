@@ -1,6 +1,6 @@
 //! Hallow's PostgreSQL schema and the typed queries the control plane runs
-//! against it: accounts, ranks, sessions, punishments, anticheat signals
-//! and fleet settings.
+//! against it: accounts, ranks, sessions, punishments, anticheat signals,
+//! fleet settings and node join tokens.
 //!
 //! Every table lives in the `hallow` schema, so Hallow and the Calagopus
 //! panel can share one database. Queries are checked at runtime
@@ -17,6 +17,7 @@
 mod accounts;
 mod fleet;
 mod friends;
+mod nodes;
 mod punishments;
 mod ranks;
 mod sessions;
@@ -35,6 +36,10 @@ pub use friends::{
     pending_requests, remove_friend, request_friend,
 };
 pub use hallow_proto::permission::{has_permission, matches_node};
+pub use nodes::{
+    FinishJoinError, JoinToken, NewJoinToken, NewNode, Node, add_join_token, claim_join_token,
+    delete_join_tokens_before, finish_join, list_nodes, node_exists, release_join_token,
+};
 pub use punishments::{
     Actor, NewPunishment, Punishment, PunishmentKind, Revocation, active_ban, active_mute,
     add_punishment, punishment_history, revoke_punishment,

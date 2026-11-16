@@ -33,6 +33,9 @@
 //! | `GET` | [`FLEET_SETTINGS`] | | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord); the defaults if never changed |
 //! | `PUT` | [`FLEET_SETTINGS`] | [`UpdateFleetSettings`](crate::fleet::UpdateFleetSettings) | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord), or `400` with [`ApiError::fields`](crate::ApiError::fields) |
 //! | `GET` | [`fleet_settings_history`] | | `Vec<`[`FleetSettingsChange`](crate::fleet::FleetSettingsChange)`>`, newest first |
+//! | `POST` | [`NODE_JOIN_TOKENS`] | [`IssueJoinToken`](crate::node::IssueJoinToken) | [`JoinToken`](crate::node::JoinToken) |
+//! | `POST` | [`NODE_JOIN`] | [`JoinRequest`](crate::node::JoinRequest), bearer is the join token | [`JoinReply`](crate::node::JoinReply) |
+//! | `GET` | [`NODES`] | | `Vec<`[`NodeInfo`](crate::node::NodeInfo)`>` |
 //!
 //! The control plane also answers HAProxy agent checks on a separate TCP
 //! port (not HTTP); see the control plane's README.
@@ -71,6 +74,10 @@ pub const FLEET_SETTINGS_HISTORY: &str = "/v1/fleet/settings/history";
 /// left out, and the most it returns.
 pub const FLEET_SETTINGS_HISTORY_DEFAULT: u32 = 50;
 pub const FLEET_SETTINGS_HISTORY_MAX: u32 = 500;
+pub const NODES: &str = "/v1/nodes";
+pub const NODE_JOIN_TOKENS: &str = "/v1/nodes/join-tokens";
+/// The one route that takes a join token instead of the control plane's.
+pub const NODE_JOIN: &str = "/v1/nodes/join";
 
 #[must_use]
 pub fn proxy(id: &str) -> String {

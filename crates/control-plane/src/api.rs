@@ -16,6 +16,7 @@ use hallow_proto::{
     command::{NetworkCommand, ProxyCommand},
     fleet::{FleetSettingsChange, FleetSettingsRecord},
     friend::{FriendAction, FriendReply},
+    node::{IssueJoinToken, JoinReply, JoinRequest, JoinToken, NodeInfo},
     party::{PartyAction, PartyInfo, PartyReply},
     presence::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
@@ -34,7 +35,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, fleet, friends, punish, signals,
+    events, fleet, friends, nodes, punish, signals,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -116,23 +117,31 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(fleet_settings).put(update_fleet_settings),
         )
         .route(routes::FLEET_SETTINGS_HISTORY, get(fleet_settings_history))
+        .route(routes::NODES, get(list_nodes))
+        .route(routes::NODE_JOIN_TOKENS, post(issue_join_token))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))
+        // Authorized by the node's one-time join token, not the shared token.
+        .route(routes::NODE_JOIN, post(node_join))
         .merge(api)
         .fallback(|| async { Failure::not_found("no such endpoint") })
         .with_state(state)
 }
 
-/// Checks `Authorization: Bearer <token>` in constant time.
-async fn authorize(State(state): Shared, request: Request, next: Next) -> Response {
-    let given = request
-        .headers()
+/// The bearer token in `Authorization`, or `""`.
+fn bearer(headers: &axum::http::HeaderMap) -> &str {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Checks `Authorization: Bearer <token>` in constant time.
+async fn authorize(State(state): Shared, request: Request, next: Next) -> Response {
+    let given = bearer(request.headers());
     if !constant_time_eq(given.as_bytes(), state.config.token.as_bytes()) {
         return Failure::new(ErrorCode::Unauthorized, "missing or wrong bearer token")
             .into_response();
@@ -643,4 +652,25 @@ where
             });
         }
     }
+}
+
+// Nodes
+
+async fn issue_join_token(
+    State(state): Shared,
+    Body(req): Body<IssueJoinToken>,
+) -> Reply<Body<JoinToken>> {
+    Ok(Body(nodes::issue(&state, req).await?))
+}
+
+async fn node_join(
+    State(state): Shared,
+    headers: axum::http::HeaderMap,
+    Body(req): Body<JoinRequest>,
+) -> Reply<Body<JoinReply>> {
+    Ok(Body(nodes::join(&state, bearer(&headers), req).await?))
+}
+
+async fn list_nodes(State(state): Shared) -> Reply<Body<Vec<NodeInfo>>> {
+    Ok(Body(nodes::list(&state).await?))
 }

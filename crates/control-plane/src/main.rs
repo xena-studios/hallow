@@ -13,11 +13,18 @@
 //! | `HALLOW_DATABASE_URL` | none | PostgreSQL for accounts, bans, ranks and sessions; without it they're off |
 //! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
 //! | `HALLOW_SIGNAL_RETENTION_DAYS` | `14` | How long anticheat signal samples are kept |
+//! | `HALLOW_PANEL_URL` | none | Where the control plane calls the panel's admin API; without it node joins are off |
+//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`) |
+//! | `HALLOW_PANEL_PUBLIC_URL` | `HALLOW_PANEL_URL` | The panel URL nodes' Wings use |
+//! | `HALLOW_PANEL_LOCATIONS` | none | Panel location per region: `fsn1=<uuid>,nbg1=<uuid>`; `*=<uuid>` for any other |
+//! | `HALLOW_NODE_GAME_PORTS` | `30000-30999` | Game-port allocations made on each node; match `install.sh --game-ports` |
+//! | `HALLOW_NODE_WINGS_PORT` / `HALLOW_NODE_SFTP_PORT` | `8080` / `2022` | Wings' API and SFTP ports on nodes |
+//! | `HALLOW_JOIN_TOKEN_TTL_HOURS` | `24` | Default lifetime of a node join token (at most 168) |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
 
-use hallow_control_plane::{Config, DuplicateLogin, serve_all};
+use hallow_control_plane::{Config, DuplicateLogin, panel::PanelConfig, serve_all};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -107,6 +114,15 @@ fn config() -> Result<Config, String> {
             .parse()
             .map_err(|err| format!("HALLOW_SIGNAL_RETENTION_DAYS {days}: {err}"))?;
     }
+    if let Ok(hours) = env::var("HALLOW_JOIN_TOKEN_TTL_HOURS") {
+        let hours: u64 = hours
+            .parse()
+            .ok()
+            .filter(|h| (1..=168).contains(h))
+            .ok_or_else(|| format!("HALLOW_JOIN_TOKEN_TTL_HOURS must be 1 to 168, not {hours}"))?;
+        config.join_token_ttl = std::time::Duration::from_secs(hours * 3600);
+    }
+    config.panel = panel_config()?;
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
         config.duplicate_login = match mode.as_str() {
             "deny" => DuplicateLogin::Deny,
@@ -119,4 +135,70 @@ fn config() -> Result<Config, String> {
         };
     }
     Ok(config)
+}
+
+fn panel_config() -> Result<Option<PanelConfig>, String> {
+    let Ok(url) = env::var("HALLOW_PANEL_URL") else {
+        return Ok(None);
+    };
+    let api_key = match (
+        env::var("HALLOW_PANEL_API_KEY"),
+        env::var("HALLOW_PANEL_API_KEY_FILE"),
+    ) {
+        (Ok(key), _) => key,
+        (_, Ok(path)) => std::fs::read_to_string(&path)
+            .map_err(|err| format!("can't read HALLOW_PANEL_API_KEY_FILE {path}: {err}"))?
+            .trim()
+            .to_owned(),
+        _ => return Err("HALLOW_PANEL_URL needs HALLOW_PANEL_API_KEY or _FILE".into()),
+    };
+    let mut panel = PanelConfig::new(url, api_key);
+    if let Ok(public) = env::var("HALLOW_PANEL_PUBLIC_URL") {
+        panel.public_url = public;
+    }
+    if let Ok(locations) = env::var("HALLOW_PANEL_LOCATIONS") {
+        for entry in locations
+            .split(',')
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+        {
+            let (region, uuid) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("HALLOW_PANEL_LOCATIONS: {entry} isn't region=uuid"))?;
+            let uuid = uuid
+                .trim()
+                .parse()
+                .map_err(|err| format!("HALLOW_PANEL_LOCATIONS: {entry}: {err}"))?;
+            if region.trim() == "*" {
+                panel.default_location = Some(uuid);
+            } else {
+                panel.locations.insert(region.trim().to_owned(), uuid);
+            }
+        }
+    }
+    if let Ok(range) = env::var("HALLOW_NODE_GAME_PORTS") {
+        let parsed = range
+            .split_once('-')
+            .and_then(|(lo, hi)| {
+                Some((
+                    lo.trim().parse::<u16>().ok()?,
+                    hi.trim().parse::<u16>().ok()?,
+                ))
+            })
+            .filter(|(lo, hi)| 1024 <= *lo && lo <= hi && *hi < 40000);
+        panel.game_ports = parsed.ok_or_else(|| {
+            format!("HALLOW_NODE_GAME_PORTS must be LO-HI within 1024-39999, not {range}")
+        })?;
+    }
+    for (var, port) in [
+        ("HALLOW_NODE_WINGS_PORT", &mut panel.wings_port),
+        ("HALLOW_NODE_SFTP_PORT", &mut panel.sftp_port),
+    ] {
+        if let Ok(value) = env::var(var) {
+            *port = value
+                .parse()
+                .map_err(|err| format!("{var} {value}: {err}"))?;
+        }
+    }
+    Ok(Some(panel))
 }

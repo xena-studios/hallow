@@ -132,6 +132,8 @@ async fn migrations_stay_in_the_hallow_schema() {
             "fleet_settings_history",
             "friend_requests",
             "friendships",
+            "node_join_tokens",
+            "nodes",
             "punishments",
             "ranks",
             "sessions",
@@ -780,5 +782,222 @@ async fn signals() {
         .await
         .unwrap();
     assert_eq!(deleted, 1);
+    db.drop().await;
+}
+
+fn new_node<'a>(
+    name: &'a str,
+    labels: &'a std::collections::BTreeMap<String, String>,
+    key: Option<&'a str>,
+) -> hallow_db::NewNode<'a> {
+    hallow_db::NewNode {
+        name,
+        panel_uuid: Uuid::new_v4(),
+        role: "burst",
+        region: "fsn1",
+        labels,
+        private_ip: "10.42.1.7".parse().unwrap(),
+        public_ip: ip("203.0.113.9"),
+        wireguard_public_key: key,
+    }
+}
+
+/// A join token is claimed by one join at a time, used once, and can be
+/// retried after a failed join or a lapsed claim.
+#[tokio::test]
+async fn join_tokens_are_single_use() {
+    use hallow_db::{FinishJoinError, NewJoinToken};
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let now = Utc::now();
+    let lease = Duration::seconds(60);
+    let labels = [("pool".to_owned(), "games".to_owned())].into();
+    let hash = [7u8; 32];
+    let token = hallow_db::add_join_token(
+        &db.pool,
+        &NewJoinToken {
+            id: Uuid::new_v4(),
+            token_hash: &hash,
+            role: "burst",
+            region: "fsn1",
+            name: Some("burst-1"),
+            labels: &labels,
+            expires_at: now + Duration::hours(1),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(token.labels.0, labels);
+
+    // Unknown hashes claim nothing.
+    assert!(
+        hallow_db::claim_join_token(&db.pool, &[8u8; 32], now, lease)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // Two joins race: one wins.
+    let (a, b) = tokio::join!(
+        hallow_db::claim_join_token(&db.pool, &hash, now, lease),
+        hallow_db::claim_join_token(&db.pool, &hash, now, lease),
+    );
+    assert_eq!(
+        [a.unwrap().is_some(), b.unwrap().is_some()]
+            .iter()
+            .filter(|&&won| won)
+            .count(),
+        1
+    );
+    // A failed join gives it back.
+    hallow_db::release_join_token(&db.pool, token.id)
+        .await
+        .unwrap();
+    let claimed = hallow_db::claim_join_token(&db.pool, &hash, now, lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, token.id);
+    // A crashed join's claim lapses.
+    let later = now + Duration::seconds(61);
+    assert!(
+        hallow_db::claim_join_token(&db.pool, &hash, now + Duration::seconds(30), lease)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    hallow_db::claim_join_token(&db.pool, &hash, later, lease)
+        .await
+        .unwrap()
+        .unwrap();
+    // A join that finishes with a lapsed claim records nothing.
+    let node = new_node("burst-1", &labels, Some("key-1"));
+    assert!(matches!(
+        hallow_db::finish_join(&db.pool, token.id, &node, later + Duration::seconds(120)).await,
+        Err(FinishJoinError::LostClaim)
+    ));
+    assert!(hallow_db::list_nodes(&db.pool).await.unwrap().is_empty());
+    // Claim again and finish: the token is used up.
+    let at = later + Duration::seconds(121);
+    hallow_db::claim_join_token(&db.pool, &hash, at, lease)
+        .await
+        .unwrap()
+        .unwrap();
+    let joined = hallow_db::finish_join(&db.pool, token.id, &node, at)
+        .await
+        .unwrap();
+    assert_eq!(joined.name, "burst-1");
+    assert_eq!(joined.join_token_id, Some(token.id));
+    assert!(hallow_db::node_exists(&db.pool, "burst-1").await.unwrap());
+    assert!(
+        hallow_db::claim_join_token(&db.pool, &hash, at + Duration::hours(2), lease)
+            .await
+            .unwrap()
+            .is_none(),
+        "a used token can't be claimed again"
+    );
+    hallow_db::release_join_token(&db.pool, token.id)
+        .await
+        .unwrap();
+    assert!(
+        hallow_db::claim_join_token(&db.pool, &hash, at, lease)
+            .await
+            .unwrap()
+            .is_none(),
+        "releasing doesn't revive a used token"
+    );
+    let nodes = hallow_db::list_nodes(&db.pool).await.unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].private_ip.to_string(), "10.42.1.7");
+    db.drop().await;
+}
+
+/// Expired tokens can't be claimed and are deleted by age; the nodes that
+/// used them stay. A second node with the same key or name is refused.
+#[tokio::test]
+async fn join_tokens_expire() {
+    use hallow_db::{FinishJoinError, NewJoinToken};
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let now = Utc::now();
+    let lease = Duration::seconds(60);
+    let labels = std::collections::BTreeMap::new();
+    let mut ids = Vec::new();
+    for (i, expires) in [Duration::hours(-1), Duration::hours(1), Duration::hours(1)]
+        .into_iter()
+        .enumerate()
+    {
+        let hash = [i as u8; 32];
+        let token = hallow_db::add_join_token(
+            &db.pool,
+            &NewJoinToken {
+                id: Uuid::new_v4(),
+                token_hash: &hash,
+                role: "base",
+                region: "nbg1",
+                name: None,
+                labels: &labels,
+                expires_at: now + expires,
+            },
+        )
+        .await
+        .unwrap();
+        ids.push(token.id);
+    }
+    assert!(
+        hallow_db::claim_join_token(&db.pool, &[0u8; 32], now, lease)
+            .await
+            .unwrap()
+            .is_none(),
+        "expired"
+    );
+    hallow_db::claim_join_token(&db.pool, &[1u8; 32], now, lease)
+        .await
+        .unwrap()
+        .unwrap();
+    hallow_db::finish_join(
+        &db.pool,
+        ids[1],
+        &new_node("base-1", &labels, Some("k")),
+        now,
+    )
+    .await
+    .unwrap();
+    hallow_db::claim_join_token(&db.pool, &[2u8; 32], now, lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        hallow_db::finish_join(
+            &db.pool,
+            ids[2],
+            &new_node("base-2", &labels, Some("k")),
+            now
+        )
+        .await,
+        Err(FinishJoinError::Duplicate)
+    ));
+    // The duplicate rolled back: the token wasn't used.
+    hallow_db::release_join_token(&db.pool, ids[2])
+        .await
+        .unwrap();
+    assert!(
+        hallow_db::claim_join_token(&db.pool, &[2u8; 32], now, lease)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let deleted = hallow_db::delete_join_tokens_before(&db.pool, now + Duration::hours(2))
+        .await
+        .unwrap();
+    assert_eq!(deleted, 3);
+    let nodes = hallow_db::list_nodes(&db.pool).await.unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        nodes[0].join_token_id, None,
+        "the token went, the node stays"
+    );
     db.drop().await;
 }

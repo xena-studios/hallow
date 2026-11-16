@@ -1,7 +1,7 @@
 [package]
 name = "hallow-fleet"
 version = "0.1.0"
-description = "Hallow's fleet manager core: the provider trait, the scaling planner (pure, no I/O) and the dry-run provider wrapper."
+description = "Hallow's fleet manager core: the provider trait, the scaling planner (pure, no I/O), the dry-run provider wrapper and node bootstrap user data."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 hallow-proto = { path = "../proto" }
+base64 = "0.22"
+flate2 = "1.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = { version = "0.10.4", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -16,4 +18,5 @@ thiserror = "2.0.21"
 tracing.workspace = true
 
 [dev-dependencies]
+serde_norway = "0.9"
 tokio.workspace = true
