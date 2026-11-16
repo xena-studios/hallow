@@ -2,7 +2,6 @@
 
 - `server/`: the server base image every hub, lobby and game builds on, published as `ghcr.io/xena-studios/hallow-server-base:<version>` (version in `server/VERSION`). It has:
   - Pumpkin;
-  - the multiversion plugin, off by default;
   - Hallow's server plugin;
   - `hallow-manifest`;
   - Hallow's default `pumpkin.toml`: telemetry and update checks off, Vine forwarding on.

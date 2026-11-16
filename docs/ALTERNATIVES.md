@@ -16,7 +16,7 @@ What else could run a multi-version, multi-proxy minigame network, checked on 20
 
 | Option | Language | Old clients | Multi-proxy | Notes |
 |---|---|---|---|---|
-| **Vine** (ours) | Rust | None yet: Pumpkin's multiversion plugin deadlocked and, fixed, is slow under load | Ours to build | Young; two serious bugs fixed by us; high CPU in a crowded lobby |
+| **Vine** (ours) | Rust | 1.7.2 to 26.2, translated in our fork with the multiversion plugin's translation linked in (bots pass 1.7.10 to 26.1; entity data and block entities still have gaps) | Ours to build | Young; two serious bugs fixed by us; high CPU in a crowded lobby |
 | Velocity 4 | Java 25 | ViaVersion, ViaBackwards and ViaRewind on the proxy: the proven standard, 1.7 to latest | Mature Redis sync plugins | What most networks run |
 | Gate | Go | Passes clients to matching servers; no translation, ViaVersion doesn't run on it | Partial | Very light, built-in Geyser |
 | Infrarust | Rust | No | No | Routing only |
@@ -34,7 +34,7 @@ What else could run a multi-version, multi-proxy minigame network, checked on 20
 
 The gaps are in the proxy, and they become Hallow's contributions to Vine:
 
-1. **Old clients.** Translate on the proxy, the way ViaVersion runs on Velocity: Vine already parses every packet, proxies scale out, and only old clients pay. The multiversion plugin's translation can be linked into Vine as a library. Pumpkin servers then only ever see 26.3, and its plugin path (Pumpkin-MC/Pumpkin#4583) stops mattering for us.
+1. **Old clients.** Translate on the proxy, the way ViaVersion runs on Velocity: Vine already parses every packet, proxies scale out, and only old clients pay. The multiversion plugin's translation is linked into our Vine fork as a library (done 2026-11-16, [Validation](VALIDATION.md#client-versions)). Pumpkin servers only ever see 26.3, and its plugin path (Pumpkin-MC/Pumpkin#4583) stops mattering for us.
 2. **Multiple proxies.** Shared presence, global counts and cross-proxy commands, as planned in [Multi-proxy](MULTI-PROXY.md).
 3. **Proxy CPU.** Profile Vine in a crowded lobby (about 8 cores at 200 players in our test) and fix what we find.
 

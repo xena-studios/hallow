@@ -38,16 +38,9 @@ if [ -f "$manifest" ]; then
   . /tmp/hallow-env.sh
 fi
 
-# The multiversion plugin lets Java clients older than 26.3 join. It's off by
-# default: with it loaded, Pumpkin fires a blocking plugin event for every
-# outgoing packet from the tick, and the server deadlocks at about 50 moving
-# players (see docs/VALIDATION.md). Set HALLOW_MULTIVERSION=1 to load it.
-multiversion="$dir/plugins/pumpkin_java_multiversion.wasm"
-if [ "${HALLOW_MULTIVERSION:-0}" = "1" ]; then
-  cp /opt/hallow/plugins/pumpkin_java_multiversion.wasm "$multiversion"
-else
-  rm -f "$multiversion"
-fi
+# Older Java clients are translated by the proxy (Vine), so servers never load
+# the multiversion plugin; drop one left in a volume by an older image.
+rm -f "$dir/plugins/pumpkin_java_multiversion.wasm"
 
 # Hallow's server plugin links the server to the control plane. It's always
 # loaded and does nothing unless HALLOW_CONTROL_PLANE (or its config.toml) is

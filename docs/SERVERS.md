@@ -146,7 +146,7 @@ Every server kind is versioned by its own repo, independently of the others and 
 
 ## The base image
 
-Hallow's server base image, `ghcr.io/xena-studios/hallow-server-base`, carries Pumpkin, the multiversion plugin (off by default, Decisions 28), Hallow's own server plugin (presence, stats, the link to the control plane) and `hallow-manifest`, so a server repo only holds what's specific to it. Its Dockerfile is [`templates/server`](../templates/server), and its version is in [`templates/server/VERSION`](../templates/server/VERSION):
+Hallow's server base image, `ghcr.io/xena-studios/hallow-server-base`, carries Pumpkin, Hallow's own server plugin (presence, stats, the link to the control plane) and `hallow-manifest`, so a server repo only holds what's specific to it. Its Dockerfile is [`templates/server`](../templates/server), and its version is in [`templates/server/VERSION`](../templates/server/VERSION):
 
 - a `server-base-vX.Y.Z` tag on the monorepo publishes `X.Y.Z` and `X.Y` ([workflow](../.github/workflows/server-base.yml));
 - pushes to main that touch it publish `dev` and `sha-<commit>`.

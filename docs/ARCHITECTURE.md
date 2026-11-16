@@ -46,10 +46,9 @@ flowchart TB
 | Component | Job | Built from | Path |
 |---|---|---|---|
 | Load balancer | Spreads TCP connections over healthy proxies, passes the real IP with PROXY protocol | HAProxy or a DDoS-protection provider | `deploy/` |
-| Vine proxy | Mojang auth, forwarding to backends, server switching | Vine fork | `upstream/Vine` |
+| Vine proxy | Mojang auth, forwarding to backends, server switching, translating Java 1.7 – 26.2 clients to 26.3 | Vine fork, with pumpkin-java-multiversion's translation linked in | `upstream/Vine`, `upstream/pumpkin-java-multiversion` |
 | Hallow Vine plugin | Presence, global player count, duplicate-login check, server-list sync, cross-proxy commands; parties and queues later | Ours, WASM | `crates/vine-plugin` |
-| Server base image | Pumpkin, the multiversion plugin and Hallow's server plugin; every server image builds on it | Pumpkin + ours | `templates/` |
-| Multiversion plugin | Translates Java 1.7 – 26.2 clients to 26.3 on each server | pumpkin-java-multiversion | `upstream/pumpkin-java-multiversion` |
+| Server base image | Pumpkin and Hallow's server plugin; every server image builds on it | Pumpkin + ours | `templates/` |
 | Server repos | One per lobby or game (`hub`, `skywars-lobby`, `skywars`, …): plugin, maps, config, `hallow.toml` | Ours, one repo each | separate repos |
 | SDK | Minigame library (arenas, teams, kits, scoreboards, spectating, stats, optional 1.8 combat) and control-plane client for server repos | Ours, WASM | `crates/hallow-sdk` |
 | Control plane | Server registry, matchmaker, instance orchestration, sessions, proxy sync | Ours, Rust | `crates/control-plane` |
@@ -67,7 +66,7 @@ flowchart TB
 1. The client connects to the load balancer, which picks a healthy Vine proxy.
 2. Vine authenticates with Mojang. The presence plugin asks the control plane whether the player is already online on another proxy and refuses the duplicate.
 3. Vine sends the player to a `hub` instance the control plane picked, with signed (Ed25519) forwarding.
-4. For any client older than 26.3, the multiversion plugin on the lobby translates every packet both ways.
+4. For any client older than 26.3, Vine translates every packet both ways, so the lobby sees a 26.3 client. Switching servers on a client before 1.20.2 is a new join packet and a respawn instead of the configuration phase.
 5. The player moves to a gamemode lobby such as `skywars-lobby` and queues. The queue plugin hands the entry to the control plane.
 6. The matchmaker fills a game: it uses a warm instance or asks Wings to start one from the game's image, registers it with every Vine, then tells the player's proxy to move them.
 7. When the game ends the instance reports results, players go back to the lobby named in its `hallow.toml`, and the instance is deleted. The next match gets a fresh one.

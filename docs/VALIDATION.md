@@ -37,13 +37,41 @@ Each client joins through Vine, then plays 10 minutes: loads chunks, moves, brea
 
 Old clients matter most because the multiversion plugin rewrites packet bodies only for entity spawns. Chunks, chat, join and inventory packets are where it is expected to break first.
 
-**What the run showed:** every old-version failure except 1.8.9's parse error is in Vine, not the plugin. Vine uses one packet id table for every client, enables compression for 1.7, and only re-enters configuration on 1.20.2+. This is the work in #66 (translate old clients in Vine, [Decisions](DECISIONS.md) 29); launch stays 26.3 and Bedrock.
+**What the run showed:** every old-version failure except 1.8.9's parse error is in Vine, not the plugin. Vine uses one packet id table for every client, enables compression for 1.7, and only re-enters configuration on 1.20.2+. This is the work in #66 (translate old clients in Vine, [Decisions](DECISIONS.md) 29); launch stays 26.3 and Bedrock. The 2026-11-16 run above is that work.
+
+**Run 2026-11-16** with Vine `feat/legacy-translation` `59e0eb0` (#66 stage B): Vine translates every client older than 26.3 with pumpkin-java-multiversion's translation linked in (our `feat/library-build`, `787eaae6`, on `f750eeba`). The servers run Pumpkin `bc5f7e7bd` with **no multiversion plugin** (the base image no longer carries it, Decisions 33), so they only ever see 26.3. Same bots, which now also walk while a second bot of the same version watches; `java-1.7.js` switches twice too. Dev network from `deploy/compose` with `compose.hallow.yaml`.
+
+| Client | Join | Chunks | Chat | Inventory | Tab `/ser` | Walk (moved / seen by the watcher) | Switch ×2 | Notes |
+|---|---|---|---|---|---|---|---|---|
+| 1.7.10 | Pass | Pass (990) | Pass | | | not tried | **Pass** | minecraft-protocol: 3 joins, each switch a join packet plus 2 respawns |
+| 1.8.9 | Pass | Pass (1527) | Pass | Pass | Pass (`/server`, answered by Vine) | Pass (6.1 / 5.6 blocks) | **Pass** | Vine confirms teleports for clients before 1.9 |
+| 1.9.4 | Pass | Pass (1876) | Pass | Pass | Pass (`/server`) | Pass (5.9 / 5.9) | **Pass** | |
+| 1.12.2 | Pass | Pass (1914) | Pass | Pass | Pass (`/server`) | Pass (6.1 / 6.1) | **Pass** | |
+| 1.16.5 | Pass | Pass (1914) | Pass | Pass | Pass | Pass (6.1 / 6.1) | **Pass** | Join and respawn switch |
+| 1.18.2 | Pass | Pass (1914) | Pass | Pass | Pass | Pass (6.1 / 6.1) | **Pass** | |
+| 1.20.1 | Pass | Pass (1914) | Pass | Pass | Pass | Pass (6.1 / 6.1) | **Pass** | |
+| 1.20.4 | Pass | Pass (362) | Pass | Pass | Pass | Pass (6.1 / 6.1) | **Pass** | Configuration translated; Vine answers known packs, which 1.20.4 doesn't have |
+| 1.21.4 | Pass | Pass (555) | Pass | Pass | Pass | Pass (6.1 / 6.1) | **Pass** | |
+| 1.21.11 | Pass | Pass (417) | Pass | Pass | Pass | Pass (7.0 / 7.0) | **Pass** | |
+| 26.1 | Pass | Pass (375) | Pass | Pass | Pass | Pass (7.0 / 7.0) | **Pass** | |
+| 26.3 | Pass | Pass | Pass | Pass | Pass | | **Pass** | `netcheck`, not translated |
+
+#66's "done when" holds for 1.8.9 and 1.20.4, and for every other version the bots cover. Chunk counts differ by how fast Pumpkin streams: before 1.20.2 Vine acknowledges chunk batches itself.
+
+**What doesn't work yet** (packets the client has but the translation drops, counted in Vine's debug log during the run):
+
+- **Entity data** (`SET_ENTITY_DATA`) fails to translate often on every version below 26.3 (52 on 26.1, 400 to 900 below 1.21): entities can look wrong (no names, poses or flags).
+- **Block entities** (`BLOCK_ENTITY_DATA`) are dropped before 1.18 (the plugin has no older layout) and partly on 1.18 to 1.20.4: signs, banners and chest contents in the world may not show.
+- **Command tree** (`COMMANDS`) fails on 1.16.5 and 1.18.2, so those clients don't get Pumpkin's commands for tab completion; Vine's own completion still works.
+- **Blocks outside y 0 to 255** are dropped before 1.18, as those clients can't have them.
+- Before 1.13, tab completion only knows Vine's commands: the old request has no id, so Vine answers it rather than forward it.
+- **Not tested by the bots**: combat, building, containers other than the inventory, boss bars, scoreboards and titles across a switch (Vine removes the old tab list and boss bars; scoreboard and titles are left), resource packs (Vine accepts them for clients before 1.20.2 without sending them). Real clients are needed for rendering.
 
 ## Platform
 
 | Test | Pass when | Result |
 |---|---|---|
-| Vine messages on old clients | `/server`, chat and tab completion render on 1.8.9 | **Fail, scoped to #66:** on 1.8.9 to 1.21.11 Vine never sees `/server` or tab completion (wrong packet ids), so its own messages can't show. On 26.1 tab completion lists Vine's `/server` |
+| Vine messages on old clients | `/server`, chat and tab completion render on 1.8.9 | **Pass** (2026-11-16): with Vine translating, 1.7.10 to 26.1 get Vine's `/server` replies and chat; 1.8.9 to 1.12.2 tab-complete `/ser` to `/server`, answered by Vine |
 | Wings create from template | A game instance is up and joinable in under 10 s | **Container floor: 0.35 s** from `docker run` to accepting players, 0.19 s to delete (Hallow server image, M1 Pro, 2026-11-14). Wings' own overhead is measured with the panel in Phase 1 |
 | Wings churn | 200 create and delete cycles on one node with no leaks | **Pass at the container level:** 200 cycles in 99 s, 0 failures, no leftover containers, volumes or disk. Repeat through Wings in Phase 1 |
 | Cold start | Time from the first queue entry after idle to the player in a game, on the floor node | **0.33 to 0.37 s** (3 runs, M1 Pro, 2026-11-14) from starting a stopped game server to a player joined through Vine and switched onto it. The matchmaker's own time is added in Phase 1 |
@@ -100,7 +128,7 @@ With `pumpkin-java-multiversion` loaded, 50 moving players froze the server in 3
 
 When any plugin handles `PacketSentEvent`, Pumpkin's `JavaClient::translate_outgoing` fires it for every outgoing play packet, for 26.3 clients too (as an observation), through `fire_blocking`, which `block_on`s the async runtime. It does so from the tick's worker threads, inside `World::broadcast_java_grouped`, while holding locks the async runtime's threads need (thread samples show them blocked in `EntityTracker::remove_entity` and `broadcast_client_move`). The plugin call can't run and the tick can't finish. It's also N squared plugin calls per tick in a crowded area, which is why the server falls 55 ticks behind first.
 
-Until Pumpkin fixes it, the server base image ships the plugin off (`HALLOW_MULTIVERSION=1` loads it), so the launch version range is 26.3 unless the fix lands; see [Decisions](DECISIONS.md) 28.
+Until Pumpkin fixes it, the server base image shipped the plugin off (`HALLOW_MULTIVERSION=1` loaded it); see [Decisions](DECISIONS.md) 28. Since 2026-11-16 the image doesn't carry it at all: Vine translates old clients instead (Decisions 33).
 
 ### Fixing it
 
@@ -116,7 +144,7 @@ Two separate problems, measured with the plugin loaded, through Vine, same machi
 1. **The freeze.** Our fix moves `PacketSentEvent` from enqueue to the connection's outgoing writer task, which awaits it before framing, so the tick never blocks on a plugin. Branch: [xena-studios/Pumpkin `fix/defer-packet-sent-event`](https://github.com/xena-studios/Pumpkin/tree/fix/defer-packet-sent-event), to be offered upstream after the issue.
 2. **The slowness.** With the freeze gone, every packet to every 26.3 player still goes through the plugin as an observation, one call at a time. Skipping that observation for 26.3 clients brings joins back to normal. That changes what Pumpkin promises packet plugins, so it's proposed upstream as an option a plugin opts into (for example "only clients below the current version"), not done in the fix.
 
-Plan: launch on 26.3. Old clients come back once both land upstream, or, if they don't, by translating in our Vine fork instead of in a server plugin: proxies already read every packet, scale out, and would only pay for old clients. See [Decisions](DECISIONS.md) 29.
+Plan: launch on 26.3. Old clients come back once both land upstream, or, if they don't, by translating in our Vine fork instead of in a server plugin: proxies already read every packet, scale out, and would only pay for old clients. See [Decisions](DECISIONS.md) 29. **Done 2026-11-16**: Vine translates them ([client versions](#client-versions)), so neither fix matters for Hallow any more. Vine's CPU with many old clients (chunk translation is the heavy part) isn't measured yet.
 
 ## Cloud node timing
 
