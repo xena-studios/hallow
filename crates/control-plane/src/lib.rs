@@ -17,15 +17,19 @@ mod error;
 pub mod events;
 mod fleet;
 mod friends;
+pub mod instances;
+mod kinds;
 mod metrics;
 mod nodes;
+pub mod orchestrator;
 pub mod panel;
 mod punish;
+mod remote;
 mod signals;
 mod stats;
 pub mod store;
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use hallow_proto::routes::{HEARTBEAT_SECONDS, LONG_POLL_SECONDS};
 use tokio::net::TcpListener;
@@ -37,6 +41,42 @@ pub enum DuplicateLogin {
     Deny,
     /// Kick the old session and let the new one in.
     KickOld,
+}
+
+/// Which orchestrator runs instances.
+#[derive(Clone, Debug)]
+pub enum OrchestratorChoice {
+    /// The local Docker Engine (dev network).
+    Docker(orchestrator::docker::DockerConfig),
+    /// Calagopus Wings on the nodes that joined; needs the panel and the
+    /// database.
+    Wings,
+}
+
+/// Instance orchestration settings (docs/INSTANCES.md).
+#[derive(Clone, Debug)]
+pub struct InstancesSetup {
+    pub orchestrator: OrchestratorChoice,
+    /// `host:port` instances reach the control plane at.
+    pub control_plane: String,
+    /// Environment for every instance, such as `HALLOW_VINE_SECRET`.
+    pub env: BTreeMap<String, String>,
+    pub settings: instances::Settings,
+    /// Kinds to register at start (`HALLOW_KINDS_FILE`).
+    pub kinds_file: Option<PathBuf>,
+}
+
+impl InstancesSetup {
+    #[must_use]
+    pub fn new(orchestrator: OrchestratorChoice, control_plane: impl Into<String>) -> Self {
+        Self {
+            orchestrator,
+            control_plane: control_plane.into(),
+            env: BTreeMap::new(),
+            settings: instances::Settings::default(),
+            kinds_file: None,
+        }
+    }
 }
 
 /// Settings, read from the environment by the binary.
@@ -66,6 +106,9 @@ pub struct Config {
     pub panel: Option<panel::PanelConfig>,
     /// How long a node join token lasts unless the request says otherwise.
     pub join_token_ttl: Duration,
+    /// Instance orchestration; `None` leaves servers to whoever starts them.
+    /// Needs `database_url` (the kinds registry).
+    pub instances: Option<InstancesSetup>,
     /// A proxy or server that hasn't heartbeated for this long is removed.
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
@@ -89,6 +132,7 @@ impl Config {
             signal_retention_days: 14,
             panel: None,
             join_token_ttl: Duration::from_secs(24 * 3600),
+            instances: None,
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
@@ -104,6 +148,8 @@ pub struct AppState {
     pub db: Option<hallow_db::PgPool>,
     /// The panel's admin API, built from `config.panel`.
     pub panel: Option<Arc<dyn panel::Panel>>,
+    /// The instance lifecycle, when `config.instances` is set.
+    pub instances: Option<Arc<instances::Manager>>,
 }
 
 /// Connects to Redis, starts the event listener and the reaper, and serves the
@@ -138,6 +184,18 @@ pub async fn serve_with_panel(
     config: Config,
     panel: Option<Arc<dyn panel::Panel>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    serve_with(listener, agent, config, panel, None).await
+}
+
+/// [`serve_with_panel`] with a given orchestrator instead of the one
+/// `config.instances` names (which must still be set).
+pub async fn serve_with(
+    listener: TcpListener,
+    agent: Option<TcpListener>,
+    config: Config,
+    panel: Option<Arc<dyn panel::Panel>>,
+    orchestrator: Option<Arc<dyn orchestrator::Orchestrator>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = redis::Client::open(config.redis_url.as_str())?;
     let store = store::Store::new(&client, &config).await?;
     let events = events::Events::listen(client, store.keys().channel());
@@ -156,15 +214,25 @@ pub async fn serve_with_panel(
     if panel.is_none() {
         tracing::warn!("no panel: node joins are off");
     }
+    let instances = match &config.instances {
+        Some(setup) => {
+            Some(start_instances(setup, &config, db.as_ref(), panel.as_ref(), orchestrator).await?)
+        }
+        None => None,
+    };
     let state = Arc::new(AppState {
         config,
         store,
         events,
         db,
         panel,
+        instances,
     });
     tokio::spawn(reaper(state.clone()));
     tokio::spawn(matchmaker(state.clone()));
+    if state.instances.is_some() {
+        tokio::spawn(sweeper(state.clone()));
+    }
     tokio::spawn(signals::retention(state.clone()));
     tokio::spawn(nodes::retention(state.clone()));
     if let Some(agent) = agent {
@@ -174,6 +242,61 @@ pub async fn serve_with_panel(
     tracing::info!(address = %listener.local_addr()?, "control plane listening");
     axum::serve(listener, api::router(state)).await?;
     Ok(())
+}
+
+/// Builds the instance lifecycle and registers the kinds file's kinds.
+async fn start_instances(
+    setup: &InstancesSetup,
+    config: &Config,
+    db: Option<&hallow_db::PgPool>,
+    panel: Option<&Arc<dyn panel::Panel>>,
+    given: Option<Arc<dyn orchestrator::Orchestrator>>,
+) -> Result<Arc<instances::Manager>, Box<dyn std::error::Error>> {
+    let db =
+        db.ok_or("instances need the database (HALLOW_DATABASE_URL) for the kinds registry")?;
+    let mut wings = None;
+    let orchestrator: Arc<dyn orchestrator::Orchestrator> = match (given, &setup.orchestrator) {
+        (Some(given), _) => given,
+        (None, OrchestratorChoice::Docker(docker)) => Arc::new(
+            orchestrator::docker::DockerOrchestrator::new(docker.clone()),
+        ),
+        (None, OrchestratorChoice::Wings) => {
+            let panel = panel.ok_or("Wings instances need the panel (HALLOW_PANEL_URL)")?;
+            let panel_config = config
+                .panel
+                .as_ref()
+                .ok_or("Wings instances need the panel")?;
+            let built = Arc::new(orchestrator::wings::WingsOrchestrator::new(
+                db.clone(),
+                panel.clone(),
+                orchestrator::wings::WingsConfig {
+                    wings_port: panel_config.wings_port,
+                    game_ports: panel_config.game_ports,
+                    owner: config.key_prefix.clone(),
+                },
+            )?);
+            wings = Some(built.clone());
+            built
+        }
+    };
+    if let Some(path) = &setup.kinds_file {
+        for (name, spec) in instances::read_kinds_file(path)? {
+            hallow_db::put_kind(db, &name, &spec).await?;
+            tracing::info!(kind = %name, image = %spec.image, "kind registered from the kinds file");
+        }
+    }
+    tracing::info!(orchestrator = orchestrator.name(), "instances on");
+    Ok(Arc::new(instances::Manager::new(
+        orchestrator,
+        wings,
+        db.clone(),
+        instances::InstancesConfig {
+            settings: setup.settings,
+            control_plane: setup.control_plane.clone(),
+            token: config.token.clone(),
+            env: setup.env.clone(),
+        },
+    )))
 }
 
 /// Removes proxies and servers whose heartbeats stopped. Every instance runs
@@ -203,15 +326,40 @@ async fn reaper(state: Arc<AppState>) {
     }
 }
 
-/// Places queued players every half second. Every instance runs one; a lock
-/// in Redis lets only one pass run at a time.
+/// Plans instances and places queued players every half second. Every
+/// instance runs one; a lock in Redis lets only one pass run at a time.
 async fn matchmaker(state: Arc<AppState>) {
     let instance = uuid::Uuid::new_v4().to_string();
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tick.tick().await;
-        match state.store.match_pass(&instance).await {
+        match state.store.lock_matchmaker(&instance).await {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(err) => {
+                tracing::warn!(%err, "matchmaker couldn't reach Redis");
+                continue;
+            }
+        }
+        let work = match &state.instances {
+            Some(manager) => match manager.plan(&state.store).await {
+                Ok(work) => work,
+                Err(err) => {
+                    tracing::warn!(%err, "couldn't plan instances");
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        };
+        let placed = state.store.place_all().await;
+        if let Err(err) = state.store.unlock_matchmaker(&instance).await {
+            tracing::warn!(%err, "matchmaker couldn't unlock");
+        }
+        if let Some(manager) = &state.instances {
+            manager.run(&state, work);
+        }
+        match placed {
             Ok(placements) => {
                 for placed in placements {
                     tracing::info!(
@@ -223,6 +371,21 @@ async fn matchmaker(state: Arc<AppState>) {
                 }
             }
             Err(err) => tracing::warn!(%err, "matchmaker couldn't reach Redis"),
+        }
+    }
+}
+
+/// Every 30 s, deletes instances the orchestrator runs that have no record.
+async fn sweeper(state: Arc<AppState>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let Some(manager) = &state.instances else {
+            return;
+        };
+        if let Err(err) = manager.sweep(&state.store).await {
+            tracing::warn!(%err, "sweep couldn't reach Redis");
         }
     }
 }

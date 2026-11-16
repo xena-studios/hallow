@@ -344,7 +344,10 @@ async fn join_claimed(
             .add_allocations(panel_uuid, checked.private_ip, &ports)
             .await?;
         let enrollment = panel
-            .create_enrollment(panel_uuid, Some(&config.public_url))
+            .create_enrollment(
+                panel_uuid,
+                Some(config.wings_remote.as_deref().unwrap_or(&config.public_url)),
+            )
             .await?;
         let node = hallow_db::finish_join(
             db,

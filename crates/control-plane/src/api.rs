@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, fleet, friends, nodes, punish, signals, stats,
+    events, fleet, friends, kinds, nodes, punish, signals, stats,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -126,12 +126,24 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::FLEET_SETTINGS_HISTORY, get(fleet_settings_history))
         .route(routes::NODES, get(list_nodes))
         .route(routes::NODE_JOIN_TOKENS, post(issue_join_token))
+        .route(routes::KINDS, get(kinds::list))
+        .route(
+            &routes::kind("{name}"),
+            get(kinds::get).put(kinds::put).delete(kinds::delete),
+        )
+        .route(routes::INSTANCES, get(kinds::instances))
+        .route(
+            &routes::instance("{name}"),
+            axum::routing::delete(kinds::end_instance),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))
         // Authorized by the node's one-time join token, not the shared token.
         .route(routes::NODE_JOIN, post(node_join))
+        // Wings' calls to its remote, authorized by node credentials.
+        .merge(crate::remote::router())
         .merge(api)
         .fallback(|| async { Failure::not_found("no such endpoint") })
         .with_state(state)
@@ -156,7 +168,7 @@ async fn authorize(State(state): Shared, request: Request, next: Next) -> Respon
     next.run(request).await
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
@@ -632,7 +644,11 @@ async fn party_of(State(state): Shared, Path(uuid): Path<String>) -> Reply<Body<
 /// A refusal (`409`) carries a message for the player.
 async fn join_queue(State(state): Shared, Body(req): Body<JoinQueue>) -> Reply<Body<QueueStatus>> {
     check_name("game kind", &req.kind)?;
-    match state.store.join_queue(req).await? {
+    let startable = state
+        .instances
+        .as_ref()
+        .is_some_and(|m| m.is_game_kind(&req.kind));
+    match state.store.join_queue(req, startable).await? {
         Ok(status) => Ok(Body(status)),
         Err(message) => Err(Failure::new(ErrorCode::Conflict, message)),
     }

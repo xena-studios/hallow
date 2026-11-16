@@ -11,14 +11,16 @@
 //! first and puts every entry that fits on a ready game server of its kind:
 //! the fullest server with room for all of it, so games fill and start. An
 //! entry that fits nowhere waits; smaller ones behind it can still go.
-//! Starting new servers when none has room comes with orchestration.
+//! Servers whose instance is ending are skipped. Starting new instances when
+//! none has room is the instance lifecycle's job (`crate::instances`), which
+//! plans under the same lock just before each pass.
 
 use hallow_proto::{
     command::ProxyCommand,
     queue::{JoinQueue, QueueStatus},
     server::{ServerRole, ServerState},
 };
-use redis::AsyncCommands;
+use redis::{AsyncCommands, Script};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -26,6 +28,12 @@ use super::{Keys, Result, Store, now_ms};
 
 /// How long one instance may hold the matchmaker lock.
 const LOCK_MS: u64 = 2000;
+
+/// Deletes lock `KEYS[1]` if it holds `ARGV[1]`.
+const UNLOCK: &str = r"
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+";
 
 impl Keys {
     fn queue(&self, kind: &str) -> String {
@@ -60,19 +68,22 @@ pub struct Placement {
 
 impl Store {
     /// Queues a player, or the party they lead. `Err` carries a message for
-    /// the player.
+    /// the player. `startable` says the control plane can start instances
+    /// of the kind, so it needn't have a server now.
     pub async fn join_queue(
         &self,
         req: JoinQueue,
+        startable: bool,
     ) -> Result<std::result::Result<QueueStatus, String>> {
         if self.player(&req.player).await?.is_none() {
             return Ok(Err("You aren't online.".into()));
         }
         let (servers_rev, servers) = self.read_servers().await?;
         let _ = servers_rev;
-        if !servers
-            .iter()
-            .any(|s| s.kind == req.kind && s.role == ServerRole::Game)
+        if !startable
+            && !servers
+                .iter()
+                .any(|s| s.kind == req.kind && s.role == ServerRole::Game)
         {
             return Ok(Err(format!("There are no {} games right now.", req.kind)));
         }
@@ -195,7 +206,18 @@ impl Store {
     /// One matchmaker pass over every queue. Only one instance runs a pass
     /// at a time; the others return at once.
     pub async fn match_pass(&self, instance: &str) -> Result<Vec<Placement>> {
-        let locked: bool = redis::cmd("SET")
+        if !self.lock_matchmaker(instance).await? {
+            return Ok(Vec::new());
+        }
+        let placements = self.place_all().await;
+        self.unlock_matchmaker(instance).await?;
+        placements
+    }
+
+    /// Takes the matchmaker lock for `instance` for up to [`LOCK_MS`].
+    /// Returns false if another instance holds it.
+    pub async fn lock_matchmaker(&self, instance: &str) -> Result<bool> {
+        Ok(redis::cmd("SET")
             .arg(self.keys.matchmaker_lock())
             .arg(instance)
             .arg("NX")
@@ -203,22 +225,45 @@ impl Store {
             .arg(LOCK_MS)
             .query_async::<Option<String>>(&mut self.conn())
             .await?
-            .is_some();
-        if !locked {
-            return Ok(Vec::new());
-        }
-        let placements = self.place_all().await;
-        let _: () = self.conn().del(self.keys.matchmaker_lock()).await?;
-        placements
+            .is_some())
     }
 
-    async fn place_all(&self) -> Result<Vec<Placement>> {
+    /// Gives the lock back, if `instance` still holds it.
+    pub async fn unlock_matchmaker(&self, instance: &str) -> Result<()> {
+        let _: i64 = Script::new(UNLOCK)
+            .key(self.keys.matchmaker_lock())
+            .arg(instance)
+            .invoke_async(&mut self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// Every queue's entries' members, oldest first.
+    pub(super) async fn queue_entries(&self) -> Result<Vec<(String, Vec<Vec<Uuid>>)>> {
+        let mut kinds: Vec<String> = self.conn().smembers(self.keys.queue_kinds()).await?;
+        kinds.sort();
+        let mut all = Vec::with_capacity(kinds.len());
+        for kind in kinds {
+            let raw: Vec<String> = self.conn().lrange(self.keys.queue(&kind), 0, -1).await?;
+            let entries = raw
+                .iter()
+                .map(|raw| serde_json::from_str::<Entry>(raw).map(|e| e.members))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            all.push((kind, entries));
+        }
+        Ok(all)
+    }
+
+    /// Places what it can. The caller holds the matchmaker lock.
+    pub async fn place_all(&self) -> Result<Vec<Placement>> {
         let mut placements = Vec::new();
         let kinds: Vec<String> = self.conn().smembers(self.keys.queue_kinds()).await?;
         if kinds.is_empty() {
             return Ok(placements);
         }
+        let closed = self.closed_instances().await?;
         let (_, mut servers) = self.read_servers().await?;
+        servers.retain(|s| !closed.contains(&s.name));
         for kind in kinds {
             let raw: Vec<String> = self.conn().lrange(self.keys.queue(&kind), 0, -1).await?;
             if raw.is_empty() {
