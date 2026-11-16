@@ -41,7 +41,7 @@ use crate::{
     AppState, accounts,
     auth::Caller,
     error::Failure,
-    events, fleet, friends, kinds, nodes, punish, ranks, signals, stats,
+    events, fleet, friends, kinds, lobbies, nodes, punish, ranks, signals, stats,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -139,6 +139,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::RANK_GRANTS_REVOKE, post(revoke_rank))
         .route(routes::QUEUES, post(join_queue))
         .route("/v1/queues/{uuid}", axum::routing::delete(leave_queue))
+        .route(routes::LOBBIES, get(lobbies::overview))
+        .route(routes::LOBBIES_SEND, post(lobbies::send))
         .route("/v1/parties/{uuid}", get(party_of))
         .route(
             routes::FLEET_SETTINGS,

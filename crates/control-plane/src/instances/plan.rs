@@ -20,8 +20,9 @@
 //! instances on their way up); entries that still don't fit need new
 //! instances, packed `players.max` to an instance. On top of that, `warm`
 //! unused instances are kept while anyone is online. Unused instances beyond
-//! that are ended after [`Settings::idle_ms`]. Lobbies and hubs keep `warm`
-//! instances. Nothing goes past `max_instances`.
+//! that are ended after [`Settings::idle_ms`]. Lobbies and hubs keep at
+//! least `warm` instances, and more when their players fill them past
+//! [`LOBBY_FILL_PERCENT`] on average. Nothing goes past `max_instances`.
 //!
 //! New instances go on the node with the fewest instances (then by name),
 //! on its lowest free game port if it has a port range.
@@ -354,15 +355,23 @@ fn game_demand(
     (wanted, surplus)
 }
 
-/// Lobbies and hubs: `warm` instances, the empty ones beyond that ended
-/// after the idle time.
+/// Lobbies and hubs: at least `warm` instances, and enough that their
+/// players fill them to no more than [`LOBBY_FILL_PERCENT`], so a busy
+/// lobby gets a new instance before it is full. Empty ones beyond that are
+/// ended after the idle time.
 fn lobby_demand(
     world: &World<'_>,
     spec: &KindSpec,
     live: &[&InstanceInfo],
     servers: &BTreeMap<&str, &ServerInfo>,
 ) -> (u32, Vec<String>) {
-    let target = spec.scaling.warm;
+    let players: u32 = live
+        .iter()
+        .filter_map(|i| servers.get(i.name.as_str()))
+        .map(|s| s.players)
+        .sum();
+    let fill = (spec.players.max.max(1) * LOBBY_FILL_PERCENT / 100).max(1);
+    let target = spec.scaling.warm.max(players.div_ceil(fill));
     let count = live.len() as u32;
     if count < target {
         return (target - count, Vec::new());
@@ -384,6 +393,10 @@ fn lobby_demand(
         .collect();
     (0, surplus)
 }
+
+/// How full a lobby kind's instances get, on average, before another
+/// starts.
+pub const LOBBY_FILL_PERCENT: u32 = 80;
 
 /// The least loaded node with a free port (if it has a range).
 fn pick_node<'a>(
@@ -810,6 +823,31 @@ mod tests {
         case.instances[1].had_players = true;
         case.servers.truncate(2);
         assert_eq!(case.plan(), []);
+    }
+
+    #[test]
+    fn busy_lobbies_scale_on_players() {
+        let mut spec = game(1, 10, Some(3));
+        spec.role = KindRole::Lobby;
+        let mut case = Case::new(spec);
+        case.instances = vec![instance("tg-a", InstanceState::Ready, 0)];
+        // 8 of 10 is the most an instance fills to on average.
+        case.servers = vec![server("tg-a", 8, ServerState::Ready)];
+        assert_eq!(creates(&case.plan()), 0);
+        case.servers[0].players = 9;
+        assert_eq!(creates(&case.plan()), 1);
+        case.instances
+            .push(instance("tg-b", InstanceState::Starting, NOW));
+        assert_eq!(case.plan(), []);
+        // Never past max_instances.
+        case.servers[0].players = 40;
+        assert_eq!(creates(&case.plan()), 1);
+        // Quiet again: the empty spare goes after the idle time.
+        case.instances[1].state = InstanceState::Ready;
+        case.instances[1].state_since_ms = 0;
+        case.servers[0].players = 5;
+        case.servers.push(server("tg-b", 0, ServerState::Ready));
+        assert_eq!(ends(&case.plan()), [("tg-b", "not needed")]);
     }
 
     #[test]

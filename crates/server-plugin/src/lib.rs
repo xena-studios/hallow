@@ -16,6 +16,9 @@
 //! - **Signals.** Every 30 s, `POST /v1/signals` with each player's movement
 //!   and combat numbers for the window, for the anticheat to learn from
 //!   (see [`signals`]). Nothing acts on them yet.
+//! - **Lobbies.** Gives the hub's plugin the game modes and sends players
+//!   to lobbies for it, and when a game ends (the state turns `draining`)
+//!   sends everyone to the lobby `hallow.toml` names (see [`lobbies`]).
 //! - **Unregister.** `DELETE /v1/servers/{name}` when the plugin unloads,
 //!   which Pumpkin does on shutdown after kicking players.
 //!
@@ -40,6 +43,7 @@
 mod collect;
 mod config;
 mod http;
+pub mod lobbies;
 mod players;
 mod presence;
 mod signals;
@@ -130,6 +134,23 @@ enum Call {
 /// Runs once a second, off the tick.
 fn tick(server: &Server) {
     heartbeat(server);
+    if let Some((client, role, kind, return_lobby)) = with_link(|link| {
+        (
+            link.client.clone(),
+            link.config.role,
+            link.config.kind.clone(),
+            link.config.return_lobby.clone(),
+        )
+    }) {
+        lobbies::tick(
+            server,
+            &client,
+            role,
+            &kind,
+            return_lobby.as_deref(),
+            state::get(),
+        );
+    }
     send_signals(server);
     send_stats();
 }
@@ -517,10 +538,15 @@ impl Plugin for HallowServer {
         _sender: wit::PluginId,
         message: wit::IpcMessage,
     ) -> Result<wit::IpcMessage, String> {
-        if let Ok(text) = std::str::from_utf8(&message)
-            && let Some(reply) = players::handle_ipc(text.trim())
-        {
-            return reply;
+        if let Ok(text) = std::str::from_utf8(&message) {
+            let text = text.trim();
+            let client = with_link(|link| link.client.clone());
+            if let Some(reply) = lobbies::handle_ipc(text, client) {
+                return reply;
+            }
+            if let Some(reply) = players::handle_ipc(text) {
+                return reply;
+            }
         }
         state::handle_ipc(&message)
     }

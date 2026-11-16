@@ -1,14 +1,16 @@
-# Dynamic game instances for the two-proxy dev network: an override for
+# Dynamic instances for the two-proxy dev network: an override for
 # compose.yaml + compose.hallow.yaml. The control plane starts and deletes
-# test-game containers itself through the local Docker Engine
-# (HALLOW_ORCHESTRATOR=docker), the way it does through Wings on real nodes
-# (docs/INSTANCES.md). game-1 is built but not started; the hub (lobby) stays
-# a static compose service, the network's floor.
+# test-game and test-game-lobby containers itself through the local Docker
+# Engine (HALLOW_ORCHESTRATOR=docker), the way it does through Wings on real
+# nodes (docs/INSTANCES.md): a warm test-game-lobby, games as players queue.
+# game-1 is built but not started; the hub (lobby) stays a static compose
+# service, the network's floor. Test games end after TEST_GAME_MATCH_SECS
+# and send their players back to test-game-lobby.
 #
 # DEV ONLY: the control plane gets the Docker socket and runs as root to use
 # it, which is root on the host.
 #
-#   cargo build --release --target wasm32-wasip2 -p hallow-vine -p hallow-server
+#   servers/build-plugins.sh
 #   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml \
 #     -f deploy/compose/compose.instances.yaml up --build -d
 #
@@ -35,7 +37,9 @@ services:
       HALLOW_ORCHESTRATOR: docker
       HALLOW_DOCKER_NETWORK: ${HALLOW_DOCKER_NETWORK:-hallow-dev}
       HALLOW_INSTANCE_CONTROL_PLANE: control-plane:8080
-      HALLOW_INSTANCE_ENV: HALLOW_VINE_SECRET=${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
+      # TEST_GAME_MATCH_SECS: how long a test-game match lasts before it ends
+      # and sends its players back to test-game-lobby.
+      HALLOW_INSTANCE_ENV: HALLOW_VINE_SECRET=${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production},TEST_GAME_MATCH_SECS=${TEST_GAME_MATCH_SECS:-30}
       HALLOW_KINDS_FILE: /etc/hallow/kinds/kinds.toml
       # Expanded in kinds.toml's images.
       HALLOW_IMAGE_TAG: ${HALLOW_IMAGE_TAG:-dev}
@@ -46,9 +50,18 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config/hallow/kinds.toml:/etc/hallow/kinds/kinds.toml:ro
       - ../../servers/test-game/hallow.toml:/etc/hallow/kinds/test-game/hallow.toml:ro
+      - ../../servers/test-game-lobby/hallow.toml:/etc/hallow/kinds/test-game-lobby/hallow.toml:ro
 
   # Built for the control plane to run, never started by compose.
   game-1:
+    scale: 0
+
+  test-game-lobby:
+    build:
+      context: ../../servers/test-game-lobby
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.1: service:server-base
+    image: hallow-test-game-lobby:${HALLOW_IMAGE_TAG:-dev}
     scale: 0
 
   proxy:

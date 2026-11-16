@@ -87,10 +87,15 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - Every half second, one instance (under a Redis lock) puts each entry, oldest first, on the fullest ready game server of its kind with room for all of it.
   - A member going offline takes the party out of the queue.
   - Before each pass, under the same lock, the instance lifecycle starts instances when a queue needs them and keeps warm ones (see below).
+- **Hubs and lobbies** ([Servers](../../docs/SERVERS.md#hubs-and-lobbies)):
+  - `GET /v1/lobbies` lists the game modes (lobby kinds) with each one's players, in its lobbies and its games, and ready lobby instances, plus the network's player count, for the hub's game menu;
+  - `POST /v1/lobbies/send` moves a player to the least full ready instance of a mode's lobby (by mode name, lobby kind, or a game kind's `lobby`), or to a hub; `/lobby`, `/hub`, the game menu and a finished game all use it. With `fallback_hub`, an unknown mode or a full one sends the player to a hub instead of refusing;
+  - logins pick the emptiest ready hub, skipping instances that are ending.
 - **Instances** ([Instances](../../docs/INSTANCES.md)), with `HALLOW_ORCHESTRATOR=docker` or `wings` and the database:
   - `PUT /v1/kinds/{name}` registers a server kind (live image, role, players, scaling); `GET /v1/kinds` lists them, `DELETE` removes one. A kinds file (`HALLOW_KINDS_FILE`) registers kinds at start from their `hallow.toml`;
   - `GET /v1/instances` lists every instance with its lifecycle state (`creating`, `starting`, `ready`, `ending`, `deleting`, `failed`); `DELETE /v1/instances/{name}` ends one;
-  - a pure planner keeps `warm` unused instances while players are online, starts instances for queue entries that fit nowhere (up to `max_instances`), and deletes a game once it reports `draining` empty or has been empty for `HALLOW_INSTANCE_EMPTY_SECS` after having players;
+  - a pure planner keeps `warm` unused instances while players are online, starts instances for queue entries that fit nowhere (up to `max_instances`), and deletes a game once it reports `draining` empty or has been empty for `HALLOW_INSTANCE_EMPTY_SECS` after having players. Lobby and hub kinds keep at least `warm` instances and add one when their players fill them past 80 % on average;
+  - an instance that ends with players on it (staff ended it, a timeout) first sends them to its kind's `lobby` (or a hub) and waits up to 5 s for them to leave;
   - instances run through an orchestrator: Wings on joined nodes (the control plane answers Wings' panel remote API for its instances and passes the rest through to the panel), the local Docker Engine on the dev network, or a mock in tests.
 
 ## Running
@@ -114,6 +119,6 @@ The tests in `tests/network.rs` start two instances against one Redis and drive 
 HALLOW_TEST_REDIS_URL=redis://127.0.0.1:6379 cargo test -p hallow-control-plane
 ```
 
-`tests/nodes.rs` also needs `HALLOW_TEST_DATABASE_URL`. It runs node joins against a mock of the panel's admin API. So does `tests/instances.rs`, which drives the instance lifecycle with the mock orchestrator and plays each instance's server: a queue starts a fresh instance, the player is sent there, the emptied game is deleted; warm pools, `max_instances`, failed creates and staff endings.
+`tests/nodes.rs` also needs `HALLOW_TEST_DATABASE_URL`. It runs node joins against a mock of the panel's admin API. So does `tests/instances.rs`, which drives the instance lifecycle with the mock orchestrator and plays each instance's server: a queue starts a fresh instance, the player is sent there, the emptied game is deleted; warm pools, `max_instances`, failed creates and staff endings. `tests/lobbies.rs` does the same for hubs and lobbies: a warm lobby instance, the mode list, sending players by mode name and back to the hub, refusals, and an ending game sending its players to its lobby before it stops.
 
 Without the variable they skip, except in CI, which provides Valkey.

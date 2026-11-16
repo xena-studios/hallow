@@ -45,6 +45,6 @@ allowed_permissions = [
   "sys.env.HALLOW_SERVER_ROLE",
   "sys.env.HALLOW_SERVER_ADDRESS",
   "sys.env.HALLOW_MAX_PLAYERS",
-  # From hallow.toml's lobby; not read by the plugin yet.
+  # From hallow.toml's lobby: where players go when the game ends.
   "sys.env.HALLOW_RETURN_LOBBY",
 ]

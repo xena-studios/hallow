@@ -9,6 +9,7 @@
 - **Presence.** Within a second or two of a player joining or leaving, it reports who joined and left to `POST /v1/servers/{name}/players` (see [Presence](#presence)).
 - **Stats.** Every 30 s it sends each player's increases for this server's kind to `POST /v1/stats` (see [Stats](#stats)).
 - **Signals.** Every 30 s it sends each player's movement and combat numbers to `POST /v1/signals`, for the anticheat (see [Anticheat signals](#anticheat-signals)).
+- **Lobbies.** It gives the hub's plugin the game modes and moves players to lobbies for it, and when a game ends it sends everyone to the lobby `hallow.toml` names (see [Lobbies and the way back](#lobbies-and-the-way-back)).
 - **Unregister.** On unload, which Pumpkin does on shutdown after kicking players, it sends `DELETE /v1/servers/{name}`. If that fails, the control plane drops the server after 15 s without heartbeats.
 
 ## Server state
@@ -26,6 +27,18 @@ send_ipc_message("hallow_server", b"in_game")??;
 ```
 
 The Hallow SDK will wrap this. Within this crate, the seam is `state::set` in [`src/state.rs`](src/state.rs).
+
+## Lobbies and the way back
+
+- **Game over.** While the state is `draining`, everyone still on the server is sent on through `POST /v1/lobbies/send` with `fallback_hub`, again every 5 s until they've gone: a game's players to `HALLOW_RETURN_LOBBY` (from `hallow.toml`'s `lobby`; a hub if unset), a lobby's to another lobby of its own kind. The control plane ends a game instance once it is draining and empty, so players are moved before it is deleted. A game plugin ends its game by sending `draining`.
+- **For the hub's plugin**, over IPC:
+
+| Message | Reply |
+|---|---|
+| `lobbies` | The game modes as `LobbyOverview` JSON (`GET /v1/lobbies`: each mode's players and ready lobbies, and the network's player count), or an error until the first list arrives. The first ask starts fetching every 5 s, for as long as asks keep coming within a minute |
+| `send <uuid> [mode]` | `ok`; the control plane tells the player where they're going and moves them. A refusal ("No skywars lobby has room right now") is shown to the player in chat |
+
+The list is fetched with a GET whose small body is read once its head has arrived, so it doesn't wait on the network in practice.
 
 ## Presence
 
@@ -125,6 +138,7 @@ Environment variables come first. Any setting a variable leaves unset comes from
 | `HALLOW_SERVER_ROLE` | `role` | `game` (or `lobby`) |
 | `HALLOW_SERVER_ADDRESS` | `address` | `<name>:25565` |
 | `HALLOW_MAX_PLAYERS` | `max_players` | `100` |
+| `HALLOW_RETURN_LOBBY` | `return_lobby` | none: a hub |
 
 Lobbies that new players should land on need the kind the control plane uses for hubs (`HALLOW_HUB_KIND`, `hub` by default). The two-proxy dev network ([`deploy/compose/compose.hallow.yaml`](../../deploy/compose/compose.hallow.yaml)) configures `lobby` and `game-1` through `config.toml` files in `deploy/compose/config/hallow/`.
 
@@ -134,4 +148,4 @@ Lobbies that new players should land on need the kind the control plane uses for
 cargo test -p hallow-server
 ```
 
-They cover the config (environment, file, overrides and errors), the IPC state and stat messages, joins and leaves coalescing, stat counting (play time carry, joins, caps, retries), and the signal windows and metrics.
+They cover the config (environment, file, overrides and errors), the IPC state, stat and lobby messages, where a draining server sends its players, joins and leaves coalescing, stat counting (play time carry, joins, caps, retries), and the signal windows and metrics.

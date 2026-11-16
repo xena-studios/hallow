@@ -1,0 +1,25 @@
+# test-game's lobby: where players pick test-game from the hub's game menu
+# (or /lobby test-game) and queue with /play test-game, and where they
+# return when a match ends. The control plane runs it as instances: always
+# `warm`, more as it fills. See docs/SERVERS.md#hallowtoml.
+name = "test-game-lobby"
+role = "lobby"
+lobby = "hub"                # /hub, and where a draining lobby's players go if no other is up
+queues = ["test-game"]
+base = "^0.1"
+
+[players]
+max = 50                     # per instance
+
+[scaling]
+warm = 1                     # one lobby is always ready
+max_instances = 4
+
+[pumpkin]
+default_gamemode = "Adventure"
+default_difficulty = "Peaceful"
+allow_nether = false
+allow_end = false
+
+[pumpkin.pvp]
+enabled = false

@@ -11,7 +11,7 @@
 
 ```sh
 git submodule update --init
-cargo build --release --target wasm32-wasip2 -p hallow-vine -p hallow-server   # build the plugins first
+servers/build-plugins.sh   # build the plugins first
 docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml up --build -d
 cargo run --release -p netcheck -- --proxy 127.0.0.1:25565    # proxy-1
 cargo run --release -p netcheck -- --proxy 127.0.0.1:25566    # proxy-2

@@ -1,0 +1,15 @@
+[package]
+name = "hallow-test-game"
+version = "0.1.0"
+description = "The dev network's test game: a short timed match that ends and sends its players back to their lobby."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pumpkin-plugin-api.workspace = true
+tracing.workspace = true

@@ -1,8 +1,10 @@
-# A test game for the dev network: no plugin yet, just an empty Pumpkin world
-# that registers as a game. Players return to the hub when a match ends.
+# A test game for the dev network: an empty Pumpkin world that registers as
+# a game, with a plugin (plugin/, built into plugins/) that runs a timed
+# match when TEST_GAME_MATCH_SECS is set. Players return to test-game-lobby
+# when a match ends.
 name = "test-game"
 role = "game"
-lobby = "hub"
+lobby = "test-game-lobby"
 base = "^0.1"
 
 [players]
@@ -12,3 +14,7 @@ max = 16                     # one match per instance
 [scaling]
 warm = 1                     # idle instances kept ready while players are online
 max_instances = 20
+
+[[plugins]]
+file = "plugins/hallow_test_game.wasm"
+permissions = ["sys.env.TEST_GAME_MATCH_SECS"]

@@ -16,6 +16,7 @@ pub mod command;
 pub mod fleet;
 pub mod friend;
 pub mod instance;
+pub mod lobby;
 pub mod node;
 pub mod party;
 pub mod permission;

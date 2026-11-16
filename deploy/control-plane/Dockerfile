@@ -9,6 +9,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY upstream/Pumpkin upstream/Pumpkin
+# The in-tree servers' plugins are workspace members too.
+COPY servers/hub/plugin servers/hub/plugin
+COPY servers/test-game/plugin servers/test-game/plugin
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-control-plane-target,target=/src/target,sharing=locked \
     cargo build --release --locked -p hallow-control-plane --bin control-plane \

@@ -44,6 +44,8 @@
 //! | `GET` | [`stats_of`] | | [`PlayerStats`](crate::stats::PlayerStats) or `404`; by UUID or username |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
+//! | `GET` | [`LOBBIES`] | | [`LobbyOverview`](crate::lobby::LobbyOverview) |
+//! | `POST` | [`LOBBIES_SEND`] | [`SendToLobby`](crate::lobby::SendToLobby) | [`LobbySent`](crate::lobby::LobbySent); `404` for an unknown mode or a player who isn't online, `409` with a message for the player if no lobby has room or they're already there |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
 //! | `GET` | [`FLEET_SETTINGS`] | | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord); the defaults if never changed |
 //! | `PUT` | [`FLEET_SETTINGS`] | [`UpdateFleetSettings`](crate::fleet::UpdateFleetSettings) | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord), or `400` with [`ApiError::fields`](crate::ApiError::fields) |
@@ -81,6 +83,8 @@ pub const PRESENCE_SWITCH: &str = "/v1/presence/switch";
 pub const PRESENCE_LEAVE: &str = "/v1/presence/leave";
 pub const PRESENCE_COUNT: &str = "/v1/presence/count";
 pub const QUEUES: &str = "/v1/queues";
+pub const LOBBIES: &str = "/v1/lobbies";
+pub const LOBBIES_SEND: &str = "/v1/lobbies/send";
 pub const COMMANDS: &str = "/v1/commands";
 pub const PLAYERS: &str = "/v1/players";
 pub const PARTIES: &str = "/v1/parties";
