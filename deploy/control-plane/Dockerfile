@@ -2,7 +2,7 @@
 #   docker build -f deploy/control-plane/Dockerfile -t hallow-control-plane .
 # Settings are environment variables; see crates/control-plane/src/main.rs.
 
-FROM rust:1.98-trixie AS build
+FROM rust:1.100-trixie AS build
 WORKDIR /src
 # The workspace manifest names path dependencies in upstream/Pumpkin, so cargo
 # needs it to resolve the workspace even though the control plane doesn't use it.

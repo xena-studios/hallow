@@ -25,7 +25,7 @@ x-hallow-proxy: &hallow-proxy
 
 services:
   valkey:
-    image: valkey/valkey:9.1-alpine
+    image: valkey/valkey:9.2-alpine
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]

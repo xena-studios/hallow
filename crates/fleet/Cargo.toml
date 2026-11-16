@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 hallow-proto = { path = "../proto" }
-base64 = "0.22"
+base64 = "0.23"
 flate2 = "1.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = { version = "0.10.4", features = ["serde"] }

@@ -50,7 +50,7 @@ fn role_from(text: &str) -> NodeRole {
 /// A new random token: the prefix and 32 random bytes in hex.
 fn new_token() -> Reply<String> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|err| {
+    getrandom::fill(&mut bytes).map_err(|err| {
         tracing::error!(%err, "no randomness for a join token");
         Failure::new(ErrorCode::Unavailable, "couldn't make a token; retry")
     })?;

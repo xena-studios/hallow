@@ -1,6 +1,42 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["local>xena-studios/.github:renovate-config"],
-  "description": "Shared Xena Studios settings. Submodules in upstream/ and panel/ are updated by hand, after the version matrix passes, so Renovate leaves them alone.",
-  "git-submodules": { "enabled": false }
+  "description": "Shared Xena Studios settings. Submodules in upstream/ and panel/ are updated by hand, after the version matrix passes, so Renovate leaves them alone. It still clones upstream/Pumpkin, read only: the workspace names path dependencies in it, and Cargo.lock can't be regenerated without them.",
+  "git-submodules": { "enabled": false },
+  "cloneSubmodules": true,
+  "cloneSubmodulesFilter": ["upstream/Pumpkin"],
+  "packageRules": [
+    {
+      "description": "A 0.x minor bump of a crate is a breaking release and usually needs code changes, so those get their own PR instead of riding with the other non-major updates.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor"],
+      "matchCurrentVersion": "/^[~^=]?0\\./",
+      "groupName": "Rust crates (0.x, breaking)",
+      "groupSlug": "rust-0x"
+    },
+    {
+      "description": "Container images are exercised by the network and monitoring checks, not the Rust job; a separate group keeps a crate break from holding them up.",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "container images (non-major)",
+      "groupSlug": "images-non-major"
+    },
+    {
+      "description": "Patch and digest bumps of images and actions merge themselves once every check passes. A group merges itself only when all of its updates are of this kind; minor and major bumps, and every crate, wait for a review.",
+      "matchManagers": ["dockerfile", "docker-compose", "github-actions"],
+      "matchUpdateTypes": ["patch", "digest"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Server repos made from templates/server-repo call this repo's server-image.yml at a pinned main commit. Every main commit is a new digest, so the pin is bumped once a month, by review, instead of in a PR that churns on every commit.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["xena-studios/hallow"],
+      "matchUpdateTypes": ["digest"],
+      "groupName": "hallow server-image workflow pin",
+      "groupSlug": "hallow-workflow-pin",
+      "schedule": ["* 0-5 1 * *"],
+      "automerge": false
+    }
+  ]
 }

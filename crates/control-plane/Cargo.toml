@@ -23,12 +23,12 @@ toml = "1.2.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 axum = { version = "0.8.9", features = ["macros"] }
 futures-util = { version = "0.3.31", default-features = false }
-getrandom = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+getrandom = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 redis = { version = "1.8.2", default-features = false, features = ["tokio-comp", "connection-manager", "script"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror = "2.0.21"
 tokio.workspace = true
 tracing.workspace = true

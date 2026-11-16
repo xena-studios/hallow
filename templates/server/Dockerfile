@@ -6,7 +6,7 @@
 # Build from the repo root:
 #   docker build -f templates/server/Dockerfile -t hallow-server-base:dev .
 
-FROM rust:1.98-trixie AS build
+FROM rust:1.100-trixie AS build
 RUN rustup target add wasm32-wasip2
 # The multiversion plugin's build runs Mojang's data generator for older versions (Java 17+).
 RUN apt-get update \
