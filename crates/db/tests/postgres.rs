@@ -1003,7 +1003,6 @@ async fn join_tokens_expire() {
     db.drop().await;
 }
 
-
 #[tokio::test]
 async fn stats_add_up() {
     let Some(db) = TestDb::new().await else {
