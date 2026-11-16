@@ -3,7 +3,7 @@
 # checked against the checksum GeyserMC publishes for that build.
 #   docker build -t hallow-geyser deploy/geyser
 
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 ARG GEYSER_VERSION=2.12.1
 ARG GEYSER_BUILD=1302
 ARG GEYSER_SHA256=ccafefeb8f5447396bfc8e5411e5476c59fb84de3b99196b8d1b7de3306e92c8
