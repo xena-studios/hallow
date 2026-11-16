@@ -5,8 +5,8 @@
 //! network would hold up the tick whenever a player moved meanwhile. Requests
 //! are started with [`Client::start_post`] and checked with [`Pending::poll`]
 //! on later runs of the task instead; nothing waits on the network except
-//! [`Client::delete`] on unload, after the players are gone. Each request
-//! also has short timeouts.
+//! [`Client::post`] and [`Client::delete`] on unload, after the players are
+//! gone. Each request also has short timeouts.
 
 use std::time::{Duration, Instant};
 
@@ -92,9 +92,18 @@ impl Client {
         })
     }
 
+    /// Sends a POST and waits for the answer; only for unload.
+    pub fn post<B: Serialize>(&self, path: &str, body: &B) -> Result<(), Error> {
+        let json = serde_json::to_vec(body).map_err(|err| Error::Body(err.to_string()))?;
+        Self::wait(self.start(Method::Post, path, Some(&json))?)
+    }
+
     /// Sends a DELETE and waits for the answer.
     pub fn delete(&self, path: &str) -> Result<(), Error> {
-        let response = self.start(Method::Delete, path, None)?;
+        Self::wait(self.start(Method::Delete, path, None)?)
+    }
+
+    fn wait(response: types::FutureIncomingResponse) -> Result<(), Error> {
         response.subscribe().block();
         let result = response
             .get()

@@ -4,8 +4,15 @@
 //! - **Register.** About a second after the server starts, `POST /v1/servers`
 //!   with its name, kind, version, role, address and player limit.
 //! - **Heartbeat.** Every 5 s, `POST /v1/servers/{name}/heartbeat` with the
-//!   player count and state. A `404` means the control plane forgot the
-//!   server (it expired, or Redis was reset), so it registers again.
+//!   player count, state and everyone on the server. A `404` means the
+//!   control plane forgot the server (it expired, or Redis was reset), so it
+//!   registers again.
+//! - **Presence.** Within a second or two of a join or leave,
+//!   `POST /v1/servers/{name}/players` with who joined and left (see
+//!   [`players`]). The heartbeat's full list corrects anything lost.
+//! - **Stats.** Every 30 s, `POST /v1/stats` with each player's increases
+//!   for this server's kind: play time, joins and whatever a game counts
+//!   (see [`stats`]). A failed batch goes with the next one.
 //! - **Signals.** Every 30 s, `POST /v1/signals` with each player's movement
 //!   and combat numbers for the window, for the anticheat to learn from
 //!   (see [`signals`]). Nothing acts on them yet.
@@ -22,8 +29,10 @@
 //! and the signal event handlers are called from inside the tick. So the task
 //! never waits on the network: it starts a request and checks for the answer
 //! on its next run, a second later (see [`http`]). Requests time out after
-//! 2 s; a failed one is logged and retried on the next heartbeat, and a
-//! failed signal batch is dropped.
+//! 2 s; a failed one is logged and retried on the next heartbeat, a failed
+//! presence report is left to the next heartbeat, a failed signal batch is
+//! dropped, and a failed stats batch is merged into the next (up to
+//! [`stats::MAX_RETRIES`] in a row).
 //!
 //! It needs `http.outbound`, `fs.read.data` and a `sys.env.<NAME>`
 //! permission for each variable it reads; settings are in [`config`].
@@ -31,16 +40,20 @@
 mod collect;
 mod config;
 mod http;
+mod players;
+mod presence;
 mod signals;
 pub mod state;
+mod stats;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use hallow_proto::{
     routes,
-    server::{RegisterServer, ServerHeartbeat, ServerState},
+    server::{RegisterServer, ServerHeartbeat, ServerPlayersChanged, ServerState},
     signal::SignalBatch,
+    stats::{PlayerStatsDelta, StatsBatch},
 };
 use pumpkin_plugin_api::{
     Context, Plugin, PluginMetadata, Server, permissions, register_plugin, scheduler, wit,
@@ -88,6 +101,12 @@ struct Link {
     signals_in_flight: Option<http::Pending>,
     /// Log failed signal batches once, until one gets through.
     signals_down: bool,
+    /// The stats batch waiting for an answer, kept to put back if it fails.
+    stats_in_flight: Option<(http::Pending, Vec<PlayerStatsDelta>)>,
+    /// When the last stats batch was taken.
+    last_stats: Instant,
+    /// Stats batches that failed in a row.
+    stats_failures: u32,
 }
 
 /// Never held across a call out of the plugin, so nothing re-entering the
@@ -105,16 +124,20 @@ fn with_link<R>(f: impl FnOnce(&mut Link) -> R) -> Option<R> {
 enum Call {
     Register(RegisterServer),
     Heartbeat(String, ServerState),
+    Players(String, ServerPlayersChanged),
 }
 
 /// Runs once a second, off the tick.
 fn tick(server: &Server) {
     heartbeat(server);
     send_signals(server);
+    send_stats();
 }
 
-/// Checks the register or heartbeat in flight, then starts the next one if
-/// it's due or the state changed.
+/// Checks the register, heartbeat or presence report in flight, then starts
+/// the next: a heartbeat if it's due or the state changed, otherwise the
+/// joins and leaves since the last report. One at a time, so they arrive in
+/// order.
 fn heartbeat(server: &Server) {
     let Some(in_flight) = with_link(|link| link.in_flight.take()) else {
         return;
@@ -151,7 +174,7 @@ fn heartbeat(server: &Server) {
         } else if due || link.reported != Some(state) {
             Some(Call::Heartbeat(link.config.name.clone(), state))
         } else {
-            None
+            players::take_changes().map(|changed| Call::Players(link.config.name.clone(), changed))
         }
     }) else {
         return;
@@ -168,11 +191,15 @@ fn heartbeat(server: &Server) {
                 // For the monitoring dashboard's tick-time graphs.
                 #[allow(clippy::cast_possible_truncation)]
                 tick_ms: Some(server.get_mspt() as f32),
+                roster: Some(players::roster(server)),
             };
             client.start_post(&routes::server_heartbeat(name), &beat)
         }
+        Call::Players(name, changed) => client.start_post(&routes::server_players(name), changed),
     };
-    with_link(|link| link.last_heartbeat = Some(Instant::now()));
+    if !matches!(call, Call::Players(..)) {
+        with_link(|link| link.last_heartbeat = Some(Instant::now()));
+    }
     match started {
         Ok(pending) => {
             with_link(|link| link.in_flight = Some((pending, call)));
@@ -223,6 +250,100 @@ fn answered(call: Call, result: Result<(), http::Error>) {
             }
             Err(err) => failed(&err),
         },
+        // A lost report is corrected by the next heartbeat's full list.
+        Call::Players(name, _) => match result {
+            Ok(()) => {
+                succeeded();
+            }
+            Err(err) if err.is_not_found() => {
+                tracing::warn!("hallow-server: the control plane forgot {name}; registering again");
+                with_link(|link| {
+                    link.registered = false;
+                    link.reported = None;
+                    link.last_heartbeat = None;
+                });
+            }
+            Err(err) => failed(&err),
+        },
+    }
+}
+
+/// Checks the last stats batch, then sends the next when one is due. A
+/// failed batch is put back to go with the next, up to
+/// [`stats::MAX_RETRIES`] in a row; then its increases are dropped.
+fn send_stats() {
+    let Some(in_flight) = with_link(|link| link.stats_in_flight.take()) else {
+        return;
+    };
+    if let Some((pending, deltas)) = in_flight {
+        match pending.poll() {
+            None => {
+                with_link(|link| link.stats_in_flight = Some((pending, deltas)));
+                return;
+            }
+            Some(result) => stats_answered(result, deltas),
+        }
+    }
+
+    let due = with_link(|link| link.last_stats.elapsed() >= stats::FLUSH).unwrap_or(false);
+    if !due {
+        return;
+    }
+    with_link(|link| link.last_stats = Instant::now());
+    let deltas = players::take_stats();
+    if deltas.is_empty() {
+        return;
+    }
+    let Some((client, source, kind)) = with_link(|link| {
+        (
+            link.client.clone(),
+            link.config.name.clone(),
+            link.config.kind.clone(),
+        )
+    }) else {
+        return;
+    };
+    let batch = StatsBatch {
+        source,
+        kind,
+        players: deltas,
+    };
+    match client.start_post(routes::STATS, &batch) {
+        Ok(pending) => {
+            with_link(|link| link.stats_in_flight = Some((pending, batch.players)));
+        }
+        Err(err) => stats_answered(Err(err), batch.players),
+    }
+}
+
+fn stats_answered(result: Result<(), http::Error>, deltas: Vec<PlayerStatsDelta>) {
+    let Some(failures) = with_link(|link| {
+        link.stats_failures = if result.is_ok() {
+            0
+        } else {
+            link.stats_failures + 1
+        };
+        link.stats_failures
+    }) else {
+        return;
+    };
+    match result {
+        Ok(()) => {}
+        Err(err) if failures > stats::MAX_RETRIES => {
+            tracing::warn!(
+                "hallow-server: couldn't send stats {failures} times in a row: {err}; dropping {} players' increases",
+                deltas.len()
+            );
+            with_link(|link| link.stats_failures = 0);
+        }
+        Err(err) => {
+            if failures == 1 {
+                tracing::warn!(
+                    "hallow-server: couldn't send stats: {err}; retrying with the next batch"
+                );
+            }
+            players::restore_stats(deltas);
+        }
     }
 }
 
@@ -308,7 +429,7 @@ impl Plugin for HallowServer {
             name: NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             authors: vec!["Xena Studios".into()],
-            description: "Registers this server with Hallow's control plane, heartbeats it and sends anticheat signals."
+            description: "Links this server to Hallow's control plane: registers and heartbeats it, reports its players, and sends stats and anticheat signals."
                 .into(),
             dependencies: vec![],
             permissions: permissions(),
@@ -350,8 +471,12 @@ impl Plugin for HallowServer {
             in_flight: None,
             signals_in_flight: None,
             signals_down: false,
+            stats_in_flight: None,
+            last_stats: Instant::now(),
+            stats_failures: 0,
         });
         collect::register(&context);
+        players::register(&context);
         Ok(())
     }
 
@@ -361,6 +486,19 @@ impl Plugin for HallowServer {
         };
         scheduler::cancel_task(link.task);
         collect::stop();
+        // Players are gone by now, so this holds their whole stay. A batch
+        // still in flight may or may not have landed; it isn't sent twice.
+        let deltas = players::stop();
+        if !deltas.is_empty() {
+            let batch = StatsBatch {
+                source: link.config.name.clone(),
+                kind: link.config.kind.clone(),
+                players: deltas,
+            };
+            if let Err(err) = link.client.post(routes::STATS, &batch) {
+                tracing::warn!("hallow-server: couldn't send the last stats: {err}");
+            }
+        }
         if link.registered {
             match link.client.delete(&routes::server(&link.config.name)) {
                 Ok(()) => tracing::info!("hallow-server: unregistered {}", link.config.name),
@@ -379,6 +517,11 @@ impl Plugin for HallowServer {
         _sender: wit::PluginId,
         message: wit::IpcMessage,
     ) -> Result<wit::IpcMessage, String> {
+        if let Ok(text) = std::str::from_utf8(&message)
+            && let Some(reply) = players::handle_ipc(text.trim())
+        {
+            return reply;
+        }
         state::handle_ipc(&message)
     }
 }
