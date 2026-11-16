@@ -5,7 +5,7 @@
 name = "test-game"
 role = "game"
 lobby = "test-game-lobby"
-base = "^0.1"
+base = "^0.2"
 
 [players]
 min = 2                      # start a match when this many are queued

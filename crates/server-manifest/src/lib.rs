@@ -6,7 +6,7 @@
 //! name = "skywars"            # the server kind: image name and control-plane kind
 //! role = "game"               # "hub", "lobby" or "game"
 //! lobby = "skywars-lobby"     # where players go when a game ends
-//! base = "^0.1"               # base image versions this repo works with
+//! base = "^0.2"               # base image versions this repo works with
 //! world = "world"             # Pumpkin's world folder, relative to this file
 //!
 //! [players]

@@ -3,7 +3,7 @@
 # so this name must match it. See docs/SERVERS.md#hallowtoml.
 name = "hub"
 role = "hub"                 # a lobby that players return to from everywhere
-base = "^0.1"                # works with base image 0.1.x
+base = "^0.2"                # works with base image 0.2.x
 
 [players]
 max = 100                    # per instance

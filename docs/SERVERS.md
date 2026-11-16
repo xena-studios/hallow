@@ -37,7 +37,7 @@ skywars/
 name = "skywars"
 role = "game"                # "hub", "lobby" or "game"
 lobby = "skywars-lobby"      # where players go when a game ends
-base = "^0.1"                # Hallow base image versions this repo works with
+base = "^0.2"                # Hallow base image versions this repo works with
 world = "world"              # Pumpkin's world folder; generated if unset
 
 [players]
@@ -151,7 +151,7 @@ Hallow's server base image, `ghcr.io/xena-studios/hallow-server-base`, carries P
 - a `server-base-vX.Y.Z` tag on the monorepo publishes `X.Y.Z` and `X.Y` ([workflow](../.github/workflows/server-base.yml));
 - pushes to main that touch it publish `dev` and `sha-<commit>`.
 
-A server repo's Dockerfile is `FROM ghcr.io/xena-studios/hallow-server-base:0.1` plus `COPY` lines for its `hallow.toml`, plugins and world; the base tag must sit inside the repo's `base` range. No base version has been published yet: the first `server-base-v0.1.0` tag does that. Until then, the in-tree servers build on the local base image (see [Dev network](../deploy/compose/README.md)).
+A server repo's Dockerfile is `FROM ghcr.io/xena-studios/hallow-server-base:0.2` plus `COPY` lines for its `hallow.toml`, plugins and world; the base tag must sit inside the repo's `base` range. The in-tree servers build on the local base image instead (see [Dev network](../deploy/compose/README.md)).
 
 ## One match per instance
 

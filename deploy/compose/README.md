@@ -34,7 +34,7 @@ To play, connect a 26.3 client to `localhost:25565` and use `/server game-1` or 
 | `game-1` | `hallow-test-game:dev` from [`servers/test-game`](../../servers/test-game) | A test game, built the same way |
 | `server-base` | `hallow-server-base:dev` from `templates/server` | Build only (scale 0): the server base image, with Pumpkin, the `hallow_server` plugin loaded but idle (no control plane here) and `hallow-manifest` |
 
-The servers' Dockerfiles start `FROM ghcr.io/xena-studios/hallow-server-base:0.1`; compose passes a build context of that name pointing at the `server-base` service, so they build on the base image from this tree instead of pulling one. On start, the base image's entrypoint applies each server's `hallow.toml` (kind, role, max players, Pumpkin settings); `HALLOW_SERVER_NAME` sets the instance name. The forwarding secret is a dev default; set `HALLOW_VINE_SECRET` and change it in `config/vine.toml` for anything reachable from outside.
+The servers' Dockerfiles start `FROM ghcr.io/xena-studios/hallow-server-base:0.2`; compose passes a build context of that name pointing at the `server-base` service, so they build on the base image from this tree instead of pulling one. On start, the base image's entrypoint applies each server's `hallow.toml` (kind, role, max players, Pumpkin settings); `HALLOW_SERVER_NAME` sets the instance name. The forwarding secret is a dev default; set `HALLOW_VINE_SECRET` and change it in `config/vine.toml` for anything reachable from outside.
 
 The first build compiles Pumpkin and Vine for Linux and takes a while; later builds reuse the cargo cache.
 

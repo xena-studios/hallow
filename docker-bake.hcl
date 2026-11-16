@@ -27,7 +27,7 @@ target "server" {
 # for it under the same name.
 target "_server-repo" {
   contexts = {
-    "ghcr.io/xena-studios/hallow-server-base:0.1" = "target:server"
+    "ghcr.io/xena-studios/hallow-server-base:0.2" = "target:server"
   }
 }
 
