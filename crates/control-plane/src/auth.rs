@@ -140,7 +140,7 @@ pub fn parse_static_tokens(list: &str) -> Result<Vec<StaticServerToken>, String>
 /// A new instance token: the prefix and 32 random bytes in hex.
 pub fn new_instance_token() -> Result<String, getrandom::Error> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes)?;
+    getrandom::fill(&mut bytes)?;
     let mut token = String::with_capacity(INSTANCE_TOKEN_PREFIX.len() + 64);
     token.push_str(INSTANCE_TOKEN_PREFIX);
     for byte in bytes {
