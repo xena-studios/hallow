@@ -1,0 +1,10 @@
+# Server kinds the dev control plane starts instances of (HALLOW_KINDS_FILE,
+# compose.instances.yaml). Each is the image to run and the hallow.toml it was
+# built from, relative to this file; the control plane reads role, players
+# and scaling from it. ${HALLOW_IMAGE_TAG:-dev} comes from the environment.
+# See docs/INSTANCES.md.
+
+[[kind]]
+image = "hallow-test-game:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "test-game/hallow.toml"
+memory_mb = 1024

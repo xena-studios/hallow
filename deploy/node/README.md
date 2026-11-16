@@ -74,7 +74,7 @@ The panel can mint single-use Wings enrollment codes, but only for a node that a
    - mints a Wings enrollment code.
 
    In one transaction it records the node in `hallow.nodes` and marks the token used. It answers with the panel URL and the enrollment code.
-5. `install.sh` runs `wings configure --enroll <code> --panel-url <url>`. Wings redeems the code with the panel (`POST /api/remote/enroll`), which rotates the node's token and hands it to Wings directly; the control plane never sees Wings' credentials.
+5. `install.sh` runs `wings configure --enroll <code> --panel-url <url>`. Wings redeems the code with the panel (`POST /api/remote/enroll`), which rotates the node's token and hands it to Wings directly. When the control plane runs instances on Wings (`HALLOW_ORCHESTRATOR=wings`), the code also tells Wings to use the control plane as its remote (`HALLOW_NODE_WINGS_REMOTE`). The control plane then answers for its instances, passes every other call to the panel, and reads the node's token from the panel (`nodes.read-token`) to call Wings ([Instances](../../docs/INSTANCES.md)).
 6. Wings starts and the panel shows the node online.
 
 If a panel call fails half way, the control plane deletes the half-made panel node and gives the token back. It answers 503, so the script's retries (curl, 10 attempts) try again with the same token. A bad request or a conflict (a node of that name exists) doesn't spend the token either. Only a finished join spends it. A used, expired or unknown token gets 401.

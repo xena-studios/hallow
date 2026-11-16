@@ -137,6 +137,7 @@ async fn migrations_stay_in_the_hallow_schema() {
             "player_stats",
             "punishments",
             "ranks",
+            "server_kinds",
             "sessions",
             "signal_samples"
         ]
@@ -1048,5 +1049,54 @@ async fn stats_add_up() {
             .unwrap()
             .is_empty()
     );
+    db.drop().await;
+}
+
+/// Kinds are upserted, listed by name and deleted.
+#[tokio::test]
+async fn server_kinds() {
+    use hallow_proto::instance::{KindPlayers, KindRole, KindScaling, KindSpec};
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let mut spec = KindSpec {
+        image: "hallow-test-game:dev".into(),
+        role: KindRole::Game,
+        lobby: Some("hub".into()),
+        players: KindPlayers { min: 2, max: 16 },
+        scaling: KindScaling {
+            warm: 1,
+            max_instances: Some(20),
+        },
+        env: [("MODE".to_owned(), "solo".to_owned())].into(),
+        memory_mb: None,
+        updated_by: Some("alice".into()),
+    };
+    let first = hallow_db::put_kind(&db.pool, "test-game", &spec)
+        .await
+        .unwrap();
+    assert_eq!(first.spec.0, spec);
+    assert_eq!(first.updated_by.as_deref(), Some("alice"));
+    spec.image = "hallow-test-game:v2".into();
+    spec.updated_by = None;
+    hallow_db::put_kind(&db.pool, "test-game", &spec)
+        .await
+        .unwrap();
+    hallow_db::put_kind(&db.pool, "a-game", &spec)
+        .await
+        .unwrap();
+    // Names follow hallow.toml's rule.
+    assert!(
+        hallow_db::put_kind(&db.pool, "Bad_Name", &spec)
+            .await
+            .is_err()
+    );
+    let kinds = hallow_db::list_kinds(&db.pool).await.unwrap();
+    let names: Vec<&str> = kinds.iter().map(|k| k.name.as_str()).collect();
+    assert_eq!(names, ["a-game", "test-game"]);
+    assert_eq!(kinds[1].spec.0.image, "hallow-test-game:v2");
+    assert_eq!(kinds[1].updated_by, None);
+    assert!(hallow_db::delete_kind(&db.pool, "a-game").await.unwrap());
+    assert!(!hallow_db::delete_kind(&db.pool, "a-game").await.unwrap());
     db.drop().await;
 }

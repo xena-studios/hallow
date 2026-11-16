@@ -14,17 +14,33 @@
 //! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
 //! | `HALLOW_SIGNAL_RETENTION_DAYS` | `14` | How long anticheat signal samples are kept |
 //! | `HALLOW_PANEL_URL` | none | Where the control plane calls the panel's admin API; without it node joins are off |
-//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`) |
+//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`; `nodes.read-token` for Wings instances) |
 //! | `HALLOW_PANEL_PUBLIC_URL` | `HALLOW_PANEL_URL` | The panel URL nodes' Wings use |
 //! | `HALLOW_PANEL_LOCATIONS` | none | Panel location per region: `fsn1=<uuid>,nbg1=<uuid>`; `*=<uuid>` for any other |
 //! | `HALLOW_NODE_GAME_PORTS` | `30000-30999` | Game-port allocations made on each node; match `install.sh --game-ports` |
 //! | `HALLOW_NODE_WINGS_PORT` / `HALLOW_NODE_SFTP_PORT` | `8080` / `2022` | Wings' API and SFTP ports on nodes |
 //! | `HALLOW_JOIN_TOKEN_TTL_HOURS` | `24` | Default lifetime of a node join token (at most 168) |
+//! | `HALLOW_NODE_WINGS_REMOTE` | the panel's public URL | The remote URL new nodes' Wings are enrolled with; the control plane's own URL for Wings instances |
+//! | `HALLOW_ORCHESTRATOR` | `off` | `docker` or `wings` runs instances of registered kinds (docs/INSTANCES.md); needs the database |
+//! | `HALLOW_INSTANCE_CONTROL_PLANE` | required with an orchestrator | `host:port` instances reach the control plane at |
+//! | `HALLOW_INSTANCE_ENV` | none | Comma-separated `NAME=value` for every instance, such as `HALLOW_VINE_SECRET=...` |
+//! | `HALLOW_KINDS_FILE` | none | Kinds registered at start: `[[kind]]` tables of `image` and `manifest` (a `hallow.toml` path) |
+//! | `HALLOW_INSTANCE_START_TIMEOUT_SECS` | `120` | An instance whose server hasn't registered by then is deleted |
+//! | `HALLOW_INSTANCE_EMPTY_SECS` | `30` | A game instance empty this long after having players is deleted |
+//! | `HALLOW_INSTANCE_IDLE_SECS` | `300` | An unused instance beyond the kind's `warm` count is deleted after this |
+//! | `HALLOW_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker orchestrator: the Engine API (`unix://` or `tcp://`) |
+//! | `HALLOW_DOCKER_NETWORK` | required with Docker | Docker orchestrator: the network instances join, such as `gatetest_default` |
+//! | `HALLOW_DOCKER_OWNER` | the network | Docker orchestrator: label value marking this network's containers |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
 
-use hallow_control_plane::{Config, DuplicateLogin, panel::PanelConfig, serve_all};
+use hallow_control_plane::{
+    Config, DuplicateLogin, InstancesSetup, OrchestratorChoice,
+    orchestrator::docker::{DockerConfig, Endpoint},
+    panel::PanelConfig,
+    serve_all,
+};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -123,6 +139,7 @@ fn config() -> Result<Config, String> {
         config.join_token_ttl = std::time::Duration::from_secs(hours * 3600);
     }
     config.panel = panel_config()?;
+    config.instances = instances_setup()?;
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
         config.duplicate_login = match mode.as_str() {
             "deny" => DuplicateLogin::Deny,
@@ -176,6 +193,9 @@ fn panel_config() -> Result<Option<PanelConfig>, String> {
             }
         }
     }
+    if let Ok(remote) = env::var("HALLOW_NODE_WINGS_REMOTE") {
+        panel.wings_remote = Some(remote);
+    }
     if let Ok(range) = env::var("HALLOW_NODE_GAME_PORTS") {
         let parsed = range
             .split_once('-')
@@ -201,4 +221,65 @@ fn panel_config() -> Result<Option<PanelConfig>, String> {
         }
     }
     Ok(Some(panel))
+}
+
+fn instances_setup() -> Result<Option<InstancesSetup>, String> {
+    let choice = env::var("HALLOW_ORCHESTRATOR").unwrap_or_else(|_| "off".into());
+    let orchestrator = match choice.as_str() {
+        "off" => return Ok(None),
+        "wings" => OrchestratorChoice::Wings,
+        "docker" => {
+            let host = env::var("HALLOW_DOCKER_HOST")
+                .unwrap_or_else(|_| "unix:///var/run/docker.sock".into());
+            let endpoint =
+                Endpoint::parse(&host).map_err(|err| format!("HALLOW_DOCKER_HOST: {err}"))?;
+            let network = env::var("HALLOW_DOCKER_NETWORK")
+                .map_err(|_| "HALLOW_ORCHESTRATOR=docker needs HALLOW_DOCKER_NETWORK")?;
+            let mut docker = DockerConfig::new(endpoint, network);
+            if let Ok(owner) = env::var("HALLOW_DOCKER_OWNER") {
+                docker.owner = owner;
+            }
+            OrchestratorChoice::Docker(docker)
+        }
+        other => {
+            return Err(format!(
+                "HALLOW_ORCHESTRATOR must be off, docker or wings, not {other}"
+            ));
+        }
+    };
+    let control_plane = env::var("HALLOW_INSTANCE_CONTROL_PLANE")
+        .map_err(|_| "an orchestrator needs HALLOW_INSTANCE_CONTROL_PLANE")?;
+    let mut setup = InstancesSetup::new(orchestrator, control_plane);
+    if let Ok(list) = env::var("HALLOW_INSTANCE_ENV") {
+        for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            let (name, value) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("HALLOW_INSTANCE_ENV: {entry} isn't NAME=value"))?;
+            setup.env.insert(name.trim().to_owned(), value.to_owned());
+        }
+    }
+    if let Ok(path) = env::var("HALLOW_KINDS_FILE") {
+        setup.kinds_file = Some(path.into());
+    }
+    for (var, field) in [
+        (
+            "HALLOW_INSTANCE_START_TIMEOUT_SECS",
+            &mut setup.settings.start_timeout_ms,
+        ),
+        (
+            "HALLOW_INSTANCE_EMPTY_SECS",
+            &mut setup.settings.empty_grace_ms,
+        ),
+        ("HALLOW_INSTANCE_IDLE_SECS", &mut setup.settings.idle_ms),
+    ] {
+        if let Ok(value) = env::var(var) {
+            let secs: u64 = value
+                .parse()
+                .ok()
+                .filter(|s| *s <= 86_400)
+                .ok_or_else(|| format!("{var} must be 0 to 86400 seconds, not {value}"))?;
+            *field = secs * 1000;
+        }
+    }
+    Ok(Some(setup))
 }

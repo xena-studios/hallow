@@ -13,7 +13,7 @@ services:
   geyser:
     build:
       context: ../geyser
-    image: hallow-geyser:dev
+    image: hallow-geyser:${HALLOW_IMAGE_TAG:-dev}
     # Geyser rewrites its config on upgrades, so it works on a copy.
     entrypoint:
       - sh

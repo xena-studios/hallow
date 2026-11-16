@@ -36,3 +36,33 @@ To play, connect a 26.3 client to `localhost:25565` and use `/server game-1` or 
 The servers' Dockerfiles start `FROM ghcr.io/xena-studios/hallow-server-base:0.1`; compose passes a build context of that name pointing at the `server-base` service, so they build on the base image from this tree instead of pulling one. On start, the base image's entrypoint applies each server's `hallow.toml` (kind, role, max players, Pumpkin settings); `HALLOW_SERVER_NAME` sets the instance name. The forwarding secret is a dev default; set `HALLOW_VINE_SECRET` and change it in `config/vine.toml` for anything reachable from outside.
 
 The first build compiles Pumpkin and Vine for Linux and takes a while; later builds reuse the cargo cache.
+
+Image tags default to `dev`; set `HALLOW_IMAGE_TAG` to build and run your own set side by side with someone else's (`hallow-proxy:$HALLOW_IMAGE_TAG`, and so on).
+
+## Dynamic games
+
+[`compose.instances.yaml`](compose.instances.yaml), over [`compose.hallow.yaml`](compose.hallow.yaml) (two proxies, the control plane, Valkey and PostgreSQL), lets the control plane start and delete game instances itself through the local Docker Engine, the way it does through Wings on real nodes ([Instances](../../docs/INSTANCES.md)):
+
+- `game-1` is built but not started;
+- the hub (`lobby`) stays a static service, the network's floor;
+- the control plane gets the Docker socket and registers `test-game` from [`config/hallow/kinds.toml`](config/hallow/kinds.toml) (image plus `servers/test-game/hallow.toml`).
+
+Mounting the Docker socket gives the control plane root on the host, so this override is for development only.
+
+```sh
+cargo build --release --target wasm32-wasip2 -p hallow-vine -p hallow-server
+export HALLOW_IMAGE_TAG=gatetest HALLOW_DOCKER_NETWORK=gatetest
+files="-f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml -f deploy/compose/compose.instances.yaml"
+docker compose -p gatetest $files up --build -d
+cargo run --release -p netcheck -- --proxy 127.0.0.1:25566 --name gatebot --route "/play test-game,~15"
+curl -s -H "Authorization: Bearer $(cat deploy/compose/config/hallow/control-plane.token)" localhost:18090/v1/instances
+```
+
+The bot joins the hub through the second proxy and queues. The control plane starts a `test-game-xxxxxx` container (`test-game` keeps one warm instance while anyone is online, so it may already be up), its server registers, and the proxy moves the bot there. Ten seconds after the bot leaves (`HALLOW_INSTANCE_EMPTY_SECS`), the instance is deleted. `GET /v1/instances` shows each one's state as it goes.
+
+Instances aren't compose services, so `down` doesn't remove them. Delete them first:
+
+```sh
+docker rm -f $(docker ps -aq --filter label=hallow.owner=$HALLOW_DOCKER_NETWORK)
+docker compose -p gatetest $files down -v
+```

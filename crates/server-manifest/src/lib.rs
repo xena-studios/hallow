@@ -53,7 +53,7 @@ const RESERVED_PUMPKIN_KEYS: [(&str, &str); 8] = [
     ("networking.proxy", "the base image sets up Vine forwarding"),
     (
         "networking.java.address",
-        "the base image listens on 0.0.0.0:25565",
+        "the base image listens on 0.0.0.0, port HALLOW_SERVER_PORT (25565)",
     ),
     (
         "networking.java.online_mode",

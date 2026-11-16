@@ -50,7 +50,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/control-plane/Dockerfile
-    image: hallow-control-plane:dev
+    image: hallow-control-plane:${HALLOW_IMAGE_TAG:-dev}
     environment:
       HALLOW_TOKEN_FILE: /run/hallow/token
       HALLOW_REDIS_URL: redis://valkey:6379
@@ -107,7 +107,7 @@ services:
     build:
       context: ../..
       dockerfile: templates/proxy/Dockerfile
-    image: hallow-proxy:dev
+    image: hallow-proxy:${HALLOW_IMAGE_TAG:-dev}
     ports:
       - "25566:25565"
     volumes:

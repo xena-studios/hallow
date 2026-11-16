@@ -86,7 +86,7 @@ Vine's Bedrock listener answers RakNet pings (`src/bedrock/listener.rs`), which 
 
 ## Who owns what
 
-- **The control plane** owns every proxy and server instance: it creates them through Wings, scales them per server kind, and deletes them. The panel shows them all live, with consoles and logs through Wings, but never keeps one panel record per instance.
+- **The control plane** owns every proxy and server instance: it creates them through Wings, scales them per server kind, and deletes them. The panel shows them all live, with consoles and logs through Wings, but never keeps one panel record per instance: each node's Wings uses the control plane as its remote, which answers for the instances it made and passes everything else to the panel. See [Instances](INSTANCES.md).
 - **Docker Compose on the floor node** runs the platform services: PostgreSQL, Redis, the control plane, the panel and the load balancer.
 - **Server repos** own what a server kind is. Deploying is choosing which image version is live; see [Servers](SERVERS.md#from-repo-to-running-server).
 

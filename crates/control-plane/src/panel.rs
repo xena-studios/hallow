@@ -3,7 +3,8 @@
 //! [`Panel`] is the seam; [`HttpPanel`] calls a Calagopus panel with an
 //! admin API key (`Authorization: Bearer c7sp_…`). The key needs the admin
 //! permissions `nodes.create`, `nodes.allocations`, `nodes.reset-token`
-//! (for enrollment codes) and `nodes.delete` (to undo a failed join).
+//! (for enrollment codes) and `nodes.delete` (to undo a failed join), plus
+//! `nodes.read-token` when instances run on Wings.
 //!
 //! | Call | Panel route |
 //! |---|---|
@@ -11,6 +12,7 @@
 //! | [`Panel::add_allocations`] | `POST /api/admin/nodes/{node}/allocations` |
 //! | [`Panel::create_enrollment`] | `POST /api/admin/nodes/{node}/enrollment` |
 //! | [`Panel::delete_node`] | `DELETE /api/admin/nodes/{node}` |
+//! | [`Panel::node_token`] | `GET /api/admin/nodes/{node}/token` |
 
 use std::{collections::BTreeMap, fmt, future::Future, net::IpAddr, pin::Pin, time::Duration};
 
@@ -38,6 +40,10 @@ pub struct PanelConfig {
     /// The game-port allocations made on every node, inclusive. Must match
     /// the range `install.sh` opens (`--game-ports`).
     pub game_ports: (u16, u16),
+    /// The remote URL nodes' Wings are enrolled with, when it isn't the
+    /// panel: the control plane, which answers for its instances and passes
+    /// the rest to the panel (docs/INSTANCES.md). `None` uses `public_url`.
+    pub wings_remote: Option<String>,
 }
 
 impl PanelConfig {
@@ -53,6 +59,7 @@ impl PanelConfig {
             wings_port: 8080,
             sftp_port: 2022,
             game_ports: (30000, 30999),
+            wings_remote: None,
         }
     }
 
@@ -77,6 +84,7 @@ impl fmt::Debug for PanelConfig {
             .field("wings_port", &self.wings_port)
             .field("sftp_port", &self.sftp_port)
             .field("game_ports", &self.game_ports)
+            .field("wings_remote", &self.wings_remote)
             .finish()
     }
 }
@@ -106,6 +114,23 @@ pub struct NewPanelNode {
 pub struct Enrollment {
     pub code: String,
     pub expires: DateTime<Utc>,
+}
+
+/// A node's Wings credentials: Wings checks `token` on its API and sends
+/// `<token_id>.<token>` to its remote.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct NodeToken {
+    pub token_id: String,
+    pub token: String,
+}
+
+impl fmt::Debug for NodeToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NodeToken")
+            .field("token_id", &self.token_id)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -143,6 +168,8 @@ pub trait Panel: Send + Sync {
     ) -> PanelFuture<'a, Enrollment>;
     /// Deletes a node (used to undo a join that failed half way).
     fn delete_node(&self, node: Uuid) -> PanelFuture<'_, ()>;
+    /// A node's Wings credentials, to call its Wings API.
+    fn node_token(&self, node: Uuid) -> PanelFuture<'_, NodeToken>;
 }
 
 /// The panel over HTTP.
@@ -284,6 +311,17 @@ impl Panel for HttpPanel {
                 )
                 .await?;
             Ok(())
+        })
+    }
+
+    fn node_token(&self, node: Uuid) -> PanelFuture<'_, NodeToken> {
+        Box::pin(async move {
+            self.call(
+                reqwest::Method::GET,
+                &format!("/api/admin/nodes/{node}/token"),
+                None,
+            )
+            .await
         })
     }
 }

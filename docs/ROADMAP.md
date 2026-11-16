@@ -44,7 +44,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Vine plugin: cross-proxy commands (`/find`, `/msg` and `/r`, staff `/alert` and `/gkick`); party warp comes with parties
 - [x] Load balancer with PROXY protocol and health checks (HAProxy, drain-aware agent checks against the control plane)
 - [x] Matchmaker: queues that fill ready game servers, parties kept together
-- [ ] Matchmaker: warm instances, start and delete server images through the Wings API
+- [x] Matchmaker: warm instances, start and delete server images through the Wings API ([Instances](INSTANCES.md); the gate path runs on the dev network through Docker. The Wings orchestrator follows the Wings source but hasn't run on a real node yet)
 - [x] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow (template contents in `templates/server-repo`; the GitHub repo and the first base image tag are still to create)
 - [x] Hallow server plugin: the link to the control plane (register, heartbeat, state, unregister), in the base image
 - [x] Hallow server plugin: presence (joins, leaves and the full list in heartbeats) and stats (play time, joins, game counters into `hallow.player_stats`)
