@@ -70,7 +70,8 @@ services:
 
   # The servers mount the dev build over the plugin baked into the image (the
   # entrypoint copies it into plugins/ on start), the token, and their own
-  # config.toml (name, kind, role and address).
+  # config.toml (name and address; kind, role and max players come from each
+  # server's hallow.toml).
   lobby:
     volumes:
       - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro

@@ -4,18 +4,19 @@
 #   cargo run --release -p netcheck        # join through the proxy and switch servers
 #
 # Connect a 26.3 client to localhost:25565. The proxy runs in offline mode, so
-# any username works. Lobbies and games use the same server image; only the
-# name differs here.
+# any username works. The servers are built the way server repos build them:
+# the lobby from servers/hub, game-1 from servers/test-game, each FROM the
+# server base image. Here the base comes from templates/server in this tree
+# (the server-base service), standing in for the published one by name.
 
 x-server: &server
-  build:
-    context: ../..
-    dockerfile: templates/server/Dockerfile
-  image: hallow-server:dev
-  environment:
-    HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
   restart: unless-stopped
   tty: true
+
+# Server repos' Dockerfiles start FROM this name; the build context of the same
+# name replaces it with the server-base service's image.
+x-base: &base
+  ghcr.io/xena-studios/hallow-server-base:0.1: service:server-base
 
 services:
   proxy:
@@ -35,8 +36,22 @@ services:
     restart: unless-stopped
     tty: true
 
+  # Build-only: the server base image the lobby and game-1 build on. Scale 0
+  # keeps it from starting.
+  server-base:
+    build:
+      context: ../..
+      dockerfile: templates/server/Dockerfile
+    image: hallow-server-base:dev
+    scale: 0
+
   lobby:
     <<: *server
+    build:
+      context: ../../servers/hub
+      additional_contexts:
+        <<: *base
+    image: hallow-hub:dev
     environment:
       HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
       HALLOW_SERVER_NAME: lobby
@@ -44,6 +59,11 @@ services:
 
   game-1:
     <<: *server
+    build:
+      context: ../../servers/test-game
+      additional_contexts:
+        <<: *base
+    image: hallow-test-game:dev
     environment:
       HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
       HALLOW_SERVER_NAME: game-1

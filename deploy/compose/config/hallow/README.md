@@ -10,8 +10,9 @@ checked into git; never reuse it on a network reachable from outside.
   change this file too.
 - `vine.toml`: both proxies' Vine config, with no static servers.
 - `proxy-1.toml`, `proxy-2.toml`: each proxy's `hallow_vine` config.
-- `lobby.toml`, `game-1.toml`: each server's `hallow_server` config (name,
-  kind, role and address).
+- `lobby.toml`, `game-1.toml`: each server's `hallow_server` config (control
+  plane, token, name and address). Kind, role and max players come from the
+  server's `hallow.toml` in `servers/hub` and `servers/test-game`.
 
 ## Cross-proxy command test
 

@@ -1,8 +1,7 @@
-# hallow_server plugin config for the lobby (dev only).
+# hallow_server plugin config for the lobby (dev only). Kind, role and max
+# players come from servers/hub/hallow.toml (kind "hub", so the control plane
+# sends new players here).
 control_plane = "control-plane:8080"
 token_file = "token"
 name = "lobby"
-# The control plane sends new players to ready lobbies of HALLOW_HUB_KIND (hub).
-kind = "hub"
-role = "lobby"
 address = "lobby:25565"

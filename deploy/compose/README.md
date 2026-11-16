@@ -24,13 +24,15 @@ Load test: `netcheck --bots 100 --ramp 20 --stay 40` (raise Vine's `max_connecti
 
 Older Java clients need the multiversion plugin: `HALLOW_MULTIVERSION=1 docker compose ... up`. It deadlocks the server at about 50 moving players today, so keep it to small tests; see [Validation](../../docs/VALIDATION.md#load-test).
 
-To play, connect a 26.3 client to `localhost:25565` and use `/server game-1` or `/server lobby`. The proxy runs in offline mode, so any username works.
+To play, connect a 26.3 client to `localhost:25565` and use `/server game-1` or `/server lobby`. To try a change to a server, edit its `hallow.toml` and run `up --build` again. The proxy runs in offline mode, so any username works.
 
 | Service | Image | What it is |
 |---|---|---|
 | `proxy` | `hallow-proxy:dev` from `templates/proxy` | Vine from our fork, config in `config/vine.toml` |
-| `lobby`, `game-1` | `hallow-server:dev` from `templates/server` | The server base image: Pumpkin, with the multiversion plugin available but off and the `hallow_server` plugin loaded but idle (no control plane here) |
+| `lobby` | `hallow-hub:dev` from [`servers/hub`](../../servers/hub) | The hub, built the way a server repo builds: `FROM` the server base image plus its `hallow.toml` |
+| `game-1` | `hallow-test-game:dev` from [`servers/test-game`](../../servers/test-game) | A test game, built the same way |
+| `server-base` | `hallow-server-base:dev` from `templates/server` | Build only (scale 0): the server base image, with Pumpkin, the multiversion plugin available but off, the `hallow_server` plugin loaded but idle (no control plane here) and `hallow-manifest` |
 
-Lobbies and games run the same image; only `HALLOW_SERVER_NAME` differs. The forwarding secret is a dev default; set `HALLOW_VINE_SECRET` and change it in `config/vine.toml` for anything reachable from outside.
+The servers' Dockerfiles start `FROM ghcr.io/xena-studios/hallow-server-base:0.1`; compose passes a build context of that name pointing at the `server-base` service, so they build on the base image from this tree instead of pulling one. On start, the base image's entrypoint applies each server's `hallow.toml` (kind, role, max players, Pumpkin settings); `HALLOW_SERVER_NAME` sets the instance name. The forwarding secret is a dev default; set `HALLOW_VINE_SECRET` and change it in `config/vine.toml` for anything reachable from outside.
 
 The first build compiles Pumpkin and Vine for Linux and takes a while; later builds reuse the cargo cache.
