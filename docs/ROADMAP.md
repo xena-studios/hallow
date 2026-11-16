@@ -55,7 +55,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Control plane on PostgreSQL: accounts and sessions at login, bans refuse logins, staff permissions from ranks, `HALLOW_ADMINS` bootstrap
 - [x] In-game moderation: `/ban`, `/mute` (with durations), `/unban`, `/unmute`, `/warn`, `/history`, enforced on every proxy
 - [x] Panel fork with Hallow branding and the extension scaffold
-- [ ] Panel: Network page and Players page
+- [x] Panel: Network page and Players page (network-first admin: Overview landing, Players, Punishments and Anticheat lookups, Fleet section, Hallow theme)
 - [ ] Panel: punishments and staff roles
 - [x] Monitoring: Prometheus, Grafana, Loki (dev stack and dashboard, with each server's tick time from the server plugin)
 - [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
