@@ -59,6 +59,10 @@ const SERVER_PLUGIN: &str = "hallow_server";
 const TASK_PERIOD_TICKS: u64 = 2;
 /// How often the tab list is redrawn.
 pub const TAB_EVERY_TICKS: u64 = 100;
+/// How long after a join the player is set up.
+const SETUP_DELAY_TICKS: u64 = 20;
+/// Players within this many blocks of the spawn count as at it.
+const SPAWN_RADIUS: f64 = 8.0;
 /// Below this height a player has fallen out of the world.
 const VOID_Y: f64 = -70.0;
 /// The game modes are asked for at most this often.
@@ -79,6 +83,8 @@ enum Action {
 #[derive(Default)]
 struct Hub {
     actions: Vec<Action>,
+    /// Actions that wait until the task has run up to a tick count.
+    later: Vec<(u64, Action)>,
     /// Players with the menu open: slot → mode.
     open: BTreeMap<Uuid, BTreeMap<u32, String>>,
     /// Players waiting to be put back at spawn.
@@ -140,7 +146,14 @@ fn overview() -> Option<LobbyOverview> {
 fn tick(server: &Server) {
     let Some((actions, ticks)) = with(|hub| {
         hub.ticks += TASK_PERIOD_TICKS;
-        (std::mem::take(&mut hub.actions), hub.ticks)
+        let now = hub.ticks;
+        let (due, wait) = std::mem::take(&mut hub.later)
+            .into_iter()
+            .partition::<Vec<_>, _>(|(at, _)| *at <= now);
+        hub.later = wait;
+        let mut actions = std::mem::take(&mut hub.actions);
+        actions.extend(due.into_iter().map(|(_, action)| action));
+        (actions, now)
     }) else {
         return;
     };
@@ -158,7 +171,7 @@ fn tick(server: &Server) {
             Action::OpenMenu(_) => open_menu(&player, id),
             Action::Pick(_, mode) => pick(&player, id, &mode),
             Action::Rescue(_) => {
-                to_spawn(&player);
+                to_spawn(&player, false);
                 with(|hub| hub.falling.remove(&id));
             }
         }
@@ -180,7 +193,11 @@ fn tab_list(player: &Player, online: Option<u32>) {
     );
 }
 
-fn to_spawn(player: &Player) {
+/// Puts `player` at the world spawn. With `if_away`, only if they aren't
+/// near it already: Pumpkin spawns players there, and a second teleport
+/// right behind its own can reach the client before the first is confirmed,
+/// which Pumpkin answers with a kick ("Wrong teleport id").
+fn to_spawn(player: &Player, if_away: bool) {
     let world = player.get_world();
     let spawn = world.get_spawn_location();
     let position = (
@@ -188,6 +205,12 @@ fn to_spawn(player: &Player) {
         f64::from(spawn.pos.y),
         f64::from(spawn.pos.z) + 0.5,
     );
+    let (x, y, z) = player.get_position();
+    let away = (x - position.0).abs().max((z - position.2).abs()) > SPAWN_RADIUS
+        || (y - position.1).abs() > SPAWN_RADIUS;
+    if if_away && !away {
+        return;
+    }
     player.teleport(position, Some(spawn.yaw), Some(spawn.pitch), world);
 }
 
@@ -202,7 +225,7 @@ fn setup(player: &Player) {
     if player.get_gamemode() == GameMode::Survival {
         player.set_gamemode(GameMode::Adventure);
     }
-    to_spawn(player);
+    to_spawn(player, true);
     player.set_invulnerable(true);
     player.set_food_level(20);
     player.set_saturation(20.0);
@@ -315,7 +338,12 @@ struct OnJoin;
 impl EventHandler<PlayerJoinEvent> for OnJoin {
     fn handle(&self, _server: Server, event: PlayerJoinEventData) -> PlayerJoinEventData {
         let id = to_uuid(&event.player.get_id());
-        with(|hub| hub.actions.push(Action::Setup(id)));
+        // A second after the join, once the client has settled at the
+        // position Pumpkin gave it.
+        with(|hub| {
+            hub.later
+                .push((hub.ticks + SETUP_DELAY_TICKS, Action::Setup(id)))
+        });
         event
     }
 }
