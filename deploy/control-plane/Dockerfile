@@ -12,9 +12,14 @@ COPY upstream/Pumpkin upstream/Pumpkin
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin
 COPY servers/test-game/plugin servers/test-game/plugin
+# The target cache is shared by every build on this machine, worktrees and
+# other checkouts included, and cargo trusts an artifact newer than its
+# sources. Touching the .rs files makes cargo rebuild the workspace's own
+# crates from what was copied here; crates.io dependencies stay cached.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-control-plane-target,target=/src/target,sharing=locked \
-    cargo build --release --locked -p hallow-control-plane --bin control-plane \
+    find crates servers -name '*.rs' -exec touch {} + \
+    && cargo build --release --locked -p hallow-control-plane --bin control-plane \
     && cp target/release/control-plane /control-plane
 
 FROM debian:trixie-slim

@@ -13,14 +13,19 @@ FROM rust:1.100-trixie AS build
 RUN rustup target add wasm32-wasip2
 WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
+# The target caches are shared by every build on this machine, worktrees and
+# other checkouts included, and cargo trusts an artifact that is newer than
+# its sources. Touching the copied .rs files first makes cargo rebuild every
+# local crate from what is here; crates.io dependencies stay cached.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/upstream/Pumpkin/target,sharing=locked \
-    cd upstream/Pumpkin && cargo build --release --locked --bin pumpkin \
+    find upstream/Pumpkin -name '*.rs' -exec touch {} + \
+    && cd upstream/Pumpkin && cargo build --release --locked --bin pumpkin \
     && cp target/release/pumpkin /pumpkin
 # Hallow's server plugin and hallow-manifest build in the workspace, which
 # names path dependencies in upstream/Pumpkin (copied above). Its target cache
-# has its own id: sharing /src/target with other images' builds lets cargo
-# reuse artifacts built from other sources when their timestamps are newer.
+# has its own id, apart from the control plane's /src/target, so the two
+# builds don't wait on each other's lock.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 # The in-tree servers' plugins are workspace members too.
@@ -28,7 +33,8 @@ COPY servers/hub/plugin servers/hub/plugin
 COPY servers/test-game/plugin servers/test-game/plugin
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-server-plugin-target,target=/src/target,sharing=locked \
-    cargo build --release --locked --target wasm32-wasip2 -p hallow-server \
+    find crates servers upstream/Pumpkin -name '*.rs' -exec touch {} + \
+    && cargo build --release --locked --target wasm32-wasip2 -p hallow-server \
     && cp target/wasm32-wasip2/release/hallow_server.wasm /hallow_server.wasm \
     && cargo build --release --locked -p hallow-manifest \
     && cp target/release/hallow-manifest /hallow-manifest
