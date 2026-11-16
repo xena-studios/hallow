@@ -47,7 +47,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Matchmaker: warm instances, start and delete server images through the Wings API
 - [x] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow (template contents in `templates/server-repo`; the GitHub repo and the first base image tag are still to create)
 - [x] Hallow server plugin: the link to the control plane (register, heartbeat, state, unregister), in the base image
-- [ ] Hallow server plugin: presence and stats
+- [x] Hallow server plugin: presence (joins, leaves and the full list in heartbeats) and stats (play time, joins, game counters into `hallow.player_stats`)
 - [ ] `hub` server repo
 - [x] Parties: invite, accept, leave, kick, disband, warp, chat; parties queue together
 - [x] Friends and online status: `/friend`, join and leave notices
