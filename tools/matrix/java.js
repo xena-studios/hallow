@@ -1,15 +1,21 @@
 // Version matrix: one headless client per version joins through Vine, checks
-// chunks, chat, inventory and tab completion, and switches servers twice.
+// chunks, chat, inventory and tab completion, walks while a second client of
+// the same version watches, and switches servers twice.
 // Usage: node java.js <version> [host] [port]
 const mineflayer = require('mineflayer');
 
 const version = process.argv[2];
 const host = process.argv[3] || '127.0.0.1';
 const port = Number(process.argv[4] || 25565);
-const r = { version, join: false, chunks: 0, chat: false, inventory: false, tab: null, switches: [], messages: [], errors: [], end: null };
+const r = { version, join: false, chunks: 0, chat: false, inventory: false, tab: null, moved: null, switches: [], messages: [], errors: [], end: null };
 
 const bot = mineflayer.createBot({ host, port, version, username: 'mx' + version.replace(/\./g, '_'), auth: 'offline', hideErrors: true });
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+// Watches the bot walk: the server only relays a move it accepted.
+const watcher = mineflayer.createBot({ host, port, version, username: 'mw' + version.replace(/\./g, '_'), auth: 'offline', hideErrors: true });
+watcher.on('error', () => {});
+let forcedMoves = 0;
+bot.on('forcedMove', () => { forcedMoves++; });
 let spawns = 0;
 let logins = 0;
 
@@ -40,6 +46,28 @@ let respawnCount = 0;
 bot._client.on('respawn', () => { respawnCount++; });
 const respawns = () => respawnCount;
 
+async function walk() {
+  const seen = () => { const p = watcher.players[bot.username]; return p && p.entity ? p.entity.position.clone() : null; };
+  if (!await waitFor(() => seen() !== null, 8000)) return 'not seen by the watcher';
+  const start = seen();
+  const self = bot.entity.position.clone();
+  const forced = forcedMoves;
+  for (const dir of ['forward', 'back', 'left', 'right']) {
+    bot.setControlState(dir, true);
+    await sleep(1200);
+    bot.setControlState(dir, false);
+    await sleep(800);
+    if (bot.entity.position.distanceTo(self) > 1.5) break;
+  }
+  await sleep(1000);
+  const end = seen();
+  return {
+    self: +bot.entity.position.distanceTo(self).toFixed(1),
+    watched: end ? +end.distanceTo(start).toFixed(1) : null,
+    snappedBack: forcedMoves > forced,
+  };
+}
+
 async function main() {
   r.join = await waitFor(() => spawns > 0, 20000);
   if (!r.join) return finish();
@@ -48,8 +76,10 @@ async function main() {
   await waitFor(() => r.chat, 4000);
   try {
     const t = await Promise.race([bot.tabComplete('/ser'), sleep(4000).then(() => null)]);
-    r.tab = t === null ? 'timeout' : JSON.stringify(t.map((x) => x.match || x)).slice(0, 120);
+    r.tab = t === null ? 'timeout' : JSON.stringify(t.map((x) => (typeof x === 'string' ? x : x.match))).slice(0, 120);
   } catch (e) { r.tab = 'error ' + e.message; }
+  r.moved = await walk();
+  try { watcher.quit(); } catch (_) {}
   await switchTo('game-1');
   if (!r.end) await switchTo('lobby');
   if (!r.end) { bot.chat('/server nowhere'); await sleep(2000); }
@@ -62,7 +92,8 @@ function finish() {
   r.stillConnected = !r.end;
   console.log(JSON.stringify(r));
   try { bot.quit(); } catch (_) {}
+  try { watcher.quit(); } catch (_) {}
   setTimeout(() => process.exit(0), 500);
 }
-setTimeout(finish, 60000);
+setTimeout(finish, 90000);
 main().catch((e) => { r.errors.push('main: ' + e.message); finish(); });
