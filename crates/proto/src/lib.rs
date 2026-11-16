@@ -6,7 +6,8 @@
 //! (to check fleet settings' time zones) and builds for `wasm32-wasip2` as
 //! well as the host.
 //!
-//! Every request carries `Authorization: Bearer <token>`. Errors come back as
+//! Every request carries `Authorization: Bearer <token>` (a node's join
+//! carries its one-time join token instead). Errors come back as
 //! an [`ApiError`] body with a 4xx or 5xx status. Times are Unix milliseconds.
 //!
 //! [Decisions]: https://github.com/xena-studios/hallow/blob/main/docs/DECISIONS.md
@@ -14,6 +15,7 @@
 pub mod command;
 pub mod fleet;
 pub mod friend;
+pub mod node;
 pub mod party;
 pub mod permission;
 pub mod presence;

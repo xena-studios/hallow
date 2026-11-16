@@ -1,9 +1,9 @@
 name: Check
 
 # Validates the Renovate config, checks the docs for broken relative links,
-# and formats, lints, tests and builds the Rust crates. main requires the
-# "check" and "rust" jobs. The control plane's tests run against Valkey,
-# hallow-db's against PostgreSQL.
+# lints and dry-runs the node install script, and formats, lints, tests and
+# builds the Rust crates. main requires the "check" and "rust" jobs. The
+# control plane's tests run against Valkey, hallow-db's against PostgreSQL.
 on:
   push:
     branches: [main]
@@ -32,6 +32,10 @@ jobs:
             done
           done
           exit $status
+      - name: Lint and dry-run the node install script
+        run: |
+          shellcheck deploy/node/*.sh
+          deploy/node/test-install.sh
 
   rust:
     runs-on: ubuntu-26.04

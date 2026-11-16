@@ -8,17 +8,23 @@
 //!   calls the real provider;
 //! - [`settings`]: the planner's [`Policy`] from the fleet settings the panel
 //!   edits, and which offers they allow.
+//! - [`bootstrap`]: the cloud-init user data that sets a new machine up as a
+//!   node and joins it to the network.
 //!
 //! The control plane will run the loop: build a snapshot, call
 //! [`planner::plan`], carry out the decisions through a provider, and record
 //! each one in the audit log.
 
+pub mod bootstrap;
 pub mod dry_run;
 pub mod money;
 pub mod planner;
 pub mod provider;
 pub mod settings;
 
+pub use bootstrap::{
+    BootstrapError, NodeBootstrap, WingsBuild, WireGuard, WireGuardPeer, render_cloud_init,
+};
 pub use dry_run::{DryRun, DryRunAction};
 pub use money::Money;
 pub use planner::{

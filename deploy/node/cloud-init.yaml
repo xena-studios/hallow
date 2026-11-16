@@ -1,0 +1,20 @@
+#cloud-config
+# Hallow node bootstrap: writes install.sh and its settings, then runs it once
+# on first boot. hallow_fleet::bootstrap::render_cloud_init fills the three
+# placeholders: env (HALLOW_* lines, the same settings as install.sh's flags),
+# install_script (install.sh, gzipped and base64-encoded) and
+# ssh_authorized_keys (an optional key list). See deploy/node/README.md.
+write_files:
+  - path: /etc/hallow/node.env
+    owner: root:root
+    permissions: "0600"
+    content: |
+{{env}}
+  - path: /usr/local/sbin/hallow-node-install
+    owner: root:root
+    permissions: "0755"
+    encoding: gz+b64
+    content: {{install_script}}
+{{ssh_authorized_keys}}
+runcmd:
+  - [bash, /usr/local/sbin/hallow-node-install, --env-file, /etc/hallow/node.env]

@@ -6,6 +6,7 @@ The core of Hallow's fleet manager ([Fleet](../../docs/FLEET.md)): the provider 
 - **`planner`**: `plan(&Snapshot, &Policy, &Memory) -> Plan`. A pure function: no I/O and no clock (the time is in the snapshot). `Memory` holds what must carry between ticks (how long pressure or surplus has held, the last buy and drain), so the control plane can keep it in Redis.
 - **`dry_run`**: `DryRun<P>` wraps a provider and never calls it. Machines it "creates" live in memory, priced from a price list it is given, and every create and cancel is logged with `tracing` and kept in `DryRun::log`. `DryRun::into_inner` turns dry run off.
 - **`settings`**: `Policy::from_settings(&FleetSettings, floor_nodes, offers)` turns the settings the panel edits (`hallow_proto::fleet::FleetSettings`) into the planner's `Policy`, refusing settings that don't validate. `allowed_offers` keeps the offers of an enabled, listed provider in its allowed regions and machine types, and `floor_nodes` picks the oldest base nodes as the floor. `dry_run` and `paused` aren't planner inputs: the loop doesn't plan while paused, and carries out decisions through `DryRun` in dry run.
+- **`bootstrap`**: `render_cloud_init(&NodeBootstrap)` fills [`deploy/node/cloud-init.yaml`](../../deploy/node/cloud-init.yaml) with a node's settings and [`install.sh`](../../deploy/node/install.sh), both compiled in. The result goes into `NodeSpec::user_data`. It checks every value against what the script accepts and refuses anything over 32 KiB. See [deploy/node](../../deploy/node/README.md).
 - **`money`**: `Money`, in millionths of the network's currency, so hourly prices like €0.0083 add up exactly.
 
 ```rust
@@ -39,6 +40,7 @@ Days and months start at midnight in the `timezone` setting (an IANA zone, `UTC`
 ```sh
 cargo test -p hallow-fleet
 cargo test -p hallow-fleet --test simulated_peak -- --nocapture  # print the simulated day
+cargo test -p hallow-fleet --test bootstrap_dry_run              # rendered cloud-init drives install.sh --dry-run
 ```
 
 - `src/planner_tests.rs`: one or more tests per rule, and day and month boundaries in a time zone other than UTC.

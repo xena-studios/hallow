@@ -14,16 +14,19 @@ path = "src/main.rs"
 [dependencies]
 hallow-proto = { path = "../proto" }
 hallow-db = { path = "../db" }
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 axum = { version = "0.8.9", features = ["macros"] }
 futures-util = { version = "0.3.31", default-features = false }
+getrandom = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 redis = { version = "1.8.2", default-features = false, features = ["tokio-comp", "connection-manager", "script"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.10"
+thiserror = "2.0.21"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json"] }

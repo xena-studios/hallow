@@ -8,7 +8,7 @@ flowchart LR
     fm -- "create / cancel" --> prov["Provider APIs<br/>Hetzner Cloud · Hetzner Robot<br/>OVHcloud Public Cloud · OVHcloud dedicated"]
     prov --> node["New machine"]
     node -- "cloud-init: Docker, Wings,<br/>private network, firewall" --> ready["Node ready"]
-    ready -- "registers" --> panel["Hallow Panel"]
+    ready -- "one-time join token" --> panel["Hallow Panel"]
     fm -- "drain, then cancel" --> node
 ```
 
@@ -110,12 +110,43 @@ Durations are in seconds, from 0 to 30 days. Provider credentials are never sett
 
 ## Setting up a new node
 
-1. The fleet manager creates the machine with a cloud-init script (cloud) or an install image and script (dedicated).
-2. The script installs Docker and Calagopus Wings, joins the private network (WireGuard across providers; Hetzner vSwitch or OVHcloud vRack inside one), and locks the firewall to game ports and the private network.
-3. Wings starts with a one-time join token, and the node registers itself in the panel.
-4. The node takes server templates and starts getting games.
+1. The fleet manager asks the control plane for a one-time join token (`POST /v1/nodes/join-tokens`), with the node's role, region and labels.
+2. It creates the machine with cloud-init that carries the token and runs `deploy/node/install.sh`. The cloud-init is rendered by `hallow_fleet::render_cloud_init`. A dedicated machine runs the same script with the same settings as flags.
+3. The script:
+   - installs Docker and Calagopus Wings (a pinned release, checksum verified);
+   - tunes the kernel;
+   - joins the private network: WireGuard across providers, or Hetzner vSwitch or OVHcloud vRack inside one;
+   - locks the firewall: SSH, plus Wings and the game ports from the private network only.
+4. The script trades the token with the control plane (`POST /v1/nodes/join`). The control plane uses the token up, then, through the panel's admin API:
+   - creates the node, reached at its private address;
+   - adds the game-port allocations on that address;
+   - mints a Wings enrollment code.
+5. Wings redeems the code with the panel for its own credentials and starts, and the node shows online in the panel.
+6. The node takes server templates and starts getting games.
 
-The same steps set up a machine staff add by hand.
+```mermaid
+sequenceDiagram
+    participant FM as Fleet manager
+    participant CP as Control plane
+    participant P as Provider
+    participant N as New machine
+    participant PA as Panel
+    FM->>CP: POST /v1/nodes/join-tokens
+    CP-->>FM: hjt_… (stored hashed)
+    FM->>P: create(user_data = cloud-init with the token)
+    P->>N: boot, cloud-init runs install.sh
+    N->>N: Docker, Wings, WireGuard, firewall
+    N->>CP: POST /v1/nodes/join (Bearer hjt_…)
+    CP->>PA: create node, allocations, enrollment code
+    CP-->>N: panel URL, enrollment code (token spent)
+    N->>PA: wings configure --enroll
+    PA-->>N: Wings credentials
+    N->>N: start Wings
+```
+
+A token is single use: a join claims it atomically and spends it only when the node is recorded. A join that fails part way deletes the half-made panel node and gives the token back, so the machine can retry. Staff adding a machine by hand can use a token too, or skip the control plane with the panel's own enrollment code (`--panel-url`, `--enroll-code`).
+
+Details, every setting, and what isn't done yet (the WireGuard hub learning new peers, the first run on real machines): [deploy/node](../deploy/node/README.md).
 
 ## Safety
 

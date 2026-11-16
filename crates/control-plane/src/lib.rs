@@ -18,6 +18,8 @@ pub mod events;
 mod fleet;
 mod friends;
 mod metrics;
+mod nodes;
+pub mod panel;
 mod punish;
 mod signals;
 pub mod store;
@@ -59,6 +61,10 @@ pub struct Config {
     pub admins: Vec<String>,
     /// How long anticheat signal samples are kept.
     pub signal_retention_days: u32,
+    /// The panel, for joining nodes. Without it node joins are off.
+    pub panel: Option<panel::PanelConfig>,
+    /// How long a node join token lasts unless the request says otherwise.
+    pub join_token_ttl: Duration,
     /// A proxy or server that hasn't heartbeated for this long is removed.
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
@@ -80,6 +86,8 @@ impl Config {
             database_url: None,
             admins: Vec::new(),
             signal_retention_days: 14,
+            panel: None,
+            join_token_ttl: Duration::from_secs(24 * 3600),
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
@@ -93,6 +101,8 @@ pub struct AppState {
     pub store: store::Store,
     pub events: events::Events,
     pub db: Option<hallow_db::PgPool>,
+    /// The panel's admin API, built from `config.panel`.
+    pub panel: Option<Arc<dyn panel::Panel>>,
 }
 
 /// Connects to Redis, starts the event listener and the reaper, and serves the
@@ -110,6 +120,23 @@ pub async fn serve_all(
     agent: Option<TcpListener>,
     config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let panel = match &config.panel {
+        Some(panel_config) => {
+            Some(Arc::new(panel::HttpPanel::new(panel_config)?) as Arc<dyn panel::Panel>)
+        }
+        None => None,
+    };
+    serve_with_panel(listener, agent, config, panel).await
+}
+
+/// [`serve_all`] with a given panel client instead of one built from
+/// `config.panel` (which must still be set for node joins).
+pub async fn serve_with_panel(
+    listener: TcpListener,
+    agent: Option<TcpListener>,
+    config: Config,
+    panel: Option<Arc<dyn panel::Panel>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = redis::Client::open(config.redis_url.as_str())?;
     let store = store::Store::new(&client, &config).await?;
     let events = events::Events::listen(client, store.keys().channel());
@@ -125,15 +152,20 @@ pub async fn serve_all(
             None
         }
     };
+    if panel.is_none() {
+        tracing::warn!("no panel: node joins are off");
+    }
     let state = Arc::new(AppState {
         config,
         store,
         events,
         db,
+        panel,
     });
     tokio::spawn(reaper(state.clone()));
     tokio::spawn(matchmaker(state.clone()));
     tokio::spawn(signals::retention(state.clone()));
+    tokio::spawn(nodes::retention(state.clone()));
     if let Some(agent) = agent {
         tracing::info!(address = %agent.local_addr()?, "answering load balancer agent checks");
         tokio::spawn(agent::serve(agent, state.clone()));
