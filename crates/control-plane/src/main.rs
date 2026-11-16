@@ -14,7 +14,7 @@
 //! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
 //! | `HALLOW_SIGNAL_RETENTION_DAYS` | `14` | How long anticheat signal samples are kept |
 //! | `HALLOW_PANEL_URL` | none | Where the control plane calls the panel's admin API; without it node joins are off |
-//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`) |
+//! | `HALLOW_PANEL_API_KEY` or `HALLOW_PANEL_API_KEY_FILE` | required with the panel | Admin API key (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, `nodes.delete`; `nodes.read-token` for Wings instances) |
 //! | `HALLOW_PANEL_PUBLIC_URL` | `HALLOW_PANEL_URL` | The panel URL nodes' Wings use |
 //! | `HALLOW_PANEL_LOCATIONS` | none | Panel location per region: `fsn1=<uuid>,nbg1=<uuid>`; `*=<uuid>` for any other |
 //! | `HALLOW_NODE_GAME_PORTS` | `30000-30999` | Game-port allocations made on each node; match `install.sh --game-ports` |

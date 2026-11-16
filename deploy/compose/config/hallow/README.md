@@ -13,6 +13,8 @@ checked into git; never reuse it on a network reachable from outside.
 - `lobby.toml`, `game-1.toml`: each server's `hallow_server` config (control
   plane, token, name and address). Kind, role and max players come from the
   server's `hallow.toml` in `servers/hub` and `servers/test-game`.
+- `kinds.toml`: the kinds the control plane starts instances of with
+  `../../compose.instances.yaml` (`test-game`); see `docs/INSTANCES.md`.
 
 ## Cross-proxy command test
 

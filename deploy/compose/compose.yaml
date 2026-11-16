@@ -23,7 +23,7 @@ services:
     build:
       context: ../..
       dockerfile: templates/proxy/Dockerfile
-    image: hallow-proxy:dev
+    image: hallow-proxy:${HALLOW_IMAGE_TAG:-dev}
     ports:
       - "25565:25565"
     volumes:
@@ -42,7 +42,7 @@ services:
     build:
       context: ../..
       dockerfile: templates/server/Dockerfile
-    image: hallow-server-base:dev
+    image: hallow-server-base:${HALLOW_IMAGE_TAG:-dev}
     scale: 0
 
   lobby:
@@ -51,7 +51,7 @@ services:
       context: ../../servers/hub
       additional_contexts:
         <<: *base
-    image: hallow-hub:dev
+    image: hallow-hub:${HALLOW_IMAGE_TAG:-dev}
     environment:
       HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
       HALLOW_SERVER_NAME: lobby
@@ -63,7 +63,7 @@ services:
       context: ../../servers/test-game
       additional_contexts:
         <<: *base
-    image: hallow-test-game:dev
+    image: hallow-test-game:${HALLOW_IMAGE_TAG:-dev}
     environment:
       HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
       HALLOW_SERVER_NAME: game-1
