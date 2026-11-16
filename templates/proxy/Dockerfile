@@ -2,7 +2,7 @@
 # /proxy/vine.toml. Build from the repo root:
 #   docker build -f templates/proxy/Dockerfile -t hallow-proxy .
 
-FROM rust:1.98-trixie AS build
+FROM rust:1.100-trixie AS build
 WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
 COPY upstream/Vine upstream/Vine

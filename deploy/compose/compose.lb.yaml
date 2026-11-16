@@ -14,7 +14,7 @@
 
 services:
   lb:
-    image: haproxy:3.2-alpine
+    image: haproxy:3.4-alpine
     ports:
       - "25565:25565"
       - "127.0.0.1:8404:8404"

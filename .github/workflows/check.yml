@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-26.04
     services:
       valkey:
-        image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+        image: valkey/valkey:9.2-alpine@sha256:cdcb7b1c7b6f1c9cb9442c71ac6275e78184657448407b2c1fdde7ee8024f4fb
         ports:
           - 6379:6379
       postgres:
