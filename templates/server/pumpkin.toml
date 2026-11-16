@@ -1,5 +1,5 @@
-# Hallow server base config. Every lobby and game starts from this; a server
-# repo's config/pumpkin.toml is layered on top. ${HALLOW_*} values are filled
+# Hallow server base config. Every hub, lobby and game starts from this; the
+# [pumpkin] table of a server repo's hallow.toml is merged on top. ${HALLOW_*} values are filled
 # in from the environment when the container starts.
 
 [networking.java]
@@ -45,4 +45,6 @@ allowed_permissions = [
   "sys.env.HALLOW_SERVER_ROLE",
   "sys.env.HALLOW_SERVER_ADDRESS",
   "sys.env.HALLOW_MAX_PLAYERS",
+  # From hallow.toml's lobby; not read by the plugin yet.
+  "sys.env.HALLOW_RETURN_LOBBY",
 ]

@@ -1,6 +1,10 @@
-# Hallow server base image: Pumpkin with the multiversion plugin, Hallow's
-# server plugin and Hallow's defaults. Every lobby and game image builds on this. Build from the repo root:
-#   docker build -f templates/server/Dockerfile -t hallow-server .
+# Hallow server base image, ghcr.io/xena-studios/hallow-server-base:<version>:
+# Pumpkin with the multiversion plugin, Hallow's server plugin, Hallow's
+# defaults and hallow-manifest. Every hub, lobby and game image builds on
+# this: a server repo's Dockerfile is FROM it plus the repo's hallow.toml,
+# plugins and world (see templates/server-repo). The version is in VERSION.
+# Build from the repo root:
+#   docker build -f templates/server/Dockerfile -t hallow-server-base:dev .
 
 FROM rust:1.98-trixie AS build
 RUN rustup target add wasm32-wasip2
@@ -19,16 +23,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/upstream/pumpkin-java-multiversion/target,sharing=locked \
     cd upstream/pumpkin-java-multiversion && cargo build --release --target wasm32-wasip2 \
     && cp target/wasm32-wasip2/release/pumpkin_java_multiversion.wasm /multiversion.wasm
-# Hallow's server plugin builds in the workspace, which names path
-# dependencies in upstream/Pumpkin (copied above). Its target cache has its
-# own id: sharing /src/target with other images' builds lets cargo reuse
-# artifacts built from other sources when their timestamps are newer.
+# Hallow's server plugin and hallow-manifest build in the workspace, which
+# names path dependencies in upstream/Pumpkin (copied above). Its target cache
+# has its own id: sharing /src/target with other images' builds lets cargo
+# reuse artifacts built from other sources when their timestamps are newer.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-server-plugin-target,target=/src/target,sharing=locked \
     cargo build --release --locked --target wasm32-wasip2 -p hallow-server \
-    && cp target/wasm32-wasip2/release/hallow_server.wasm /hallow_server.wasm
+    && cp target/wasm32-wasip2/release/hallow_server.wasm /hallow_server.wasm \
+    && cargo build --release --locked -p hallow-manifest \
+    && cp target/release/hallow-manifest /hallow-manifest
 
 FROM debian:trixie-slim
 RUN apt-get update \
@@ -41,7 +47,12 @@ COPY --from=build /multiversion.wasm /opt/hallow/plugins/pumpkin_java_multiversi
 # Always loaded, but idle unless HALLOW_CONTROL_PLANE (or its config.toml) is
 # set: see crates/server-plugin.
 COPY --from=build /hallow_server.wasm /opt/hallow/plugins/hallow_server.wasm
+# Reads and applies /server/hallow.toml on start; server repos also run its
+# check in their image build.
+COPY --from=build /hallow-manifest /usr/local/bin/hallow-manifest
 COPY templates/server/pumpkin.toml /etc/hallow/pumpkin.toml
+# Checked against each server repo's base range (hallow.toml's base).
+COPY templates/server/VERSION /etc/hallow/base-version
 COPY templates/server/entrypoint.sh /usr/local/bin/hallow-entrypoint
 RUN install -d -o hallow -g hallow /server/plugins /server/plugins/data
 WORKDIR /server

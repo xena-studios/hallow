@@ -1,5 +1,14 @@
 # templates
 
-The server base image every lobby and game builds on: Pumpkin, the multiversion plugin and Hallow's server plugin, with Hallow's default `pumpkin.toml` (telemetry and update checks off, Vine forwarding on).
+- `server/`: the server base image every hub, lobby and game builds on, published as `ghcr.io/xena-studios/hallow-server-base:<version>` (version in `server/VERSION`). It has:
+  - Pumpkin;
+  - the multiversion plugin, off by default;
+  - Hallow's server plugin;
+  - `hallow-manifest`;
+  - Hallow's default `pumpkin.toml`: telemetry and update checks off, Vine forwarding on.
 
-Lobbies and games themselves are not here. Each lives in its own server repo with a `hallow.toml`; see [Servers](../docs/SERVERS.md). `hallow-server-template` is the starting point for a new one. Starts in Phase 1.
+  Its entrypoint applies the server repo's `/server/hallow.toml` and starts Pumpkin. Build it with `docker buildx bake server`.
+- `server-repo/`: the contents of the `hallow-server-template` repo, the starting point for a new server kind: `hallow.toml`, a Dockerfile `FROM` the base image, and a workflow that calls the reusable [image workflow](../.github/workflows/server-image.yml).
+- `proxy/`: the Vine proxy image.
+
+Lobbies and games themselves live in their own server repos; see [Servers](../docs/SERVERS.md). [`servers/`](../servers) has the in-tree examples the dev network runs.

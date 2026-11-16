@@ -1,0 +1,14 @@
+# A test game for the dev network: no plugin yet, just an empty Pumpkin world
+# that registers as a game. Players return to the hub when a match ends.
+name = "test-game"
+role = "game"
+lobby = "hub"
+base = "^0.1"
+
+[players]
+min = 2                      # start a match when this many are queued
+max = 16                     # one match per instance
+
+[scaling]
+warm = 1                     # idle instances kept ready while players are online
+max_instances = 20

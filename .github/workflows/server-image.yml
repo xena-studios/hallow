@@ -1,0 +1,142 @@
+name: Server image
+
+# Reusable: checks a server repo's hallow.toml, builds its image on Hallow's
+# server base image and publishes it to GHCR. Server repos call it from their
+# own workflow (see templates/server-repo/.github/workflows/image.yml):
+#
+#   jobs:
+#     image:
+#       uses: xena-studios/hallow/.github/workflows/server-image.yml@main
+#       permissions:
+#         contents: read
+#         packages: write
+#
+# Tags follow Decisions 27: a vX.Y.Z git tag publishes X.Y.Z; a push to the
+# default branch publishes sha-<commit> and dev, which never go live on
+# production; pull requests build and check without publishing.
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Image to publish, without a tag. Defaults to ghcr.io/<owner>/<name in hallow.toml>.
+        type: string
+        default: ""
+      context:
+        description: Folder with hallow.toml and the Dockerfile, relative to the repo root.
+        type: string
+        default: .
+      rust:
+        description: Install Rust with the wasm32-wasip2 target before `prepare`, to build the game's plugin.
+        type: boolean
+        default: false
+      prepare:
+        description: Shell commands run in `context` before the build, such as building the plugin into plugins/.
+        type: string
+        default: ""
+      push:
+        description: Publish the image. Pull requests never publish.
+        type: boolean
+        default: true
+    outputs:
+      tags:
+        description: The image tags built.
+        value: ${{ jobs.image.outputs.tags }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.context }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Maps and worlds are tracked with Git LFS.
+          lfs: true
+
+      - name: Install Rust
+        if: inputs.rust
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-wasip2
+          rustup default stable
+
+      - name: Prepare
+        if: inputs.prepare != ''
+        env:
+          PREPARE: ${{ inputs.prepare }}
+        run: sh -euc "$PREPARE"
+
+      # hallow-manifest ships in the base image, so the check runs with the
+      # exact base the Dockerfile builds on, against that base's version.
+      - name: Check hallow.toml
+        id: manifest
+        env:
+          IMAGE: ${{ inputs.image }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          base=$(awk 'toupper($1) == "FROM" { print $2; exit }' Dockerfile)
+          echo "Base image: $base"
+          docker pull --quiet "$base"
+          version=$(docker run --rm --entrypoint cat "$base" /etc/hallow/base-version)
+          docker run --rm -v "$PWD:/repo:ro" --entrypoint hallow-manifest "$base" \
+            check /repo --base-version "$version"
+          name=$(sed -n 's/^name *= *"\([a-z0-9-]*\)".*/\1/p' hallow.toml | head -n 1)
+          if [ -z "$IMAGE" ]; then
+            IMAGE="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/$name"
+          fi
+          # What the server reports to the control plane: the git tag, or the
+          # dev build's sha- tag.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            server_version=$GITHUB_REF_NAME
+          else
+            server_version=sha-${GITHUB_SHA::7}
+          fi
+          {
+            echo "image=$IMAGE"
+            echo "kind=$name"
+            echo "base-version=$version"
+            echo "version=$server_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.manifest.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-,enable={{is_default_branch}}
+            type=raw,value=dev,enable={{is_default_branch}}
+            type=ref,event=pr
+          labels: |
+            io.xena-studios.hallow.kind=${{ steps.manifest.outputs.kind }}
+            io.xena-studios.hallow.base-version=${{ steps.manifest.outputs.base-version }}
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: inputs.push && github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          push: ${{ inputs.push && github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            HALLOW_SERVER_VERSION=${{ steps.manifest.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
