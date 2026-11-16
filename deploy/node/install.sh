@@ -55,6 +55,12 @@ Wings:
   --wings-url URL         Download URL; {version} and {arch} are filled in  HALLOW_WINGS_URL
   --wings-sha256 HEX      Expected SHA-256 (required for a non-pinned build)  HALLOW_WINGS_SHA256
 
+Steps (for machines that already have them, or containers):
+  --skip-docker           Don't install or configure Docker; it must already run  HALLOW_SKIP_DOCKER=1
+  --skip-sysctl           Leave kernel settings alone                   HALLOW_SKIP_SYSCTL=1
+  --no-systemd            No systemd: write no units, start nothing; run
+                          /usr/local/bin/wings yourself afterwards      HALLOW_NO_SYSTEMD=1
+
 Other:
   --env-file PATH         Read HALLOW_* settings from a KEY=VALUE file
   --dry-run               Print what would be done; change nothing      HALLOW_DRY_RUN=1
@@ -108,6 +114,9 @@ SSH_PORT=${HALLOW_SSH_PORT:-22}
 read -r -a WINGS_ALLOW <<<"${HALLOW_WINGS_ALLOW:-}"
 GAME_PORTS=${HALLOW_GAME_PORTS:-30000-30999}
 NO_FIREWALL=${HALLOW_NO_FIREWALL:-0}
+SKIP_DOCKER=${HALLOW_SKIP_DOCKER:-0}
+SKIP_SYSCTL=${HALLOW_SKIP_SYSCTL:-0}
+NO_SYSTEMD=${HALLOW_NO_SYSTEMD:-0}
 WINGS_VERSION=${HALLOW_WINGS_VERSION:-$WINGS_VERSION_PINNED}
 WINGS_URL_DEFAULT='https://github.com/calagopus/wings/releases/download/release-{version}/wings-rs-{arch}-linux'
 WINGS_URL=${HALLOW_WINGS_URL:-$WINGS_URL_DEFAULT}
@@ -137,6 +146,9 @@ while (($#)); do
 	--wings-allow) WINGS_ALLOW+=("${2:?}"); shift ;;
 	--game-ports) GAME_PORTS=${2:?}; shift ;;
 	--no-firewall) NO_FIREWALL=1 ;;
+	--skip-docker) SKIP_DOCKER=1 ;;
+	--skip-sysctl) SKIP_SYSCTL=1 ;;
+	--no-systemd) NO_SYSTEMD=1 ;;
 	--wings-version) WINGS_VERSION=${2:?}; shift ;;
 	--wings-url) WINGS_URL=${2:?}; shift ;;
 	--wings-sha256) WINGS_SHA256=${2:?}; shift ;;
@@ -177,6 +189,9 @@ for cidr in "${SSH_ALLOW[@]}" "${WINGS_ALLOW[@]}"; do
 	[[ $cidr =~ ^[0-9a-fA-F.:]+(/[0-9]{1,3})?$ ]] || die "bad CIDR $cidr"
 done
 [[ -z $PRIVATE_IP ]] && PRIVATE_IP=${WG_ADDRESS%/*}
+if [[ $NO_SYSTEMD == 1 && $SKIP_DOCKER != 1 ]]; then
+	die "--no-systemd needs --skip-docker: Docker is installed and started with systemd"
+fi
 
 REGISTER='none'
 if [[ $SKIP_REGISTER == 1 ]]; then
@@ -271,6 +286,11 @@ step_packages() {
 }
 
 step_docker() {
+	if [[ $SKIP_DOCKER == 1 ]]; then
+		log "Docker: --skip-docker, skipped"
+		docker_running || log "warning: no Docker Engine answers on /var/run/docker.sock; Wings needs one"
+		return 0
+	fi
 	log "Docker from download.docker.com"
 	local keyring=/etc/apt/keyrings/docker.asc
 	if [[ ! -s $keyring ]]; then
@@ -299,7 +319,16 @@ EOF
 	run systemctl enable --now docker
 }
 
+docker_running() {
+	[[ $DRY_RUN == 1 ]] && return 0
+	curl -fsS --max-time 5 --unix-socket /var/run/docker.sock http://localhost/_ping >/dev/null 2>&1
+}
+
 step_sysctl() {
+	if [[ $SKIP_SYSCTL == 1 ]]; then
+		log "kernel tuning: --skip-sysctl, skipped"
+		return 0
+	fi
 	log "kernel tuning"
 	write_file /etc/modules-load.d/hallow.conf 0644 <<'EOF' || true
 tcp_bbr
@@ -364,8 +393,15 @@ Endpoint = $endpoint"
 PersistentKeepalive = $keepalive"
 	done
 	if write_file /etc/wireguard/wg0.conf 0600 <<<"$conf"; then
-		run systemctl enable wg-quick@wg0
-		run systemctl restart wg-quick@wg0
+		if [[ $NO_SYSTEMD == 1 ]]; then
+			ip link show wg0 >/dev/null 2>&1 && run wg-quick down wg0
+			run wg-quick up wg0
+		else
+			run systemctl enable wg-quick@wg0
+			run systemctl restart wg-quick@wg0
+		fi
+	elif [[ $NO_SYSTEMD == 1 ]]; then
+		ip link show wg0 >/dev/null 2>&1 || run wg-quick up wg0
 	else
 		run systemctl enable --now wg-quick@wg0
 	fi
@@ -475,6 +511,10 @@ EOF
 	if [[ $DRY_RUN != 1 ]]; then
 		nft -c -f "$rules" || die "nft rejected $rules"
 	fi
+	if [[ $NO_SYSTEMD == 1 ]]; then
+		run nft -f "$rules"
+		return 0
+	fi
 	run systemctl daemon-reload
 	run systemctl enable hallow-firewall.service
 	if ((changed)); then
@@ -503,6 +543,10 @@ step_wings() {
 		fi
 		install -m 0755 "$tmp" "$bin"
 		rm -f "$tmp"
+	fi
+	if [[ $NO_SYSTEMD == 1 ]]; then
+		log "Wings unit: --no-systemd, skipped"
+		return 0
 	fi
 	# The unit `wings service-install` writes, plus ordering after the private
 	# network and a higher file limit. Written here because service-install
@@ -601,6 +645,10 @@ step_register() {
 step_start() {
 	if [[ $REGISTER == skip && ! -s /etc/calagopus-wings/config.yml ]]; then
 		log "Wings is installed but not registered, so not started"
+		return 0
+	fi
+	if [[ $NO_SYSTEMD == 1 ]]; then
+		log "Wings is set up; --no-systemd, so start it yourself: /usr/local/bin/wings"
 		return 0
 	fi
 	log "starting Wings"

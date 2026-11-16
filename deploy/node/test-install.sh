@@ -84,6 +84,18 @@ expect "game ports" os-debian-12 0 "th dport 25600-25700 drop" -- "${JOIN[@]}" -
 expect "labels" os-debian-12 0 '"pool": "games"' '"tier": "a"' \
 	-- "${JOIN[@]}" --label pool=games --label tier=a --role base
 
+expect "container: no docker, sysctl, systemd" os-debian-13 0 \
+	"Docker: --skip-docker, skipped" "kernel tuning: --skip-sysctl, skipped" \
+	"Wings unit: --no-systemd, skipped" "start it yourself: /usr/local/bin/wings" \
+	"wings configure --override" "==> done" \
+	-- --control-plane http://10.213.0.10:8080 --join-token hjt_test --private-ip 10.213.0.1 \
+	--no-firewall --skip-docker --skip-sysctl --no-systemd
+if grep -q "systemctl" <<<"$out"; then fail "--no-systemd still called systemctl"; else pass "no systemctl"; fi
+if grep -q "download.docker.com" <<<"$out"; then fail "--skip-docker still installed Docker"; else pass "no docker install"; fi
+expect "no-systemd firewall loads nft directly" os-debian-13 0 "+ nft -f /etc/hallow/firewall.nft" \
+	-- "${JOIN[@]}" --skip-docker --skip-sysctl --no-systemd
+expect "no-systemd needs skip-docker" os-debian-13 1 "--no-systemd needs --skip-docker" \
+	-- "${JOIN[@]}" --no-systemd
 expect "bad role" os-debian-12 1 "--role must be base or burst" -- "${JOIN[@]}" --role huge
 expect "token needs control plane" os-debian-12 1 "--join-token needs --control-plane" -- --join-token x --wg-address 10.42.1.7/16 --wg-peer "$PEER"
 expect "nothing to register with" os-debian-12 1 "give --join-token" -- --region fsn1
