@@ -40,7 +40,7 @@ The panel's Ranks page edits Hallow ranks and gives them to players through the 
 
 ## Short-lived game instances
 
-The matchmaker creates and deletes game instances through the Wings API. They never become one panel server record each, which would flood its database and UI. The Network page shows them live instead.
+The matchmaker creates and deletes game instances through the Wings API. They never become one panel server record each, which would flood its database and UI. The Network page shows them live instead. The Instances page lists them, and opens an instance's console (its output and a command line) through a Wings token the Hallow extension signs for it ([Instances](INSTANCES.md#consoles)).
 
 ## Extension reach
 

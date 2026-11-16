@@ -12,12 +12,17 @@ WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
 COPY upstream/pumpkin-java-multiversion upstream/pumpkin-java-multiversion
 COPY upstream/Vine upstream/Vine
-# The translation's generated datapacks are cached too, so a Vine change doesn't
-# download and run Mojang's server jars again.
+# The target cache is shared by every build on this machine, worktrees and
+# other checkouts included, and cargo trusts an artifact newer than its
+# sources. Touching the .rs files makes cargo rebuild Vine, the translation
+# and their Pumpkin crates from what was copied here; crates.io dependencies
+# stay cached. The translation's generated datapacks are cached too, so a Vine
+# change doesn't download and run Mojang's server jars again.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/upstream/Vine/target,sharing=locked \
     --mount=type=cache,id=multiversion-datapacks,target=/src/upstream/pumpkin-java-multiversion/assets/datapacks,sharing=locked \
-    cd upstream/Vine && cargo build --release --locked \
+    find upstream/Pumpkin upstream/pumpkin-java-multiversion upstream/Vine -name '*.rs' -exec touch {} + \
+    && cd upstream/Vine && cargo build --release --locked \
     && cp target/release/vine /vine
 
 FROM debian:trixie-slim

@@ -339,6 +339,10 @@ async fn join_claimed(
     let panel_uuid = panel.create_node(&new_node).await?;
     // From here on, a failure deletes the panel node again.
     let finished = async {
+        if let Some(template) = &config.node_public_url {
+            let url = crate::panel::node_public_url(template, panel_uuid, &checked.name);
+            panel.set_node_public_url(panel_uuid, &url).await?;
+        }
         let ports: Vec<u16> = (config.game_ports.0..=config.game_ports.1).collect();
         panel
             .add_allocations(panel_uuid, checked.private_ip, &ports)

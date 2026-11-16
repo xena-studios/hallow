@@ -112,6 +112,23 @@ async fn enrollment(State(mock): State<Shared>, Path(node): Path<Uuid>) -> Respo
         .into_response()
 }
 
+async fn update_node(
+    State(mock): State<Shared>,
+    Path(node): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> Response {
+    let mut m = mock.lock().unwrap();
+    let Some(record) = m.nodes.get_mut(&node) else {
+        return errors(StatusCode::NOT_FOUND, "node not found");
+    };
+    if let Some(fields) = body.as_object() {
+        for (key, value) in fields {
+            record[key] = value.clone();
+        }
+    }
+    Json(json!({})).into_response()
+}
+
 async fn delete_node(State(mock): State<Shared>, Path(node): Path<Uuid>) -> Response {
     match mock.lock().unwrap().nodes.remove(&node) {
         Some(_) => Json(json!({})).into_response(),
@@ -149,7 +166,10 @@ async fn start_panel() -> (String, Shared) {
         .with_state(mock.clone());
     let app = Router::new()
         .route("/api/admin/nodes", post(create_node))
-        .route("/api/admin/nodes/{node}", delete(delete_node))
+        .route(
+            "/api/admin/nodes/{node}",
+            delete(delete_node).patch(update_node),
+        )
         .route("/api/admin/nodes/{node}/allocations", post(allocations))
         .route("/api/admin/nodes/{node}/enrollment", post(enrollment))
         .layer(middleware::from_fn_with_state(mock.clone(), check_key))
@@ -173,6 +193,10 @@ struct Env {
 
 impl Env {
     async fn start() -> Option<Self> {
+        Self::start_with(|_| {}).await
+    }
+
+    async fn start_with(setup: impl FnOnce(&mut PanelConfig)) -> Option<Self> {
         let redis = env_or_skip("HALLOW_TEST_REDIS_URL")?;
         let db_url = env_or_skip("HALLOW_TEST_DATABASE_URL")?;
         let admin = PgPoolOptions::new()
@@ -195,6 +219,7 @@ impl Env {
             "11111111-1111-1111-1111-111111111111".parse().unwrap(),
         );
         panel.game_ports = (30000, 30009);
+        setup(&mut panel);
         let mut config = Config::new(redis, TOKEN);
         config.key_prefix = format!("test-{}", Uuid::new_v4());
         config.database_url = Some(format!("{base_url}/{db_name}"));
@@ -374,6 +399,44 @@ async fn a_token_joins_one_node() {
     assert_eq!(nodes[0].private_ip, "10.42.1.7");
     assert_eq!(nodes[0].wireguard_public_key.as_deref(), Some(WG_KEY));
     assert_eq!(nodes[0].labels["pool"], "games");
+    env.drop().await;
+}
+
+/// With a node public URL, the joined node's Wings is reached by browsers
+/// through it (the panel's Wings proxy), not at its private address.
+#[tokio::test]
+async fn a_joined_node_gets_its_public_url() {
+    let Some(env) = Env::start_with(|panel| {
+        panel.node_public_url = Some("https://panel.example.net/wings-proxy/{uuid}".into());
+    })
+    .await
+    else {
+        return;
+    };
+    let token: JoinToken = env
+        .issue(&burst(Some("burst-public")))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let res = env.join(&token.token, &machine("10.42.1.10")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let reply: JoinReply = res.json().await.unwrap();
+    {
+        let m = env.mock.lock().unwrap();
+        let methods: Vec<&str> = m.calls.iter().map(|(m, _, _)| m.as_str()).collect();
+        assert_eq!(methods, ["POST", "PATCH", "POST", "POST"]);
+        assert_eq!(m.calls[1].1, format!("/api/admin/nodes/{}", reply.node));
+        assert_eq!(
+            m.calls[1].2,
+            json!({ "public_url": format!("https://panel.example.net/wings-proxy/{}", reply.node) })
+        );
+        let node = &m.nodes[&reply.node];
+        assert_eq!(
+            node["url"], "http://10.42.1.10:8080",
+            "the panel still calls Wings privately"
+        );
+    }
     env.drop().await;
 }
 
