@@ -1,28 +1,22 @@
 # Hallow server base image, ghcr.io/xena-studios/hallow-server-base:<version>:
-# Pumpkin with the multiversion plugin, Hallow's server plugin, Hallow's
+# Pumpkin, Hallow's server plugin, Hallow's
 # defaults and hallow-manifest. Every hub, lobby and game image builds on
 # this: a server repo's Dockerfile is FROM it plus the repo's hallow.toml,
 # plugins and world (see templates/server-repo). The version is in VERSION.
+# Servers only see the current Minecraft version: the proxy translates older
+# clients (pumpkin-java-multiversion, linked into Vine), so the image carries
+# no multiversion plugin.
 # Build from the repo root:
 #   docker build -f templates/server/Dockerfile -t hallow-server-base:dev .
 
 FROM rust:1.100-trixie AS build
 RUN rustup target add wasm32-wasip2
-# The multiversion plugin's build runs Mojang's data generator for older versions (Java 17+).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends openjdk-21-jre-headless \
-    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY upstream/Pumpkin upstream/Pumpkin
-COPY upstream/pumpkin-java-multiversion upstream/pumpkin-java-multiversion
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/upstream/Pumpkin/target,sharing=locked \
     cd upstream/Pumpkin && cargo build --release --locked --bin pumpkin \
     && cp target/release/pumpkin /pumpkin
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/src/upstream/pumpkin-java-multiversion/target,sharing=locked \
-    cd upstream/pumpkin-java-multiversion && cargo build --release --target wasm32-wasip2 \
-    && cp target/wasm32-wasip2/release/pumpkin_java_multiversion.wasm /multiversion.wasm
 # Hallow's server plugin and hallow-manifest build in the workspace, which
 # names path dependencies in upstream/Pumpkin (copied above). Its target cache
 # has its own id: sharing /src/target with other images' builds lets cargo
@@ -45,8 +39,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -u 2613 -m -d /server hallow
 COPY --from=build /pumpkin /usr/local/bin/pumpkin
-# Off by default: see HALLOW_MULTIVERSION in entrypoint.sh.
-COPY --from=build /multiversion.wasm /opt/hallow/plugins/pumpkin_java_multiversion.wasm
 # Always loaded, but idle unless HALLOW_CONTROL_PLANE (or its config.toml) is
 # set: see crates/server-plugin.
 COPY --from=build /hallow_server.wasm /opt/hallow/plugins/hallow_server.wasm

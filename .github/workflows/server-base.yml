@@ -14,7 +14,6 @@ on:
       - crates/server-plugin/**
       - crates/server-manifest/**
       - upstream/Pumpkin
-      - upstream/pumpkin-java-multiversion
       - Cargo.lock
       - .github/workflows/server-base.yml
   workflow_dispatch:

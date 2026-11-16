@@ -45,7 +45,13 @@ use serde::Deserialize;
 pub const FILE_NAME: &str = "hallow.toml";
 
 /// Plugins the base image ships; a server repo can't replace or configure them.
-pub const BASE_PLUGINS: [&str; 2] = ["hallow_server", "pumpkin_java_multiversion"];
+pub const BASE_PLUGINS: [&str; 1] = ["hallow_server"];
+
+/// Plugins a server repo may not load, and why.
+pub const REFUSED_PLUGINS: [(&str, &str); 1] = [(
+    "pumpkin_java_multiversion",
+    "old clients are translated by the proxy; servers only see the current version",
+)];
 
 /// `pumpkin.toml` keys a manifest may not set under `[pumpkin]`, and why.
 /// Some would cut the server off the network, the rest have their own field.
@@ -443,6 +449,8 @@ impl Manifest {
                     &format!("{field}.name"),
                     format!("{name} comes with the base image"),
                 );
+            } else if let Some((_, why)) = REFUSED_PLUGINS.iter().find(|(n, _)| *n == name) {
+                problem(&format!("{field}.name"), format!("{name}: {why}"));
             } else if !names.insert(name.clone()) {
                 problem(&format!("{field}.name"), format!("{name} is listed twice"));
             }
@@ -984,6 +992,10 @@ mod tests {
         assert_problem(
             &hub("[[plugins]]\nfile = \"hallow_server.wasm\""),
             "comes with the base image",
+        );
+        assert_problem(
+            &hub("[[plugins]]\nfile = \"plugins/pumpkin_java_multiversion.wasm\""),
+            "translated by the proxy",
         );
         assert_problem(
             &hub("[[plugins]]\nfile = \"a/x.wasm\"\n[[plugins]]\nfile = \"b/x.wasm\""),
