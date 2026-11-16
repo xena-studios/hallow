@@ -33,7 +33,13 @@ How it fits together:
 - **The container.** Wings runs the image's own `ENTRYPOINT` (the configuration's `entrypoint` is unset) and makes the rest of the filesystem read-only apart from the server's volume at `/home/container`. It binds the node's game port to the same port in the container. So instances get `HALLOW_SERVER_DIR=/home/container` (the base image copies `/server` there and runs from it) and `HALLOW_SERVER_PORT=<port>` (Pumpkin listens on it). Both default to the old behaviour, so compose and other uses are unchanged.
 - **Ports.** Instances take the lowest free port in the node's game-port range (`HALLOW_NODE_GAME_PORTS`), tracked in the instance records. The panel's allocation records for that range stay as they are; panel-made servers should use other ports.
 
-**What isn't verified.** The Wings orchestrator and the remote answers are unit tested for their shapes, which are read from the Wings source. They haven't run against a live Wings: there is no Wings in CI or on the dev network yet. The first run on a real node (with the node bootstrap's first real run, [deploy/node](../deploy/node/README.md)) is the check. The container's user and the dropped capabilities haven't been tried either.
+**What is verified, and what isn't.** `tools/wings-e2e/run.sh` runs this whole path against a real Wings (the pinned 1.2.10 release) on one machine: the real panel, a node joined with the real `install.sh` and `wings configure --enroll`, Wings fetching configurations from the control plane, pulling images from a registry and running instances as its own user on a read-only root, servers registering with their scoped tokens, a bot routed to a Wings instance through Vine, and deletion removing the container. The first run found three bugs, all fixed:
+
+- Wings' boot call `POST /api/remote/servers/reset` got `405` from the control plane, because it matched the `GET servers/{uuid}` route, and Wings refused to start. Every method now reaches the handler, which passes anything that isn't a `GET` of its own instance to the panel (`tests/nodes.rs` checks it).
+- Every Wings instance exited at once: the base image's `/server` was `0700` for the `hallow` user, and Wings runs containers as its own user, so the entrypoint's copy to `/home/container` failed. `/server` is now `0755`.
+- With a node unreachable, the planner created a new lobby instance on every pass (twice a second) while failed ones waited out their retry time. A kind with a failed instance now waits for it to be cleaned up.
+
+Still untested: the panel calling Wings (console, files) for a node joined this way, several nodes, x86_64, and a real machine's WireGuard and firewall ([tools/wings-e2e](../tools/wings-e2e/README.md#limits)).
 
 ## Kinds
 
@@ -151,7 +157,7 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 
 ## Still to do
 
-- Run the Wings orchestrator against a real node, with the node bootstrap's first real run.
+- Run the Wings orchestrator on a real (cloud or dedicated) node; it has run end to end locally (`tools/wings-e2e`).
 - Scale lobbies and hubs on players per instance, not just `warm`.
 - Draining nodes: no new instances there (the fleet manager).
 - `players.min` and match start, with `hallow-sdk`.

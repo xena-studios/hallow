@@ -44,7 +44,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Vine plugin: cross-proxy commands (`/find`, `/msg` and `/r`, staff `/alert` and `/gkick`); party warp comes with parties
 - [x] Load balancer with PROXY protocol and health checks (HAProxy, drain-aware agent checks against the control plane)
 - [x] Matchmaker: queues that fill ready game servers, parties kept together
-- [x] Matchmaker: warm instances, start and delete server images through the Wings API ([Instances](INSTANCES.md); the gate path runs on the dev network through Docker. The Wings orchestrator follows the Wings source but hasn't run on a real node yet)
+- [x] Matchmaker: warm instances, start and delete server images through the Wings API ([Instances](INSTANCES.md); the gate path runs on the dev network through Docker. The Wings orchestrator has run end to end against a real Wings locally, `tools/wings-e2e`, but not on a cloud or dedicated node yet)
 - [x] Server repos: `hallow.toml` format, server base image, `hallow-server-template`, image build workflow (template contents in `templates/server-repo`; the GitHub repo and the first base image tag are still to create)
 - [x] Hallow server plugin: the link to the control plane (register, heartbeat, state, unregister), in the base image
 - [x] Hallow server plugin: presence (joins, leaves and the full list in heartbeats) and stats (play time, joins, game counters into `hallow.player_stats`)
@@ -58,7 +58,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Panel: Network page and Players page (network-first admin: Overview landing, Players, Punishments and Anticheat lookups, Fleet section, Hallow theme)
 - [x] Panel: punishments and staff roles (issue and lift from the panel, templates, Ranks page, activity log)
 - [x] Monitoring: Prometheus, Grafana, Loki (dev stack and dashboard, with each server's tick time from the server plugin)
-- [x] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens (not yet run on a real machine)
+- [x] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens (run for real in a container by `tools/wings-e2e`; not yet on a real machine)
 - [x] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md)). Both collectors send samples; packet timing waits on a Vine packet hook
 
 **Gate:** with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.

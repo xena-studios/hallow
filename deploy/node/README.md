@@ -60,6 +60,9 @@ Every flag has a `HALLOW_*` environment variable, and `--env-file` reads them fr
 | `--game-ports LO-HI` | `HALLOW_GAME_PORTS` | Default 30000-30999, below 40000; must match the control plane's `HALLOW_NODE_GAME_PORTS` |
 | `--wings-version`, `--wings-url`, `--wings-sha256` | `HALLOW_WINGS_*` | Another Wings build; the URL may use `{version}` and `{arch}`. Anything but the pinned build needs its SHA-256 |
 | `--skip-register`, `--rejoin`, `--no-firewall`, `--dry-run` | | |
+| `--skip-docker` | `HALLOW_SKIP_DOCKER=1` | Docker already runs (it must answer on `/var/run/docker.sock`) |
+| `--skip-sysctl` | `HALLOW_SKIP_SYSCTL=1` | Leave kernel settings alone |
+| `--no-systemd` | `HALLOW_NO_SYSTEMD=1` | No units and no `systemctl`: the firewall and WireGuard are loaded directly, and you start `/usr/local/bin/wings` yourself. Needs `--skip-docker`. For containers, such as the end-to-end run |
 
 ## Joining
 
@@ -145,12 +148,25 @@ HALLOW_TEST_REDIS_URL=redis://127.0.0.1:6379 HALLOW_TEST_DATABASE_URL=postgres:/
   cargo test -p hallow-control-plane --test nodes  # issue and join against a mock panel
 ```
 
+## End to end, locally
+
+`tools/wings-e2e/run.sh` ([README](../../tools/wings-e2e/README.md)) runs `install.sh` for real in a Debian 13 container on the Docker host (host networking, the Docker socket mounted), against the real panel and control plane:
+
+```sh
+docker exec hwe2e-node bash /root/install.sh \
+  --control-plane http://10.213.0.10:8080 --join-token hjt_... \
+  --role burst --region local --private-ip 10.213.0.1 --game-ports 30100-30119 \
+  --no-firewall --skip-docker --skip-sysctl --no-systemd
+```
+
+Result (2026-11-16, OrbStack on arm64): packages installed; Wings 1.2.10 downloaded and its SHA-256 checked; the join created the node, 20 game-port allocations and an enrollment code in the panel through the control plane's panel client (`nodes.create`, `nodes.allocations`, `nodes.reset-token`, then `nodes.read-token` for Wings' token), with the control plane as Wings' remote; `wings configure --enroll` wrote the config (API port and SFTP port from the panel node); Wings started, and the control plane ran hub and game instances on it. The run found and fixed a remote-shim bug that stopped Wings booting ([Instances](../../docs/INSTANCES.md#wings-without-a-panel-record-per-instance)).
+
 ## Not done yet
 
-- **Run on real machines.** So far the script has been checked with shellcheck and dry runs only. It hasn't run on a real Debian or Ubuntu machine, and the join hasn't run against a real panel; the control plane's panel client has only met a mock built from the panel's source. The first real run should check:
-  - Docker and Wings install;
+- **Run on real machines.** The script has run for real only in a container, with Docker, the kernel tuning, WireGuard, the firewall and systemd skipped. A real Debian or Ubuntu machine should still check:
+  - Docker installs from its repository and Wings runs under `wings.service`;
   - `nft -c` accepts the ruleset;
-  - Wings enrolls and shows online;
+  - Wings shows online in the panel (in the local run the panel couldn't reach the node's address);
   - game ports are unreachable from the public address.
 - **The WireGuard hub learning new peers.** A node sends its public key and the control plane stores it (`GET /v1/nodes`). Nothing yet adds it to the hub's `wg0`. Until then a node's WireGuard peers must already accept it: add it by hand, or give the hub a sync job that reads `GET /v1/nodes`. Picking a free WireGuard address per node is the fleet manager's job and isn't built either.
 - **TLS to Wings.** The panel talks to Wings over plain HTTP on the private address, inside WireGuard.

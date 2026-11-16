@@ -14,7 +14,7 @@
 //! which it reads from the panel (`GET /api/admin/nodes/{node}/token`,
 //! admin permission `nodes.read-token`) and caches.
 //!
-//! Untested against a live Wings: see docs/INSTANCES.md for what is.
+//! Run end to end against Wings 1.2.10 by `tools/wings-e2e` (docs/INSTANCES.md).
 
 use std::{
     collections::{BTreeMap, HashMap},
