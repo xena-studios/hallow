@@ -34,6 +34,8 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `friend_requests` | A request from one account to another, until it's accepted or denied; asking back accepts | `(from_uuid, to_uuid)` |
 | `friendships` | One row per friendship, the smaller UUID first; at most 200 friends each | `(a_uuid, b_uuid)` |
 | `signal_samples` | Anticheat signals: one row per player per measured window (30 s), with the source, protocol and free-form JSON metrics; deleted after the retention period | `id` |
+| `fleet_settings` | The fleet manager's settings in force (`hallow_proto::fleet::FleetSettings` as JSON), who changed them last and when; one row, absent until the defaults are first changed | `id` (always 1) |
+| `fleet_settings_history` | Every change to `fleet_settings`, append-only, with the settings before (`NULL` for the first change) and after | `id` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 
 A punishment's issuer and revoker are an actor: a staff `account` (with its UUID), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.

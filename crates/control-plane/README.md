@@ -40,6 +40,10 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - proxies and servers `POST /v1/signals` batches of per-player samples, each a window of named measurements, from 30 s of play;
   - they're kept in PostgreSQL for `HALLOW_SIGNAL_RETENTION_DAYS` (14);
   - `GET /v1/signals?name=` returns a player's last 200 for review (docs/ANTICHEAT.md, phase 1).
+- **Fleet settings** (with the database): everything the fleet manager decides by ([Fleet](../../docs/FLEET.md#settings)), edited from the panel:
+  - `GET /v1/fleet/settings` returns the settings in force with who changed them last and when, or the defaults if nobody has;
+  - `PUT /v1/fleet/settings` with `{settings, updated_by}` replaces them; invalid settings get a `400` whose `fields` names each bad field;
+  - every change goes in an append-only history, `GET /v1/fleet/settings/history?limit=` (newest first, 50 by default, at most 500).
 - **Metrics.** `GET /metrics` (no token) serves Prometheus' text format, read from live state:
   - players online and the limit;
   - players per proxy;

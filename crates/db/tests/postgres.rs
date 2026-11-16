@@ -128,6 +128,8 @@ async fn migrations_stay_in_the_hallow_schema() {
             "account_ranks",
             "account_usernames",
             "accounts",
+            "fleet_settings",
+            "fleet_settings_history",
             "friend_requests",
             "friendships",
             "punishments",
@@ -136,6 +138,42 @@ async fn migrations_stay_in_the_hallow_schema() {
             "signal_samples"
         ]
     );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn fleet_settings_keep_a_history() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    assert_eq!(hallow_db::fleet_settings(&db.pool).await.unwrap(), None);
+
+    let mut settings = hallow_proto::fleet::FleetSettings {
+        max_nodes: 4,
+        ..Default::default()
+    };
+    let first = hallow_db::save_fleet_settings(&db.pool, &settings, "alice")
+        .await
+        .unwrap();
+    assert_eq!(first.settings.0, settings);
+    assert_eq!(first.updated_by, "alice");
+    settings.dry_run = false;
+    hallow_db::save_fleet_settings(&db.pool, &settings, "bob")
+        .await
+        .unwrap();
+    let stored = hallow_db::fleet_settings(&db.pool).await.unwrap().unwrap();
+    assert!(!stored.settings.0.dry_run);
+    assert_eq!(stored.updated_by, "bob");
+
+    let history = hallow_db::fleet_settings_history(&db.pool, 10)
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].updated_by, "bob");
+    assert!(history[0].before.as_ref().unwrap().0.dry_run);
+    assert!(!history[0].after.0.dry_run);
+    assert_eq!(history[1].updated_by, "alice");
+    assert_eq!(history[1].before, None);
     db.drop().await;
 }
 

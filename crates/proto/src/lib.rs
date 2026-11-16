@@ -2,8 +2,9 @@
 //!
 //! The control plane serves these; Vine plugins, the Hallow server plugin and
 //! the panel call them. Plugins run in WASM and reach the API through
-//! `wasi:http`, so this crate only depends on `serde` and `uuid` and builds for
-//! `wasm32-wasip2` as well as the host.
+//! `wasi:http`, so this crate only depends on `serde`, `uuid` and `chrono-tz`
+//! (to check fleet settings' time zones) and builds for `wasm32-wasip2` as
+//! well as the host.
 //!
 //! Every request carries `Authorization: Bearer <token>`. Errors come back as
 //! an [`ApiError`] body with a 4xx or 5xx status. Times are Unix milliseconds.
@@ -11,6 +12,7 @@
 //! [Decisions]: https://github.com/xena-studios/hallow/blob/main/docs/DECISIONS.md
 
 pub mod command;
+pub mod fleet;
 pub mod friend;
 pub mod party;
 pub mod permission;
@@ -21,6 +23,8 @@ pub mod queue;
 pub mod routes;
 pub mod server;
 pub mod signal;
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +37,10 @@ pub struct ApiError {
     pub code: ErrorCode,
     /// For logs and staff, not for players.
     pub message: String,
+    /// Field name to what is wrong with it, for a `bad_request` about a form
+    /// such as the fleet settings. Left out when empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,10 +95,31 @@ mod tests {
         let err = ApiError {
             code: ErrorCode::NotFound,
             message: "no such server".into(),
+            fields: BTreeMap::new(),
         };
         assert_eq!(
             serde_json::to_value(&err).unwrap(),
             json!({"code": "not_found", "message": "no such server"})
+        );
+        let old: ApiError =
+            serde_json::from_value(json!({"code": "bad_request", "message": "no"})).unwrap();
+        assert!(old.fields.is_empty());
+        let form = ApiError {
+            code: ErrorCode::BadRequest,
+            message: "invalid settings".into(),
+            fields: [(
+                "max_nodes".to_owned(),
+                "must be at least floor_nodes".to_owned(),
+            )]
+            .into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&form).unwrap(),
+            json!({
+                "code": "bad_request",
+                "message": "invalid settings",
+                "fields": {"max_nodes": "must be at least floor_nodes"}
+            })
         );
     }
 }

@@ -10,7 +10,8 @@ use std::cmp::Reverse;
 use std::fmt;
 use std::time::Duration;
 
-use chrono::{DateTime, Datelike, Months, NaiveTime, TimeDelta, Utc};
+use chrono::{DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
 use crate::money::Money;
@@ -95,9 +96,13 @@ pub struct Offer {
     pub cost: Cost,
 }
 
-/// Scaling targets, limits and budgets, set in the panel.
+/// Scaling targets, limits and budgets. Built from the fleet settings the
+/// panel edits with [`Policy::from_settings`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Policy {
+    /// Where "today" and "this month" start for the daily cap and the
+    /// monthly budget.
+    pub timezone: Tz,
     /// Free game slots to keep across all nodes.
     pub headroom_slots: u32,
     /// Scale up when a queue waits longer than this.
@@ -118,8 +123,10 @@ pub struct Policy {
     pub billing_step_margin: Duration,
     /// Nodes of every kind and phase, the floor included.
     pub max_nodes: u32,
-    pub monthly_budget: Money,
-    pub daily_cap: Money,
+    /// `None` for no limit.
+    pub monthly_budget: Option<Money>,
+    /// `None` for no limit.
+    pub daily_cap: Option<Money>,
     /// When the month-end forecast passes this fraction of the monthly
     /// budget, headroom shrinks linearly to zero at the budget.
     pub tighten_from: f64,
@@ -127,6 +134,8 @@ pub struct Policy {
     pub floor_nodes: Vec<NodeId>,
     /// Drain burst nodes before base nodes.
     pub prefer_burst_on_scale_down: bool,
+    /// Cancelling a draining base node waits for a staff member's approval.
+    pub base_drain_needs_approval: bool,
     /// What to buy when scaling up. The cheapest per slot is picked.
     pub burst_offers: Vec<Offer>,
 }
@@ -350,7 +359,19 @@ fn buy_cost(cost: &Cost, hours_left_today: f64) -> Money {
     }
 }
 
-/// Spend projections. Days and months are UTC.
+/// When `date` starts in `tz`. Where a clock change skips midnight, the
+/// first moment of the day that exists.
+fn start_of_day(tz: Tz, date: NaiveDate) -> DateTime<Utc> {
+    let midnight = date.and_time(NaiveTime::MIN);
+    (0..=3)
+        .find_map(|h| {
+            tz.from_local_datetime(&(midnight + TimeDelta::hours(h)))
+                .earliest()
+        })
+        .map_or_else(|| midnight.and_utc(), |t| t.with_timezone(&Utc))
+}
+
+/// Spend projections. Days and months are in the policy's time zone.
 struct Budget {
     forecast: Money,
     projected_today: Money,
@@ -358,18 +379,13 @@ struct Budget {
 }
 
 impl Budget {
-    fn new(snapshot: &Snapshot) -> Budget {
+    fn new(snapshot: &Snapshot, tz: Tz) -> Budget {
         let now = snapshot.now;
-        let today = now.date_naive();
-        let midnight = (today + chrono::Days::new(1))
-            .and_time(NaiveTime::MIN)
-            .and_utc();
-        let month_start = today
-            .with_day(1)
-            .unwrap_or(today)
-            .and_time(NaiveTime::MIN)
-            .and_utc();
-        let month_end = month_start + Months::new(1);
+        let today = now.with_timezone(&tz).date_naive();
+        let midnight = start_of_day(tz, today + Days::new(1));
+        let first = today.with_day(1).unwrap_or(today);
+        let month_start = start_of_day(tz, first);
+        let month_end = start_of_day(tz, first + Months::new(1));
         let hours_left_today = hours(midnight - now);
         let hours_left_month = hours(month_end - now);
 
@@ -409,10 +425,13 @@ impl Budget {
     /// Headroom shrinks linearly from `tighten_from` of the budget to zero
     /// at the budget.
     fn headroom(&self, policy: &Policy) -> u32 {
-        if policy.monthly_budget <= Money::ZERO {
+        let Some(budget) = policy.monthly_budget else {
+            return policy.headroom_slots;
+        };
+        if budget <= Money::ZERO {
             return 0;
         }
-        let ratio = self.forecast.as_f64() / policy.monthly_budget.as_f64();
+        let ratio = self.forecast.as_f64() / budget.as_f64();
         let from = policy.tighten_from.clamp(0.0, 0.999);
         let factor = if ratio <= from {
             1.0
@@ -441,7 +460,7 @@ pub fn plan(snapshot: &Snapshot, policy: &Policy, memory: &Memory) -> Plan {
     let mut decisions = Vec::new();
     let is_floor = |id: &NodeId| policy.floor_nodes.contains(id);
 
-    let budget = Budget::new(snapshot);
+    let budget = Budget::new(snapshot, policy.timezone);
     let headroom_target = budget.headroom(policy);
     let mut free_slots: u32 = snapshot.nodes.iter().map(NodeLoad::free_slots).sum();
     let free_before = free_slots;
@@ -609,7 +628,7 @@ pub fn plan(snapshot: &Snapshot, policy: &Policy, memory: &Memory) -> Plan {
                     players: node.players,
                 }
             },
-            needs_approval: node.kind == NodeKind::Base,
+            needs_approval: policy.base_drain_needs_approval && node.kind == NodeKind::Base,
         });
     }
 
@@ -691,22 +710,22 @@ fn buy(
     let cost = buy_cost(&offer.cost, budget.hours_left_today);
     let mut bought = false;
     for i in 0..wanted {
+        let projected = today + cost;
+        let month_end = forecast + cost;
         let hold = if existing + i >= policy.max_nodes {
             Some(Reason::MaxNodes {
                 max: policy.max_nodes,
             })
-        } else if today + cost > policy.daily_cap {
-            Some(Reason::DailyCap {
-                projected: today + cost,
-                cap: policy.daily_cap,
-            })
-        } else if forecast + cost > policy.monthly_budget {
-            Some(Reason::MonthlyBudget {
-                forecast: forecast + cost,
-                budget: policy.monthly_budget,
-            })
+        } else if let Some(cap) = policy.daily_cap.filter(|&cap| projected > cap) {
+            Some(Reason::DailyCap { projected, cap })
         } else {
-            None
+            policy
+                .monthly_budget
+                .filter(|&budget| month_end > budget)
+                .map(|budget| Reason::MonthlyBudget {
+                    forecast: month_end,
+                    budget,
+                })
         };
         if let Some(reason) = hold {
             decisions.push(Decision::Hold { node: None, reason });

@@ -30,6 +30,9 @@
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `POST` | [`COMMANDS`] | [`NetworkCommand`](crate::command::NetworkCommand) | `202` |
+//! | `GET` | [`FLEET_SETTINGS`] | | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord); the defaults if never changed |
+//! | `PUT` | [`FLEET_SETTINGS`] | [`UpdateFleetSettings`](crate::fleet::UpdateFleetSettings) | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord), or `400` with [`ApiError::fields`](crate::ApiError::fields) |
+//! | `GET` | [`fleet_settings_history`] | | `Vec<`[`FleetSettingsChange`](crate::fleet::FleetSettingsChange)`>`, newest first |
 //!
 //! The control plane also answers HAProxy agent checks on a separate TCP
 //! port (not HTTP); see the control plane's README.
@@ -61,6 +64,13 @@ pub const FRIENDS: &str = "/v1/friends";
 pub const SIGNALS: &str = "/v1/signals";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
+pub const FLEET_SETTINGS: &str = "/v1/fleet/settings";
+pub const FLEET_SETTINGS_HISTORY: &str = "/v1/fleet/settings/history";
+
+/// How many changes [`fleet_settings_history`] returns when `limit` is
+/// left out, and the most it returns.
+pub const FLEET_SETTINGS_HISTORY_DEFAULT: u32 = 50;
+pub const FLEET_SETTINGS_HISTORY_MAX: u32 = 500;
 
 #[must_use]
 pub fn proxy(id: &str) -> String {
@@ -135,6 +145,13 @@ pub fn queue_entry(uuid: &uuid::Uuid) -> String {
     format!("{QUEUES}/{uuid}")
 }
 
+/// `/v1/fleet/settings/history?limit=<limit>`: the latest settings changes,
+/// newest first.
+#[must_use]
+pub fn fleet_settings_history(limit: u32) -> String {
+    format!("{FLEET_SETTINGS_HISTORY}?limit={limit}")
+}
+
 /// Appends `?since=<revision>` for a long poll.
 #[must_use]
 pub fn since(path: &str, revision: u64) -> String {
@@ -156,6 +173,10 @@ mod tests {
     fn paths() {
         assert_eq!(proxy_heartbeat("proxy-1"), "/v1/proxies/proxy-1/heartbeat");
         assert_eq!(since(SERVERS, 12), "/v1/servers?since=12");
+        assert_eq!(
+            fleet_settings_history(20),
+            "/v1/fleet/settings/history?limit=20"
+        );
         assert_eq!(since_wait(SERVERS, 12, 0), "/v1/servers?since=12&wait=0");
         assert_eq!(player_by_name("Steve_1"), "/v1/players?name=Steve_1");
         assert_eq!(
