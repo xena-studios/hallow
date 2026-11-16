@@ -56,10 +56,10 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] In-game moderation: `/ban`, `/mute` (with durations), `/unban`, `/unmute`, `/warn`, `/history`, enforced on every proxy
 - [x] Panel fork with Hallow branding and the extension scaffold
 - [x] Panel: Network page and Players page (network-first admin: Overview landing, Players, Punishments and Anticheat lookups, Fleet section, Hallow theme)
-- [ ] Panel: punishments and staff roles
+- [x] Panel: punishments and staff roles (issue and lift from the panel, templates, Ranks page, activity log)
 - [x] Monitoring: Prometheus, Grafana, Loki (dev stack and dashboard, with each server's tick time from the server plugin)
-- [ ] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens
-- [ ] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md)). The control plane stores and serves samples; the Vine and server-plugin collectors are next
+- [x] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens (not yet run on a real machine)
+- [x] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md)). Both collectors send samples; packet timing waits on a Vine packet hook
 
 **Gate:** with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.
 
