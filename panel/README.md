@@ -15,7 +15,7 @@ All of it is one Calagopus extension, `dev.xenastudios.hallow`, in [`backend-ext
 | Part | Path in the extension | Today |
 |---|---|---|
 | Backend (Rust crate) | `src/lib.rs`, routes in `src/routes/` (the file tree mirrors the URLs) | `GET /api/hallow/health` |
-| Frontend (React) | `frontend/src/index.tsx`, pages in `frontend/src/pages/` | Admin sidebar entry **Network** (`/admin/hallow/network`), a placeholder page; placeholder orange theme |
+| Frontend (React) | `frontend/src/index.tsx`, pages in `frontend/src/pages/` | The network-first admin: **Overview** section (Overview landing page, Players, Punishments, Anticheat, Network settings), **Fleet** section (Fleet overview, stock Nodes, Servers and Locations, Fleet settings), stock Staff & Access and System, and a collapsed **Hosting extras**; the Hallow theme and a shorter setup wizard |
 | Database | `migrations/<timestamp>_<name>/up.sql` and `down.sql` | None yet |
 
 What the extension API reaches, from reading Calagopus v1.2.10 and building against it:
@@ -26,7 +26,7 @@ What the extension API reaches, from reading Calagopus v1.2.10 and building agai
 - **Also:** permissions (user, admin, server), settings with an admin form, background tasks, CLI commands, events on core models, email templates, activity logging.
 - **Can't:** change the core's own Drizzle migrations, or add an admin sidebar category (only the built-in ones, or an unlabelled group at the bottom). Extensions are compiled in, so adding or changing one means rebuilding the panel; the stock `:latest` image can't, but the `:heavy` image and a source build can.
 
-The Network page (#24) reads the control plane's `GET /v1/proxies`, `GET /v1/servers` and `GET /v1/presence/count` (`crates/proto`). It belongs in a backend route under `/api/admin/hallow/` (`builder.add_admin_api_router` in `lib.rs`), so browsers never reach the control plane directly, and replaces `frontend/src/pages/network/NetworkPage.tsx`.
+The panel is built for running the network first; hosting pages are kept but moved out of the way. Every Hallow page reads the control plane through backend routes under `/api/admin/hallow/` (`builder.add_admin_api_router` in `lib.rs`), so browsers never reach it directly. Its URL and token are set in Admin > Network settings (or the extension's settings); the token is stored encrypted.
 
 ## Build and run
 
