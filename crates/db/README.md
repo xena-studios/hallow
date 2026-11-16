@@ -39,6 +39,7 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `node_join_tokens` | One-time node join tokens: SHA-256 of the token, role, region, optional node name, labels, expiry, a short claim lease while a join runs, and when it was used; deleted a week after expiry | `id` (hash unique) |
 | `nodes` | Every node that joined: name, panel UUID, role, region, labels, private and public IP, WireGuard public key, the token it used | `name` |
 | `player_stats` | Running totals per account, server kind and stat name (`play_time_s`, `joins`, `kills`, ...). `add_stats` adds a batch of increases in one upsert (`value = value + n`); increases for accounts that never joined are skipped | `(account_uuid, kind, stat)` |
+| `server_kinds` | Server kinds the control plane starts instances of: name, the kind's spec (`hallow_proto::instance::KindSpec` as JSON: live image, role, players, scaling, env), who changed it last and when. Instances are live state in Redis, never rows | `name` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 
 A punishment's issuer and revoker are an actor: a staff `account` (with its UUID), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.

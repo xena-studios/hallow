@@ -40,6 +40,12 @@
 //! | `POST` | [`NODE_JOIN_TOKENS`] | [`IssueJoinToken`](crate::node::IssueJoinToken) | [`JoinToken`](crate::node::JoinToken) |
 //! | `POST` | [`NODE_JOIN`] | [`JoinRequest`](crate::node::JoinRequest), bearer is the join token | [`JoinReply`](crate::node::JoinReply) |
 //! | `GET` | [`NODES`] | | `Vec<`[`NodeInfo`](crate::node::NodeInfo)`>` |
+//! | `GET` | [`KINDS`] | | `Vec<`[`KindInfo`](crate::instance::KindInfo)`>` by name |
+//! | `PUT` | [`kind`] | [`KindSpec`](crate::instance::KindSpec) | [`KindInfo`](crate::instance::KindInfo) |
+//! | `GET` | [`kind`] | | [`KindInfo`](crate::instance::KindInfo) or `404` |
+//! | `DELETE` | [`kind`] | | `204`; running instances finish, no new ones start |
+//! | `GET` | [`INSTANCES`] | | `Vec<`[`InstanceInfo`](crate::instance::InstanceInfo)`>` by name |
+//! | `DELETE` | [`instance`] | | `202`: the instance ends (its players are sent back by their proxy) |
 //!
 //! The control plane also answers HAProxy agent checks on a separate TCP
 //! port (not HTTP); see the control plane's README.
@@ -83,6 +89,18 @@ pub const NODES: &str = "/v1/nodes";
 pub const NODE_JOIN_TOKENS: &str = "/v1/nodes/join-tokens";
 /// The one route that takes a join token instead of the control plane's.
 pub const NODE_JOIN: &str = "/v1/nodes/join";
+pub const KINDS: &str = "/v1/kinds";
+pub const INSTANCES: &str = "/v1/instances";
+
+#[must_use]
+pub fn kind(name: &str) -> String {
+    format!("{KINDS}/{name}")
+}
+
+#[must_use]
+pub fn instance(name: &str) -> String {
+    format!("{INSTANCES}/{name}")
+}
 
 #[must_use]
 pub fn proxy(id: &str) -> String {
