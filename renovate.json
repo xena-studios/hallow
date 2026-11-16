@@ -27,6 +27,16 @@
       "matchUpdateTypes": ["patch", "digest"],
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "Server repos made from templates/server-repo call this repo's server-image.yml at a pinned main commit. Every main commit is a new digest, so the pin is bumped once a month, by review, instead of in a PR that churns on every commit.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["xena-studios/hallow"],
+      "matchUpdateTypes": ["digest"],
+      "groupName": "hallow server-image workflow pin",
+      "groupSlug": "hallow-workflow-pin",
+      "schedule": ["* 0-5 1 * *"],
+      "automerge": false
     }
   ]
 }
