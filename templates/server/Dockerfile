@@ -59,4 +59,4 @@ WORKDIR /server
 USER hallow
 EXPOSE 25565
 ENTRYPOINT ["hallow-entrypoint"]
-HEALTHCHECK --interval=10s --timeout=3s --retries=6 CMD nc -z 127.0.0.1 25565 || exit 1
+HEALTHCHECK --interval=10s --timeout=3s --retries=6 CMD nc -z 127.0.0.1 "${HALLOW_SERVER_PORT:-25565}" || exit 1
