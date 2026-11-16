@@ -5,6 +5,8 @@
 //! | `servers` | hash | server name → [`ServerInfo`] JSON |
 //! | `servers:rev` | integer | server list revision, bumped when a server is added, removed or changes state |
 //! | `server-alive:{name}` | string with TTL | present while the server heartbeats |
+//! | `server-players:{name}` | hash | player UUID → username, as that server reports them |
+//! | `player-servers` | hash | player UUID → the server that last reported them joining, the servers' view of where everyone is |
 //! | `proxies` | hash | proxy id → [`ProxyInfo`] JSON |
 //! | `proxy-alive:{id}` | string with TTL | present while the proxy heartbeats |
 //! | `proxy-drain:{id}` | string | present while staff want the proxy drained; kept across restarts and expiry |
@@ -24,7 +26,10 @@ use hallow_proto::{
     command::{NetworkCommand, ProxyCommand},
     presence::{LoginDecision, LoginRequest, PlayerLeft, PlayerLocation, PlayerSwitched},
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy},
-    server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerRole, ServerState},
+    server::{
+        RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged,
+        ServerRole, ServerState,
+    },
 };
 use redis::{AsyncCommands, Script, aio::ConnectionManager};
 use uuid::Uuid;
@@ -92,6 +97,15 @@ impl Keys {
     }
     fn server_alive(&self, name: &str) -> String {
         format!("{}:server-alive:{name}", self.prefix)
+    }
+    fn server_players_prefix(&self) -> String {
+        format!("{}:server-players:", self.prefix)
+    }
+    fn server_players(&self, name: &str) -> String {
+        format!("{}{name}", self.server_players_prefix())
+    }
+    fn player_servers(&self) -> String {
+        format!("{}:player-servers", self.prefix)
     }
     fn proxies(&self) -> String {
         format!("{}:proxies", self.prefix)
@@ -178,6 +192,53 @@ redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(p))
 return 1
 ";
 
+/// Applies a server's player report, if server `ARGV[1]` is still in the
+/// server hash `KEYS[1]`. `KEYS[2]` is `player-servers`, `KEYS[3]` the
+/// server's `server-players` hash and `ARGV[2]` the prefix of the other
+/// servers' ones. `ARGV[4]` is a JSON list of `[uuid, username]` who joined
+/// and `ARGV[5]` one of UUIDs who left. With `ARGV[3] == "1"` the joined list
+/// is everyone on the server, and anyone else is taken off it. A player who
+/// joins comes off the server the index had them on. Returns 1 if applied.
+const SERVER_PLAYERS: &str = r"
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+local joined = cjson.decode(ARGV[4])
+local left = cjson.decode(ARGV[5])
+if ARGV[3] == '1' then
+  local keep = {}
+  for _, p in ipairs(joined) do keep[p[1]] = true end
+  for _, uuid in ipairs(redis.call('HKEYS', KEYS[3])) do
+    if not keep[uuid] then table.insert(left, uuid) end
+  end
+end
+for _, uuid in ipairs(left) do
+  redis.call('HDEL', KEYS[3], uuid)
+  if redis.call('HGET', KEYS[2], uuid) == ARGV[1] then
+    redis.call('HDEL', KEYS[2], uuid)
+  end
+end
+for _, p in ipairs(joined) do
+  local old = redis.call('HGET', KEYS[2], p[1])
+  if old and old ~= ARGV[1] then
+    redis.call('HDEL', ARGV[2] .. old, p[1])
+  end
+  redis.call('HSET', KEYS[3], p[1], p[2])
+  redis.call('HSET', KEYS[2], p[1], ARGV[1])
+end
+return 1
+";
+
+/// Forgets every player of server `ARGV[1]`: its `server-players` hash
+/// `KEYS[2]`, and its entries in `player-servers` (`KEYS[1]`).
+const DROP_SERVER_PLAYERS: &str = r"
+for _, uuid in ipairs(redis.call('HKEYS', KEYS[2])) do
+  if redis.call('HGET', KEYS[1], uuid) == ARGV[1] then
+    redis.call('HDEL', KEYS[1], uuid)
+  end
+end
+redis.call('DEL', KEYS[2])
+return 1
+";
+
 /// Appends command `ARGV[1]` to sorted set `KEYS[1]` under the next revision
 /// from `KEYS[2]`, keeps the last `ARGV[2]`, and publishes `ARGV[4]` on
 /// channel `ARGV[3]`. Returns the new revision.
@@ -231,6 +292,8 @@ pub struct Store {
     leave: Script,
     switch: Script,
     push_command: Script,
+    server_players: Script,
+    drop_server_players: Script,
 }
 
 impl Store {
@@ -244,6 +307,8 @@ impl Store {
             leave: Script::new(LEAVE),
             switch: Script::new(SWITCH),
             push_command: Script::new(PUSH_COMMAND),
+            server_players: Script::new(SERVER_PLAYERS),
+            drop_server_players: Script::new(DROP_SERVER_PLAYERS),
         })
     }
 
@@ -497,6 +562,8 @@ impl Store {
                 return Ok(Err(RegisterError::NameTaken));
             }
         }
+        // A server registering again restarted: nobody is on it yet.
+        self.drop_server_players(&req.name).await?;
         let info = ServerInfo {
             name: req.name.clone(),
             kind: req.kind,
@@ -528,7 +595,8 @@ impl Store {
     }
 
     /// Returns false if the server isn't registered. Player counts change on
-    /// every heartbeat, so only a state change bumps the list revision.
+    /// every heartbeat, so only a state change bumps the list revision. A
+    /// roster replaces the server's player list.
     pub async fn server_heartbeat(&self, name: &str, beat: ServerHeartbeat) -> Result<bool> {
         let Some(mut info) = self.server(name).await? else {
             return Ok(false);
@@ -552,7 +620,95 @@ impl Store {
             .arg(events::SERVERS)
             .invoke_async(&mut self.conn())
             .await?;
-        Ok(written == 1)
+        if written != 1 {
+            return Ok(false);
+        }
+        if let Some(roster) = &beat.roster {
+            self.apply_server_players(name, roster, &[], true).await?;
+        }
+        Ok(true)
+    }
+
+    /// Applies joins and leaves a server reported. Returns false if the
+    /// server isn't registered.
+    pub async fn server_players_changed(
+        &self,
+        name: &str,
+        changed: &ServerPlayersChanged,
+    ) -> Result<bool> {
+        self.apply_server_players(name, &changed.joined, &changed.left, false)
+            .await
+    }
+
+    async fn apply_server_players(
+        &self,
+        name: &str,
+        joined: &[ServerPlayer],
+        left: &[Uuid],
+        replace: bool,
+    ) -> Result<bool> {
+        let joined: Vec<(String, &str)> = joined
+            .iter()
+            .map(|p| (p.uuid.to_string(), p.username.as_str()))
+            .collect();
+        let left: Vec<String> = left.iter().map(Uuid::to_string).collect();
+        let applied: i64 = self
+            .server_players
+            .key(self.keys.servers())
+            .key(self.keys.player_servers())
+            .key(self.keys.server_players(name))
+            .arg(name)
+            .arg(self.keys.server_players_prefix())
+            .arg(if replace { "1" } else { "0" })
+            .arg(serde_json::to_string(&joined)?)
+            .arg(serde_json::to_string(&left)?)
+            .invoke_async(&mut self.conn())
+            .await?;
+        Ok(applied == 1)
+    }
+
+    /// Who a server reports being on it, by username ignoring case; `None`
+    /// if the server isn't registered.
+    pub async fn server_players(&self, name: &str) -> Result<Option<Vec<ServerPlayer>>> {
+        let (registered, raw): (bool, Vec<(String, String)>) = redis::pipe()
+            .atomic()
+            .hexists(self.keys.servers(), name)
+            .hgetall(self.keys.server_players(name))
+            .query_async(&mut self.conn())
+            .await?;
+        if !registered {
+            return Ok(None);
+        }
+        let mut players: Vec<ServerPlayer> = raw
+            .into_iter()
+            .filter_map(|(uuid, username)| {
+                Some(ServerPlayer {
+                    uuid: Uuid::parse_str(&uuid).ok()?,
+                    username,
+                })
+            })
+            .collect();
+        players.sort_by_cached_key(|p| (p.username.to_ascii_lowercase(), p.uuid));
+        Ok(Some(players))
+    }
+
+    /// The server that last reported `uuid` joining it, if they haven't left.
+    pub async fn server_of(&self, uuid: &Uuid) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .hget(self.keys.player_servers(), uuid.to_string())
+            .await?)
+    }
+
+    async fn drop_server_players(&self, name: &str) -> Result<()> {
+        let _: i64 = self
+            .drop_server_players
+            .key(self.keys.player_servers())
+            .key(self.keys.server_players(name))
+            .arg(name)
+            .invoke_async(&mut self.conn())
+            .await?;
+        Ok(())
     }
 
     pub async fn server(&self, name: &str) -> Result<Option<ServerInfo>> {
@@ -564,6 +720,7 @@ impl Store {
     pub async fn remove_server(&self, name: &str) -> Result<bool> {
         let removed: i64 = self.conn().hdel(self.keys.servers(), name).await?;
         let _: () = self.conn().del(self.keys.server_alive(name)).await?;
+        self.drop_server_players(name).await?;
         if removed == 1 {
             self.servers_changed().await?;
         }
@@ -816,6 +973,7 @@ impl Store {
                 .invoke_async(&mut self.conn())
                 .await?;
             if removed == 1 {
+                self.drop_server_players(&name).await?;
                 reaped.servers.push(name);
             }
         }

@@ -24,8 +24,12 @@ use hallow_proto::{
     },
     queue::{JoinQueue, QueueStatus},
     routes,
-    server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerRole, ServerState},
+    server::{
+        RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged,
+        ServerRole, ServerState,
+    },
     signal::{PlayerSignals, SignalBatch, SignalRecord},
+    stats::{PlayerStats, PlayerStatsDelta, StatsBatch},
 };
 use reqwest::StatusCode;
 use serde::{Serialize, de::DeserializeOwned};
@@ -314,6 +318,7 @@ async fn two_proxies_share_state() {
         players,
         state,
         tick_ms: None,
+        roster: None,
     };
     let res = two
         .post(
@@ -713,6 +718,7 @@ impl Instance {
             players,
             state: ServerState::Ready,
             tick_ms: Some(7.5),
+            roster: None,
         };
         let res = self.post(&routes::server_heartbeat(name), &beat).await;
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
@@ -1474,6 +1480,207 @@ async fn fleet_settings_roundtrip() {
     let latest: Vec<FleetSettingsChange> = one.get_json(&routes::fleet_settings_history(1)).await;
     assert_eq!(latest.len(), 1);
     assert_eq!(latest[0].id, history[0].id);
+
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+fn on_server(uuid: Uuid, username: &str) -> ServerPlayer {
+    ServerPlayer {
+        uuid,
+        username: username.into(),
+    }
+}
+
+async fn players_on(instance: &Instance, server: &str) -> Vec<String> {
+    instance
+        .get_json::<Vec<ServerPlayer>>(&routes::server_players(server))
+        .await
+        .into_iter()
+        .map(|p| p.username)
+        .collect()
+}
+
+/// Servers report who is on them, through either instance: joins and leaves
+/// as they happen, and the whole list with heartbeats to correct drift.
+#[tokio::test]
+async fn servers_report_their_players() {
+    let Some(redis) = redis_url() else { return };
+    let prefix = format!("test-{}", Uuid::new_v4());
+    let one = Instance::start(config(&redis, &prefix)).await;
+    let two = Instance::start(config(&redis, &prefix)).await;
+    one.register_hub("hub-1").await;
+    one.register_hub("hub-22").await;
+    let (alex, steve, notch) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+
+    let res = one
+        .post(
+            &routes::server_players("hub-1"),
+            &ServerPlayersChanged {
+                joined: vec![on_server(steve, "Steve"), on_server(alex, "alex")],
+                left: vec![],
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(players_on(&two, "hub-1").await, ["alex", "Steve"]);
+
+    // Steve turns up on hub-22 before hub-1 reports him leaving.
+    let res = two
+        .post(
+            &routes::server_players("hub-22"),
+            &ServerPlayersChanged {
+                joined: vec![on_server(steve, "Steve")],
+                left: vec![],
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(players_on(&one, "hub-1").await, ["alex"]);
+    assert_eq!(players_on(&one, "hub-22").await, ["Steve"]);
+    // hub-1's late leave doesn't take him off hub-22.
+    let res = one
+        .post(
+            &routes::server_players("hub-1"),
+            &ServerPlayersChanged {
+                joined: vec![],
+                left: vec![steve],
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(players_on(&one, "hub-22").await, ["Steve"]);
+
+    // A heartbeat's roster replaces the list: alex's leave was lost, Notch's
+    // join too.
+    let res = two
+        .post(
+            &routes::server_heartbeat("hub-1"),
+            &ServerHeartbeat {
+                players: 1,
+                state: ServerState::Ready,
+                tick_ms: None,
+                roster: Some(vec![on_server(notch, "Notch")]),
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(players_on(&one, "hub-1").await, ["Notch"]);
+    // A heartbeat without one leaves it alone.
+    let res = one
+        .post(
+            &routes::server_heartbeat("hub-1"),
+            &ServerHeartbeat {
+                players: 1,
+                state: ServerState::Ready,
+                tick_ms: None,
+                roster: None,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(players_on(&one, "hub-1").await, ["Notch"]);
+
+    // Unknown servers are refused, so the plugin registers again.
+    let res = one
+        .post(
+            &routes::server_players("nope"),
+            &ServerPlayersChanged {
+                joined: vec![on_server(alex, "alex")],
+                left: vec![],
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        one.get(&routes::server_players("nope")).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // A server that restarts, or goes, takes its players with it.
+    one.register_hub("hub-1").await;
+    assert!(players_on(&one, "hub-1").await.is_empty());
+    let res = one
+        .send(
+            one.http
+                .delete(format!("{}{}", one.base, routes::server("hub-22"))),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    one.register_hub("hub-22").await;
+    assert!(players_on(&two, "hub-22").await.is_empty());
+}
+
+/// Stats go in from a server as increases and come back out as totals, by
+/// name or UUID.
+#[tokio::test]
+async fn stats_add_up() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    let one = Instance::start(config).await;
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    let (player, stranger) = (Uuid::new_v4(), Uuid::new_v4());
+    login_as(&one, player, "Fighter", "proxy-a").await;
+
+    let batch = |kind: &str, stats: &[(&str, i64)]| StatsBatch {
+        source: "game-1".into(),
+        kind: kind.into(),
+        players: [player, stranger]
+            .into_iter()
+            .map(|player| PlayerStatsDelta {
+                player,
+                stats: stats.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect(),
+            })
+            .collect(),
+    };
+    for body in [
+        batch(
+            "skywars",
+            &[("kills", 2), ("play_time_s", 30), ("joins", 1)],
+        ),
+        batch("skywars", &[("kills", 1), ("wins", 1)]),
+        batch("hub", &[("play_time_s", 12)]),
+    ] {
+        let res = one.post(routes::STATS, &body).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    }
+    let stats: PlayerStats = one.get_json(&routes::stats_of("fighter")).await;
+    assert_eq!(stats.uuid, player);
+    assert_eq!(stats.username, "Fighter");
+    assert_eq!(stats.kinds["skywars"]["kills"], 3);
+    assert_eq!(stats.kinds["skywars"]["wins"], 1);
+    assert_eq!(stats.kinds["skywars"]["play_time_s"], 30);
+    assert_eq!(stats.kinds["hub"]["play_time_s"], 12);
+    let by_uuid: PlayerStats = one.get_json(&routes::stats_of(&player.to_string())).await;
+    assert_eq!(by_uuid, stats);
+
+    // The stranger never joined: nothing was kept.
+    assert_eq!(
+        one.get(&routes::stats_of(&stranger.to_string()))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    // Bad names and negative increases are refused whole.
+    for bad in [
+        batch("skywars", &[("Kills", 1)]),
+        batch("skywars", &[("kills", -5)]),
+    ] {
+        let res = one.post(routes::STATS, &bad).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+    let stats: PlayerStats = one.get_json(&routes::stats_of("Fighter")).await;
+    assert_eq!(stats.kinds["skywars"]["kills"], 3);
 
     admin
         .execute(sqlx::AssertSqlSafe(format!(

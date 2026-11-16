@@ -134,6 +134,7 @@ async fn migrations_stay_in_the_hallow_schema() {
             "friendships",
             "node_join_tokens",
             "nodes",
+            "player_stats",
             "punishments",
             "ranks",
             "sessions",
@@ -998,6 +999,55 @@ async fn join_tokens_expire() {
     assert_eq!(
         nodes[0].join_token_id, None,
         "the token went, the node stays"
+    );
+    db.drop().await;
+}
+
+
+#[tokio::test]
+async fn stats_add_up() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let (player, stranger) = (Uuid::new_v4(), Uuid::new_v4());
+    join(&db.pool, player, "fighter").await;
+    let inc = |account, kind, stat, by| hallow_db::StatIncrease {
+        account,
+        kind,
+        stat,
+        by,
+    };
+    // Two increases to one total in the same call are summed; a stranger's
+    // are skipped.
+    let changed = hallow_db::add_stats(
+        &db.pool,
+        &[
+            inc(player, "skywars", "kills", 2),
+            inc(player, "skywars", "kills", 3),
+            inc(player, "hub", "play_time_s", 60),
+            inc(stranger, "skywars", "kills", 9),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(changed, 2);
+    hallow_db::add_stats(&db.pool, &[inc(player, "skywars", "kills", 1)])
+        .await
+        .unwrap();
+    let totals = hallow_db::stats_of(&db.pool, player).await.unwrap();
+    let totals: Vec<_> = totals
+        .iter()
+        .map(|t| (t.kind.as_str(), t.stat.as_str(), t.value))
+        .collect();
+    assert_eq!(
+        totals,
+        [("hub", "play_time_s", 60), ("skywars", "kills", 6)]
+    );
+    assert!(
+        hallow_db::stats_of(&db.pool, stranger)
+            .await
+            .unwrap()
+            .is_empty()
     );
     db.drop().await;
 }

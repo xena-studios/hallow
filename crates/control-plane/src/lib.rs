@@ -22,6 +22,7 @@ mod nodes;
 pub mod panel;
 mod punish;
 mod signals;
+mod stats;
 pub mod store;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
