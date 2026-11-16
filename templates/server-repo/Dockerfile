@@ -5,7 +5,7 @@
 #
 # Keep the base tag inside hallow.toml's base range; the build fails if it
 # isn't.
-FROM ghcr.io/xena-studios/hallow-server-base:0.1
+FROM ghcr.io/xena-studios/hallow-server-base:0.2
 
 # The repo version (git tag) this image was built from, reported to the
 # control plane. CI sets it; local builds are "dev".

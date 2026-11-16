@@ -3,7 +3,7 @@
 name = "example"             # the server kind: lowercase, digits and dashes
 role = "game"                # "hub", "lobby" or "game"
 lobby = "hub"                # where players go when a match ends (games)
-base = "^0.1"                # Hallow base image versions this repo works with
+base = "^0.2"                # Hallow base image versions this repo works with
 # world = "world"            # Pumpkin's world folder; Pumpkin generates one if unset
 
 [players]

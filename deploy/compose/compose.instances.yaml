@@ -61,7 +61,7 @@ services:
     build:
       context: ../../servers/test-game-lobby
       additional_contexts:
-        ghcr.io/xena-studios/hallow-server-base:0.1: service:server-base
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
     image: hallow-test-game-lobby:${HALLOW_IMAGE_TAG:-dev}
     scale: 0
 

@@ -3,7 +3,7 @@
 # naming the base below as a build context; on its own it pulls the
 # published base. Build from this folder:
 #   docker build -t hallow-test-game-lobby:dev .
-FROM ghcr.io/xena-studios/hallow-server-base:0.1
+FROM ghcr.io/xena-studios/hallow-server-base:0.2
 
 # The repo version (git tag) this image was built from, reported to the
 # control plane. CI sets it; local builds are "dev".

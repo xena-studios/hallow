@@ -17,7 +17,7 @@ x-server: &server
 # Server repos' Dockerfiles start FROM this name; the build context of the same
 # name replaces it with the server-base service's image.
 x-base: &base
-  ghcr.io/xena-studios/hallow-server-base:0.1: service:server-base
+  ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
 
 services:
   proxy:

@@ -6,7 +6,7 @@ name = "test-game-lobby"
 role = "lobby"
 lobby = "hub"                # /hub, and where a draining lobby's players go if no other is up
 queues = ["test-game"]
-base = "^0.1"
+base = "^0.2"
 
 [players]
 max = 50                     # per instance

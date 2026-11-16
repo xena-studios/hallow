@@ -20,4 +20,4 @@ servers/build-plugins.sh
 
 That builds the Vine and server plugins the dev network mounts too. A server repo of its own does the same in its CI's `prepare` step.
 
-Each Dockerfile starts `FROM ghcr.io/xena-studios/hallow-server-base:0.1`. `deploy/compose` and `docker-bake.hcl` replace that name with the base image built from `templates/server` in this tree.
+Each Dockerfile starts `FROM ghcr.io/xena-studios/hallow-server-base:0.2`. `deploy/compose` and `docker-bake.hcl` replace that name with the base image built from `templates/server` in this tree.
