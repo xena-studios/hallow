@@ -296,6 +296,7 @@ impl State {
                     target: target.clone(),
                     issuer: self.issuer(sender),
                     reason: (!reason.is_empty()).then(|| plain(reason)),
+                    staff: None,
                 };
                 self.moderate(sender, routes::PUNISHMENTS_REVOKE, &request)
             }
@@ -453,6 +454,7 @@ impl State {
             issuer: self.issuer(sender),
             reason: reason.to_owned(),
             duration_seconds,
+            staff: None,
         };
         self.moderate(sender, routes::PUNISHMENTS, &request)
     }

@@ -22,8 +22,12 @@ use hallow_proto::{
         LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
-    punishment::{IssuePunishment, PunishmentRecord, PunishmentReply, RevokePunishment},
+    punishment::{
+        IssuePunishment, PunishmentPage, PunishmentRecord, PunishmentReply, PunishmentSearch,
+        PunishmentTemplate, RevokePunishment, SaveTemplate,
+    },
     queue::{JoinQueue, QueueStatus},
+    rank::{GrantRank, PlayerRanks, RankInfo, RevokeRank, SaveRank},
     routes,
     server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged},
     signal::{SignalBatch, SignalRecord},
@@ -36,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, fleet, friends, kinds, nodes, punish, signals, stats,
+    events, fleet, friends, kinds, nodes, punish, ranks, signals, stats,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -116,6 +120,22 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(issue_punishment).get(punishment_history),
         )
         .route(routes::PUNISHMENTS_REVOKE, post(revoke_punishment))
+        .route(routes::PUNISHMENTS_SEARCH, get(search_punishments))
+        .route(
+            routes::PUNISHMENT_TEMPLATES,
+            get(list_templates).post(create_template),
+        )
+        .route(
+            &routes::punishment_template_path("{id}"),
+            axum::routing::put(update_template).delete(delete_template),
+        )
+        .route(routes::RANKS, get(list_ranks))
+        .route(
+            &routes::rank("{name}"),
+            axum::routing::put(save_rank).delete(delete_rank),
+        )
+        .route(routes::RANK_GRANTS, get(player_ranks).post(grant_rank))
+        .route(routes::RANK_GRANTS_REVOKE, post(revoke_rank))
         .route(routes::QUEUES, post(join_queue))
         .route("/v1/queues/{uuid}", axum::routing::delete(leave_queue))
         .route("/v1/parties/{uuid}", get(party_of))
@@ -574,6 +594,116 @@ async fn punishment_history(
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
+}
+
+async fn search_punishments(
+    State(state): Shared,
+    query: Result<Query<PunishmentSearch>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<PunishmentPage>> {
+    let Query(search) = query?;
+    let db = database(&state)?;
+    punish::search(db, &state.store, &search)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
+}
+
+async fn list_templates(State(state): Shared) -> Reply<Body<Vec<PunishmentTemplate>>> {
+    let db = database(&state)?;
+    Ok(Body(punish::templates(db).await?))
+}
+
+async fn create_template(
+    State(state): Shared,
+    Body(save): Body<SaveTemplate>,
+) -> Reply<Body<PunishmentTemplate>> {
+    let db = database(&state)?;
+    punish::save_template(db, None, &save)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("no such template"))
+}
+
+fn template_id(id: &str) -> Reply<i64> {
+    id.parse()
+        .map_err(|_| Failure::bad_request("not a template id"))
+}
+
+async fn update_template(
+    State(state): Shared,
+    Path(id): Path<String>,
+    Body(save): Body<SaveTemplate>,
+) -> Reply<Body<PunishmentTemplate>> {
+    let id = template_id(&id)?;
+    let db = database(&state)?;
+    punish::save_template(db, Some(id), &save)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("no such template"))
+}
+
+async fn delete_template(State(state): Shared, Path(id): Path<String>) -> Reply<StatusCode> {
+    let id = template_id(&id)?;
+    let db = database(&state)?;
+    if hallow_db::delete_template(db, id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(Failure::not_found("no such template"))
+    }
+}
+
+// Ranks
+
+fn ranks_database(state: &AppState) -> Reply<&hallow_db::PgPool> {
+    state.db.as_ref().ok_or_else(|| {
+        Failure::new(
+            ErrorCode::Unavailable,
+            "ranks need a database (HALLOW_DATABASE_URL)",
+        )
+    })
+}
+
+async fn list_ranks(State(state): Shared) -> Reply<Body<Vec<RankInfo>>> {
+    Ok(Body(ranks::list(ranks_database(&state)?).await?))
+}
+
+async fn save_rank(
+    State(state): Shared,
+    Path(name): Path<String>,
+    Body(save): Body<SaveRank>,
+) -> Reply<Body<RankInfo>> {
+    let db = ranks_database(&state)?;
+    Ok(Body(ranks::save(db, &name, save).await?))
+}
+
+async fn delete_rank(State(state): Shared, Path(name): Path<String>) -> Reply<StatusCode> {
+    ranks::delete(ranks_database(&state)?, &name).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn player_ranks(
+    State(state): Shared,
+    query: Result<Query<NameParams>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<PlayerRanks>> {
+    let Query(params) = query?;
+    let db = ranks_database(&state)?;
+    ranks::of_player(db, &state.store, &params.name)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
+}
+
+async fn grant_rank(State(state): Shared, Body(req): Body<GrantRank>) -> Reply<Body<PlayerRanks>> {
+    let db = ranks_database(&state)?;
+    Ok(Body(ranks::grant(db, &state.store, req).await?))
+}
+
+async fn revoke_rank(
+    State(state): Shared,
+    Body(req): Body<RevokeRank>,
+) -> Reply<Body<PlayerRanks>> {
+    let db = ranks_database(&state)?;
+    Ok(Body(ranks::revoke(db, &state.store, req).await?))
 }
 
 // Fleet settings

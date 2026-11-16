@@ -24,6 +24,7 @@ mod nodes;
 pub mod orchestrator;
 pub mod panel;
 mod punish;
+mod ranks;
 mod remote;
 mod signals;
 mod stats;

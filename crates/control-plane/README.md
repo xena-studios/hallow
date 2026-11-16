@@ -38,10 +38,15 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `POST /v1/friends` takes one action (add, accept, deny, remove, list or requests), with notices to the other player on their proxy;
   - friends are told when each other join or leave the network.
 - **Punishments** (with the database):
-  - `POST /v1/punishments` issues a ban, mute, kick or warning by username (online or not) and enforces it on the player's proxy;
-  - `POST /v1/punishments/revoke` lifts a ban or mute;
+  - `POST /v1/punishments` issues a ban, mute, kick or warning by username (online or not; a kick only while online) and enforces it on the player's proxy. The issuer is an in-game staff player (`issuer`), a panel staff member (`staff: {name, panel_user}`) or the console; all three take the same path, so a ban from the panel kicks the player and refuses their next login on every proxy just like `/ban`;
+  - `POST /v1/punishments/revoke` lifts a ban or mute, with an optional reason;
   - `GET /v1/punishments?name=` lists a player's last 10;
+  - `GET /v1/punishments/search?player=&kind=&active=&limit=&offset=` pages through every punishment, newest first, with the target, issuer and revocation (for the panel);
+  - `GET`/`POST /v1/punishments/templates` and `PUT`/`DELETE /v1/punishments/templates/{id}` manage reason templates (name, kind, length, reason);
   - an active mute is sent with the login and pushed whenever it changes.
+- **Ranks** (with the database), edited from the panel:
+  - `GET /v1/ranks` lists ranks with their member counts; `PUT /v1/ranks/{name}` creates or replaces one (bad nodes get a `400` with `fields`); `DELETE /v1/ranks/{name}` deletes one, except the default;
+  - `GET /v1/rank-grants?name=`, `POST /v1/rank-grants` and `POST /v1/rank-grants/revoke` show, give and take a player's ranks. Nodes reach the proxy with the login, so a change applies at the player's next join.
 - **Anticheat signals** (with the database):
   - proxies and servers `POST /v1/signals` batches of per-player samples, each a window of named measurements, from 30 s of play;
   - they're kept in PostgreSQL for `HALLOW_SIGNAL_RETENTION_DAYS` (14);

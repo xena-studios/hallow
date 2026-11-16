@@ -27,6 +27,17 @@
 //! | `POST` | [`PUNISHMENTS`] | [`IssuePunishment`](crate::punishment::IssuePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
 //! | `POST` | [`PUNISHMENTS_REVOKE`] | [`RevokePunishment`](crate::punishment::RevokePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
 //! | `GET` | [`punishment_history`] | | `Vec<`[`PunishmentRecord`](crate::punishment::PunishmentRecord)`>` |
+//! | `GET` | [`PUNISHMENTS_SEARCH`]`?player=&kind=&active=&limit=&offset=` | | [`PunishmentPage`](crate::punishment::PunishmentPage), newest first |
+//! | `GET` | [`PUNISHMENT_TEMPLATES`] | | `Vec<`[`PunishmentTemplate`](crate::punishment::PunishmentTemplate)`>` |
+//! | `POST` | [`PUNISHMENT_TEMPLATES`] | [`SaveTemplate`](crate::punishment::SaveTemplate) | [`PunishmentTemplate`](crate::punishment::PunishmentTemplate), or `400` with fields |
+//! | `PUT` | [`punishment_template`] | [`SaveTemplate`](crate::punishment::SaveTemplate) | [`PunishmentTemplate`](crate::punishment::PunishmentTemplate), or `400` / `404` |
+//! | `DELETE` | [`punishment_template`] | | `204` or `404` |
+//! | `GET` | [`RANKS`] | | `Vec<`[`RankInfo`](crate::rank::RankInfo)`>`, highest weight first |
+//! | `PUT` | [`rank`] | [`SaveRank`](crate::rank::SaveRank) | [`RankInfo`](crate::rank::RankInfo), or `400` with fields |
+//! | `DELETE` | [`rank`] | | `204`, `404`, or `409` for the default rank |
+//! | `GET` | [`rank_grants_of`] | | [`PlayerRanks`](crate::rank::PlayerRanks) or `404` |
+//! | `POST` | [`RANK_GRANTS`] | [`GrantRank`](crate::rank::GrantRank) | [`PlayerRanks`](crate::rank::PlayerRanks), or `404` |
+//! | `POST` | [`RANK_GRANTS_REVOKE`] | [`RevokeRank`](crate::rank::RevokeRank) | [`PlayerRanks`](crate::rank::PlayerRanks), or `404` |
 //! | `POST` | [`SIGNALS`] | [`SignalBatch`](crate::signal::SignalBatch) | `204` |
 //! | `GET` | [`signals_of`] | | `Vec<`[`SignalRecord`](crate::signal::SignalRecord)`>` |
 //! | `POST` | [`STATS`] | [`StatsBatch`](crate::stats::StatsBatch) | `204` |
@@ -78,6 +89,16 @@ pub const SIGNALS: &str = "/v1/signals";
 pub const STATS: &str = "/v1/stats";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
+pub const PUNISHMENTS_SEARCH: &str = "/v1/punishments/search";
+pub const PUNISHMENT_TEMPLATES: &str = "/v1/punishments/templates";
+pub const RANKS: &str = "/v1/ranks";
+pub const RANK_GRANTS: &str = "/v1/rank-grants";
+pub const RANK_GRANTS_REVOKE: &str = "/v1/rank-grants/revoke";
+
+/// How many punishments [`PUNISHMENTS_SEARCH`] returns when `limit` is left
+/// out, and the most it returns.
+pub const PUNISHMENT_SEARCH_DEFAULT: u32 = 50;
+pub const PUNISHMENT_SEARCH_MAX: u32 = 200;
 pub const FLEET_SETTINGS: &str = "/v1/fleet/settings";
 pub const FLEET_SETTINGS_HISTORY: &str = "/v1/fleet/settings/history";
 
@@ -158,6 +179,28 @@ pub fn punishment_history(name: &str) -> String {
     player_by_name(name).replacen(PLAYERS, PUNISHMENTS, 1)
 }
 
+#[must_use]
+pub fn punishment_template(id: i64) -> String {
+    punishment_template_path(&id.to_string())
+}
+
+/// [`punishment_template`] with any segment, such as `{id}` for a router.
+#[must_use]
+pub fn punishment_template_path(id: &str) -> String {
+    format!("{PUNISHMENT_TEMPLATES}/{id}")
+}
+
+#[must_use]
+pub fn rank(name: &str) -> String {
+    format!("{RANKS}/{name}")
+}
+
+/// A player's ranks by username.
+#[must_use]
+pub fn rank_grants_of(name: &str) -> String {
+    player_by_name(name).replacen(PLAYERS, RANK_GRANTS, 1)
+}
+
 /// A player's recent anticheat signal samples by username, newest first.
 #[must_use]
 pub fn signals_of(name: &str) -> String {
@@ -231,6 +274,8 @@ mod tests {
         );
         assert_eq!(since_wait(SERVERS, 12, 0), "/v1/servers?since=12&wait=0");
         assert_eq!(player_by_name("Steve_1"), "/v1/players?name=Steve_1");
+        assert_eq!(rank_grants_of("Steve"), "/v1/rank-grants?name=Steve");
+        assert_eq!(punishment_template(7), "/v1/punishments/templates/7");
         assert_eq!(
             player_by_name(".Bedrock Guy"),
             "/v1/players?name=.Bedrock%20Guy"
