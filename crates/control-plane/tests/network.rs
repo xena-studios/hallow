@@ -12,6 +12,7 @@ use hallow_control_plane::{Config, DuplicateLogin, serve, serve_all};
 use hallow_proto::{
     ApiError, ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
+    fleet::{FleetSettings, FleetSettingsChange, FleetSettingsRecord, ProviderSettings},
     friend::{FriendAction, FriendReply},
     party::{PartyAction, PartyInfo, PartyReply},
     presence::{
@@ -92,6 +93,11 @@ impl Instance {
 
     async fn post<B: Serialize>(&self, path: &str, body: &B) -> reqwest::Response {
         self.send(self.http.post(format!("{}{path}", self.base)).json(body))
+            .await
+    }
+
+    async fn put<B: Serialize>(&self, path: &str, body: &B) -> reqwest::Response {
+        self.send(self.http.put(format!("{}{path}", self.base)).json(body))
             .await
     }
 
@@ -1338,6 +1344,136 @@ async fn signals_roundtrip() {
     assert_eq!(records[0].source, "proxy-a");
     assert_eq!(records[0].at_ms, 1_800_000_000_000);
     assert_eq!(records[0].metrics["cps_max"], 15.5);
+
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// Fleet settings: defaults until changed, field errors for bad values,
+/// and a history of every change.
+#[tokio::test]
+async fn fleet_settings_roundtrip() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    let one = Instance::start(config).await;
+
+    // Needs the token like everything else.
+    let res = one
+        .http
+        .get(format!("{}{}", one.base, routes::FLEET_SETTINGS))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    let record: FleetSettingsRecord = one.get_json(routes::FLEET_SETTINGS).await;
+    assert_eq!(record.settings, FleetSettings::default());
+    assert!(record.settings.dry_run);
+    assert_eq!(record.updated_at, None);
+    assert_eq!(record.updated_by, None);
+    let history: Vec<FleetSettingsChange> = one.get_json(&routes::fleet_settings_history(10)).await;
+    assert!(history.is_empty());
+
+    // Invalid values, and a wrong type, each come back against their field.
+    let res = one
+        .put(
+            routes::FLEET_SETTINGS,
+            &serde_json::json!({
+                "settings": {
+                    "timezone": "Nowhere/Special",
+                    "monthly_budget": "-3.00",
+                    "tighten_from": 2.0,
+                    "max_nodes": -1,
+                    "scale_down_cooldown_secs": -60,
+                },
+                "updated_by": "alice",
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let err: ApiError = res.json().await.unwrap();
+    assert_eq!(err.code, ErrorCode::BadRequest);
+    let fields: Vec<&str> = err.fields.keys().map(String::as_str).collect();
+    assert_eq!(
+        fields,
+        [
+            "max_nodes",
+            "monthly_budget",
+            "scale_down_cooldown_secs",
+            "tighten_from",
+            "timezone"
+        ]
+    );
+    let res = one
+        .put(
+            routes::FLEET_SETTINGS,
+            &serde_json::json!({"settings": {}, "updated_by": ""}),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let err: ApiError = res.json().await.unwrap();
+    assert!(err.fields.contains_key("updated_by"), "{err:?}");
+    // Nothing was saved.
+    let record: FleetSettingsRecord = one.get_json(routes::FLEET_SETTINGS).await;
+    assert_eq!(record.updated_by, None);
+
+    let mut settings = FleetSettings {
+        dry_run: false,
+        timezone: "Europe/Berlin".into(),
+        monthly_budget: Some("120.00".into()),
+        daily_cap: None,
+        max_nodes: 6,
+        providers: vec![ProviderSettings {
+            name: "hetzner-cloud".into(),
+            enabled: true,
+            regions: vec!["fsn1".into(), "nbg1".into()],
+            machine_types: vec!["cpx41".into()],
+        }],
+        ..FleetSettings::default()
+    };
+    let res = one
+        .put(
+            routes::FLEET_SETTINGS,
+            &serde_json::json!({"settings": settings, "updated_by": "alice"}),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let saved: FleetSettingsRecord = res.json().await.unwrap();
+    assert_eq!(saved.settings, settings);
+    assert_eq!(saved.updated_by.as_deref(), Some("alice"));
+    assert!(saved.updated_at.is_some());
+    let record: FleetSettingsRecord = one.get_json(routes::FLEET_SETTINGS).await;
+    assert_eq!(record, saved);
+
+    settings.paused = true;
+    let res = one
+        .put(
+            routes::FLEET_SETTINGS,
+            &serde_json::json!({"settings": settings, "updated_by": "bob"}),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let history: Vec<FleetSettingsChange> = one.get_json(&routes::fleet_settings_history(10)).await;
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].updated_by, "bob");
+    assert!(history[0].after.paused);
+    assert!(!history[0].before.as_ref().unwrap().paused);
+    assert_eq!(history[1].updated_by, "alice");
+    assert_eq!(history[1].before, None);
+    assert_eq!(history[1].after.timezone, "Europe/Berlin");
+    let latest: Vec<FleetSettingsChange> = one.get_json(&routes::fleet_settings_history(1)).await;
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].id, history[0].id);
 
     admin
         .execute(sqlx::AssertSqlSafe(format!(

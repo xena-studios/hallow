@@ -20,6 +20,7 @@ fn burst_cost() -> Cost {
 
 fn policy() -> Policy {
     Policy {
+        timezone: chrono_tz::UTC,
         headroom_slots: 40,
         queue_wait_target: Duration::from_secs(60),
         scale_up_after: mins(3),
@@ -29,11 +30,12 @@ fn policy() -> Policy {
         drain_deadline: mins(20),
         billing_step_margin: mins(5),
         max_nodes: 10,
-        monthly_budget: Money::from_units(500),
-        daily_cap: Money::from_units(40),
+        monthly_budget: Some(Money::from_units(500)),
+        daily_cap: Some(Money::from_units(40)),
         tighten_from: 0.8,
         floor_nodes: vec![NodeId::from("floor")],
         prefer_burst_on_scale_down: true,
+        base_drain_needs_approval: true,
         burst_offers: vec![Offer {
             region: "fsn1".into(),
             machine_type: "cpx41".into(),
@@ -471,6 +473,27 @@ fn cancelling_a_base_node_needs_approval() {
 }
 
 #[test]
+fn base_cancellations_can_skip_approval() {
+    let mut policy = policy();
+    policy.base_drain_needs_approval = false;
+    let mut base = burst("base1", NodePhase::Draining, 0);
+    base.kind = NodeKind::Base;
+    base.cost = Cost::monthly(Money::from_units(40));
+    let p = plan(
+        &snap(t(10, 5), vec![floor(0), base]),
+        &policy,
+        &Memory::default(),
+    );
+    assert!(matches!(
+        &p.decisions[..],
+        [Decision::Cancel {
+            needs_approval: false,
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn a_draining_floor_node_is_never_cancelled() {
     let policy = policy();
     let mut f = floor(0);
@@ -516,6 +539,87 @@ fn the_monthly_budget_stops_buying() {
         matches!(holds(&p)[..], [Reason::MonthlyBudget { .. }]),
         "{:?}",
         p.decisions
+    );
+}
+
+#[test]
+fn no_limits_never_hold_a_buy() {
+    let mut policy = policy();
+    policy.daily_cap = None;
+    policy.monthly_budget = None;
+    let mut s = snap(t(12, 10), vec![floor(100)]);
+    s.spend.today = Money::from_units(10_000);
+    s.spend.month = Money::from_units(100_000);
+    let p = plan(&s, &policy, &pressured_since(t(12, 0)));
+    // Without a budget, headroom never tightens.
+    assert_eq!(p.headroom_target, 40);
+    assert_eq!(buys(&p), 1, "{:?}", p.decisions);
+}
+
+// Time zones: "today" and "this month" start at local midnight.
+
+#[test]
+fn the_day_ends_at_local_midnight() {
+    // 23:30 UTC is 00:30 the next day in Berlin and 18:30 in New York.
+    let s = snap(t(23, 30), vec![floor(0)]);
+    let left = |tz| Budget::new(&s, tz).hours_left_today;
+    assert_eq!(left(chrono_tz::UTC), 0.5);
+    assert_eq!(left(chrono_tz::Europe::Berlin), 23.5);
+    assert_eq!(left(chrono_tz::America::New_York), 5.5);
+}
+
+#[test]
+fn the_daily_cap_counts_the_local_day() {
+    // At 23:30 UTC the UTC day is nearly over, so a buy fits the cap; in
+    // Berlin a new day has just begun and the whole of it is projected.
+    let mut policy = policy();
+    policy.daily_cap = Some(Money::from_units(2));
+    let s = snap(
+        t(23, 30),
+        vec![floor(100), burst("b1", NodePhase::Ready, 100)],
+    );
+    let p = plan(&s, &policy, &pressured_since(t(23, 20)));
+    assert_eq!(buys(&p), 1, "{:?}", p.decisions);
+
+    policy.timezone = chrono_tz::Europe::Berlin;
+    let p = plan(&s, &policy, &pressured_since(t(23, 20)));
+    assert_eq!(buys(&p), 0);
+    assert!(
+        matches!(holds(&p)[..], [Reason::DailyCap { .. }]),
+        "{:?}",
+        p.decisions
+    );
+}
+
+#[test]
+fn the_month_ends_at_local_midnight() {
+    // 23:30 UTC on 30 November is already 1 December in Berlin: the floor
+    // node is forecast for all of December, not for half an hour.
+    let mut policy = policy();
+    let now = Utc.with_ymd_and_hms(2026, 11, 30, 23, 30, 0).unwrap();
+    let s = snap(now, vec![floor(0)]);
+    let rate = Cost::monthly(Money::from_units(40)).per_hour();
+    assert_eq!(
+        plan(&s, &policy, &Memory::default()).forecast,
+        rate.scale(0.5)
+    );
+    policy.timezone = chrono_tz::Europe::Berlin;
+    assert_eq!(
+        plan(&s, &policy, &Memory::default()).forecast,
+        rate.scale(31.0 * 24.0 - 0.5)
+    );
+}
+
+#[test]
+fn days_follow_clock_changes() {
+    // Berlin leaves summer time on 25 October 2026, so that day is 25 hours.
+    let s = snap(
+        Utc.with_ymd_and_hms(2026, 10, 24, 22, 0, 0).unwrap(),
+        vec![floor(0)],
+    );
+    assert_eq!(
+        Budget::new(&s, chrono_tz::Europe::Berlin).hours_left_today,
+        25.0
     );
 }
 

@@ -40,7 +40,8 @@ The floor is configurable. One node is the cheapest. Two or more put the platfor
 
 Budgets stop growth; they never cut a node that has players on it.
 
-- **Limits:** a monthly budget and a daily cap for the whole network, optional per-region caps, and a maximum node count. All are set in the panel; every change is in the audit log.
+- **Limits:** a monthly budget and a daily cap for the whole network, and a maximum node count; per-region caps may follow. All are [settings](#settings) set in the panel; every change is in the settings history.
+- **Days and months** start at midnight in the network's time zone setting, so the daily cap and the monthly budget line up with the bills.
 - **Forecast:** the fleet manager knows the running cost of every node and forecasts month-end spend. As the forecast nears the budget it keeps less spare capacity, then stops buying.
 - **At the cap:** no new nodes. The matchmaker packs games tighter, queues get longer, players in a queue see that the network is busy, and staff are alerted. Staff can raise the cap from the panel.
 - **The floor node** always counts against the budget and is never cut.
@@ -70,7 +71,42 @@ Provider billing details and delivery times change, so they live in each provide
 3. Wait for its games to end, or until a deadline, then move what is left.
 4. Delete its servers through Wings, remove it from the panel, cancel it with the provider. A burst node is kept until just before its next billing step when that is cheaper than buying again soon.
 
-Every threshold, wait time and cooldown is configured per region in the panel.
+Every threshold, wait time and cooldown is a [setting](#settings) in the panel. Per-region values may follow; for now they apply to the whole network.
+
+## Settings
+
+Nothing the fleet manager decides by is hard-coded. Every setting lives in PostgreSQL (`hallow.fleet_settings`, one row), and staff change them from the Fleet page in the panel, which reads and writes them through the control plane:
+
+- `GET /v1/fleet/settings` returns the settings in force with who changed them last and when, or the defaults below if nobody has;
+- `PUT /v1/fleet/settings` with `{settings, updated_by}` replaces them. Invalid settings are refused with a `400` whose `fields` says what is wrong with each field, so the form can show it in place;
+- every change is kept, with the settings before and after, in `hallow.fleet_settings_history`, read with `GET /v1/fleet/settings/history?limit=` (newest first).
+
+The types are `hallow_proto::fleet::FleetSettings`; `hallow_fleet` turns them into the planner's policy. A setting left out of a `PUT`, or added after the settings were last saved, takes its default.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `dry_run` | `true` | Log what would be bought and cancelled without calling any provider. |
+| `paused` | `false` | Make no decisions at all: nothing is bought, drained or cancelled. |
+| `timezone` | `"UTC"` | IANA time zone where "today" (daily cap) and "this month" (budget) start, such as `Europe/Berlin`. |
+| `currency` | `"EUR"` | ISO 4217 code of the budgets and provider prices. |
+| `monthly_budget` | `"100.00"` | Month-end forecast limit, a decimal amount in `currency`; `null` for no limit. |
+| `daily_cap` | `"10.00"` | Spend limit for one day, no more than the monthly budget; `null` for no limit. |
+| `max_nodes` | `10` | Nodes of every kind and phase, the floor included; at least `floor_nodes`. |
+| `headroom_slots` | `40` | Free game slots to keep across all nodes. |
+| `tighten_from` | `0.8` | Fraction of the monthly budget (0 to 1) at which headroom starts shrinking, to zero at the budget. |
+| `queue_wait_target_secs` | `60` | Scale up when any queue waits longer than this. |
+| `scale_up_after_secs` | `180` | Pressure must hold this long before buying. |
+| `scale_down_after_secs` | `600` | Spare capacity must hold this long before draining. |
+| `scale_up_cooldown_secs` | `300` | After a buy, no further buy for this long. |
+| `scale_down_cooldown_secs` | `900` | After a buy or a drain, no drain for this long. |
+| `drain_deadline_secs` | `1200` | A draining node is cancelled after this even with players left (they are moved first). |
+| `billing_step_margin_secs` | `300` | An empty hourly node is kept until this long before its next billing step; under an hour. |
+| `base_drain_needs_approval` | `true` | Cancelling a draining base node waits for a staff member's approval. |
+| `prefer_burst_on_scale_down` | `true` | Drain burst nodes before base nodes. |
+| `floor_nodes` | `1` | How many nodes (the oldest base nodes) are never drained or cancelled; at least 1. |
+| `providers` | `hetzner-cloud`, enabled, any region and type | Providers to buy from, each `{name, enabled, regions, machine_types}`; an empty list allows any region or type, and an unlisted provider is never used. |
+
+Durations are in seconds, from 0 to 30 days. Provider credentials are never settings; they stay in the secrets store.
 
 ## Setting up a new node
 
@@ -105,4 +141,4 @@ More providers can follow the same trait.
 
 ## In the panel
 
-A Fleet page shows every node with its provider, region, kind, cost so far this month, players and state (setting up, ready, draining, cancelled). Staff can add, drain or cancel a node, approve orders, set scaling targets and caps, and switch dry run on or off.
+A Fleet page shows every node with its provider, region, kind, cost so far this month, players and state (setting up, ready, draining, cancelled). Staff can add, drain or cancel a node, approve orders, and edit every [setting](#settings): scaling targets, budgets and caps, the time zone, providers, and dry run.

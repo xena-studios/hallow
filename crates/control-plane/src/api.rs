@@ -14,6 +14,7 @@ use axum::{
 use hallow_proto::{
     ErrorCode, Poll,
     command::{NetworkCommand, ProxyCommand},
+    fleet::{FleetSettingsChange, FleetSettingsRecord},
     friend::{FriendAction, FriendReply},
     party::{PartyAction, PartyInfo, PartyReply},
     presence::{
@@ -33,7 +34,7 @@ use uuid::Uuid;
 use crate::{
     AppState, accounts,
     error::Failure,
-    events, friends, punish, signals,
+    events, fleet, friends, punish, signals,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -110,6 +111,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::QUEUES, post(join_queue))
         .route("/v1/queues/{uuid}", axum::routing::delete(leave_queue))
         .route("/v1/parties/{uuid}", get(party_of))
+        .route(
+            routes::FLEET_SETTINGS,
+            get(fleet_settings).put(update_fleet_settings),
+        )
+        .route(routes::FLEET_SETTINGS_HISTORY, get(fleet_settings_history))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize));
     Router::new()
         .route("/healthz", get(health))
@@ -492,6 +498,50 @@ async fn punishment_history(
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
+}
+
+// Fleet settings
+
+fn fleet_database(state: &AppState) -> Reply<&hallow_db::PgPool> {
+    state.db.as_ref().ok_or_else(|| {
+        Failure::new(
+            ErrorCode::Unavailable,
+            "fleet settings need a database (HALLOW_DATABASE_URL)",
+        )
+    })
+}
+
+async fn fleet_settings(State(state): Shared) -> Reply<Body<FleetSettingsRecord>> {
+    let db = fleet_database(&state)?;
+    Ok(Body(fleet::current(db).await?))
+}
+
+/// `400` with a message per invalid field in `fields`.
+async fn update_fleet_settings(
+    State(state): Shared,
+    Body(body): Body<serde_json::Value>,
+) -> Reply<Body<FleetSettingsRecord>> {
+    let db = fleet_database(&state)?;
+    let update = fleet::parse_update(body)?;
+    Ok(Body(fleet::save(db, &update).await?))
+}
+
+#[derive(Deserialize)]
+struct LimitParams {
+    limit: Option<u32>,
+}
+
+async fn fleet_settings_history(
+    State(state): Shared,
+    query: Result<Query<LimitParams>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<Vec<FleetSettingsChange>>> {
+    let Query(params) = query?;
+    let limit = params
+        .limit
+        .unwrap_or(routes::FLEET_SETTINGS_HISTORY_DEFAULT)
+        .clamp(1, routes::FLEET_SETTINGS_HISTORY_MAX);
+    let db = fleet_database(&state)?;
+    Ok(Body(fleet::history(db, limit).await?))
 }
 
 // Parties

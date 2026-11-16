@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hallow_proto::{ApiError, ErrorCode};
+use hallow_proto::{ApiError, ErrorCode, fleet::FieldErrors};
 
 use crate::store::StoreError;
 
@@ -15,6 +15,7 @@ pub struct Failure {
     status: StatusCode,
     code: ErrorCode,
     message: String,
+    fields: FieldErrors,
 }
 
 impl Failure {
@@ -30,6 +31,7 @@ impl Failure {
             status,
             code,
             message: message.into(),
+            fields: FieldErrors::new(),
         }
     }
 
@@ -40,6 +42,14 @@ impl Failure {
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::BadRequest, message)
     }
+
+    /// A `400` naming what is wrong with each field of a form.
+    pub fn invalid_fields(message: impl Into<String>, fields: FieldErrors) -> Self {
+        Self {
+            fields,
+            ..Self::bad_request(message)
+        }
+    }
 }
 
 impl IntoResponse for Failure {
@@ -49,6 +59,7 @@ impl IntoResponse for Failure {
             Json(ApiError {
                 code: self.code,
                 message: self.message,
+                fields: self.fields,
             }),
         )
             .into_response()

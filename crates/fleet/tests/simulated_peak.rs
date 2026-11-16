@@ -72,6 +72,7 @@ fn floor_cost() -> Cost {
 
 fn policy() -> Policy {
     Policy {
+        timezone: chrono_tz::UTC,
         headroom_slots: 40,
         queue_wait_target: Duration::from_secs(60),
         scale_up_after: MIN * 3,
@@ -81,11 +82,12 @@ fn policy() -> Policy {
         drain_deadline: MIN * 20,
         billing_step_margin: MIN * 5,
         max_nodes: 10,
-        monthly_budget: Money::from_units(500),
-        daily_cap: Money::from_units(40),
+        monthly_budget: Some(Money::from_units(500)),
+        daily_cap: Some(Money::from_units(40)),
         tighten_from: 0.8,
         floor_nodes: vec![NodeId::from("floor")],
         prefer_burst_on_scale_down: true,
+        base_drain_needs_approval: true,
         burst_offers: vec![Offer {
             region: "fsn1".into(),
             machine_type: "cpx41".into(),
@@ -467,9 +469,9 @@ async fn a_day_with_an_evening_peak() {
 
     // Within budget.
     for (date, spent) in &day.spend_by_day {
-        assert!(*spent <= policy.daily_cap, "{date}: {spent}");
+        assert!(Some(*spent) <= policy.daily_cap, "{date}: {spent}");
     }
-    assert!(day.month_spend <= policy.monthly_budget);
+    assert!(Some(day.month_spend) <= policy.monthly_budget);
     assert!(
         day.decisions_matching(|d| matches!(
             d,
@@ -486,7 +488,7 @@ async fn a_day_with_an_evening_peak() {
 async fn at_the_daily_cap_players_queue_and_nothing_is_cut() {
     let mut policy = policy();
     // Enough for the floor and one burst node this evening, not two.
-    policy.daily_cap = Money::from_micros(1_700_000);
+    policy.daily_cap = Some(Money::from_micros(1_700_000));
     let day = run_day(&policy, Money::from_units(30)).await;
 
     // One burst node fits under the cap at the rise; after that the cap holds
@@ -524,7 +526,10 @@ async fn at_the_daily_cap_players_queue_and_nothing_is_cut() {
     }
 
     for (date, spent) in &day.spend_by_day {
-        assert!(*spent <= policy.daily_cap, "{date}: {spent} over the cap");
+        assert!(
+            Some(*spent) <= policy.daily_cap,
+            "{date}: {spent} over the cap"
+        );
     }
     assert_eq!(day.nodes_left, vec![NodeId::from("floor")]);
 }

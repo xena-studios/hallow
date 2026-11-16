@@ -5,7 +5,9 @@
 //! - [`planner`]: a pure function from a fleet snapshot and a policy to
 //!   buy, drain, cancel and hold decisions;
 //! - [`dry_run`]: a provider wrapper that logs what would happen and never
-//!   calls the real provider.
+//!   calls the real provider;
+//! - [`settings`]: the planner's [`Policy`] from the fleet settings the panel
+//!   edits, and which offers they allow.
 //!
 //! The control plane will run the loop: build a snapshot, call
 //! [`planner::plan`], carry out the decisions through a provider, and record
@@ -15,6 +17,7 @@ pub mod dry_run;
 pub mod money;
 pub mod planner;
 pub mod provider;
+pub mod settings;
 
 pub use dry_run::{DryRun, DryRunAction};
 pub use money::Money;
@@ -26,3 +29,4 @@ pub use provider::{
     BillingStep, Cost, Node, NodeId, NodeKind, NodeSpec, Price, Prices, Provider, ProviderError,
     ProviderState,
 };
+pub use settings::{InvalidSettings, allowed_offers, floor_nodes};
