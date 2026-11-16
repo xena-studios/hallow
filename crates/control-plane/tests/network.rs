@@ -20,9 +20,11 @@ use hallow_proto::{
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
     punishment::{
-        IssuePunishment, PunishmentKind, PunishmentRecord, PunishmentReply, RevokePunishment,
+        IssuePunishment, IssuerKind, PunishmentKind, PunishmentPage, PunishmentRecord,
+        PunishmentReply, PunishmentTemplate, RevokePunishment, SaveTemplate, StaffMember,
     },
     queue::{JoinQueue, QueueStatus},
+    rank::{GrantRank, PlayerRanks, RankInfo, RevokeRank, SaveRank},
     routes,
     server::{
         RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged,
@@ -1070,6 +1072,7 @@ async fn punishments_in_game() {
         issuer: Some(boss),
         reason: "being rude".into(),
         duration_seconds,
+        staff: None,
     };
     let reply: PunishmentReply = one
         .post_json(routes::PUNISHMENTS, &issue(PunishmentKind::Mute, Some(600)))
@@ -1136,6 +1139,7 @@ async fn punishments_in_game() {
         target: "GRIEFER".into(),
         issuer: Some(boss),
         reason: None,
+        staff: None,
     };
     assert!(
         one.post_json::<_, PunishmentReply>(routes::PUNISHMENTS_REVOKE, &unban)
@@ -1168,6 +1172,398 @@ async fn punishments_in_game() {
 
     admin
         .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// The #25 gate: a moderator bans from the panel and every proxy enforces
+/// it. The player is kicked from the proxy holding them through the same
+/// command path as `/ban`, and refused at login on either proxy until a
+/// staff member lifts it. Kicks, the network-wide search and templates too.
+#[tokio::test]
+async fn punishments_from_the_panel() {
+    use hallow_db::sqlx::Executor;
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    config.long_poll = Duration::from_millis(200);
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+    let b = one.register_proxy("proxy-b").await;
+    one.register_hub("hub-1").await;
+    let (target, bystander) = (Uuid::new_v4(), Uuid::new_v4());
+    login_as(&one, target, "Cheater", "proxy-b").await;
+    login_as(&one, bystander, "Bystander", "proxy-a").await;
+    let staff = || {
+        Some(StaffMember {
+            name: "mod-alice".into(),
+            panel_user: Some("6f9619ff-8b86-d011-b42d-00cf4fc964ff".into()),
+        })
+    };
+    let panel = |kind, duration_seconds| IssuePunishment {
+        kind,
+        target: "cheater".into(),
+        issuer: None,
+        reason: "Cheating: unfair client modifications".into(),
+        duration_seconds,
+        staff: staff(),
+    };
+
+    // A kick needs the player online; it disconnects them and is recorded.
+    let reply: PunishmentReply = one
+        .post_json(routes::PUNISHMENTS, &panel(PunishmentKind::Kick, None))
+        .await;
+    assert!(reply.ok && reply.id.is_some(), "{reply:?}");
+    let Poll::Changed { revision, data } = one.commands("proxy-b", b.commands_revision).await
+    else {
+        panic!()
+    };
+    assert!(
+        data.iter()
+            .any(|c| matches!(c, ProxyCommand::Kick { player, .. } if *player == target)),
+        "{data:?}"
+    );
+
+    // The ban: kicked where they are, at once, like /ban.
+    let reply: PunishmentReply = one
+        .post_json(
+            routes::PUNISHMENTS,
+            &panel(PunishmentKind::Ban, Some(30 * 86400)),
+        )
+        .await;
+    assert!(reply.ok && reply.message.contains("30d 0h"), "{reply:?}");
+    let ban_id = reply.id.expect("the ban's id");
+    let Poll::Changed { data, .. } = one.commands("proxy-b", revision).await else {
+        panic!("the ban didn't reach proxy-b")
+    };
+    assert!(
+        data.iter().any(|c| matches!(c, ProxyCommand::Kick { player, reason } if *player == target && reason.contains("Cheating"))),
+        "{data:?}"
+    );
+    // Nothing for the proxy that doesn't hold them.
+    assert!(matches!(
+        one.commands("proxy-a", a.commands_revision).await,
+        Poll::Unchanged { .. }
+    ));
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: target,
+            proxy: "proxy-b".into(),
+        },
+    )
+    .await;
+    for proxy in ["proxy-a", "proxy-b"] {
+        let LoginDecision::Deny { reason } = login_as(&one, target, "Cheater", proxy).await else {
+            panic!("banned player let in on {proxy}")
+        };
+        assert!(reason.contains("Cheating"), "{reason}");
+    }
+    // Offline now, so a kick is refused and not recorded.
+    let reply: PunishmentReply = one
+        .post_json(routes::PUNISHMENTS, &panel(PunishmentKind::Kick, None))
+        .await;
+    assert!(
+        !reply.ok && reply.message.contains("isn't online"),
+        "{reply:?}"
+    );
+
+    // The panel's list: filters, the staff issuer, paging.
+    let page: PunishmentPage = one
+        .get_json(&format!("{}?player=CHEATER", routes::PUNISHMENTS_SEARCH))
+        .await;
+    assert_eq!(page.total, 2);
+    let ban = &page.entries[0];
+    assert_eq!(
+        (
+            ban.id,
+            ban.kind,
+            ban.active,
+            ban.issuer.as_str(),
+            ban.issuer_kind
+        ),
+        (
+            ban_id,
+            PunishmentKind::Ban,
+            true,
+            "mod-alice",
+            IssuerKind::Staff
+        )
+    );
+    assert_eq!(ban.target_name, "Cheater");
+    let page: PunishmentPage = one
+        .get_json(&format!(
+            "{}?kind=ban&active=true&limit=1",
+            routes::PUNISHMENTS_SEARCH
+        ))
+        .await;
+    assert_eq!((page.total, page.entries.len()), (1, 1));
+    let page: PunishmentPage = one
+        .get_json(&format!("{}?limit=1&offset=5", routes::PUNISHMENTS_SEARCH))
+        .await;
+    assert_eq!((page.total, page.entries.len()), (2, 0));
+    let res = one
+        .get(&format!("{}?player=nobody", routes::PUNISHMENTS_SEARCH))
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    // In-game history names the staff member too.
+    let history: Vec<PunishmentRecord> = one.get_json(&routes::punishment_history("cheater")).await;
+    assert_eq!(history[0].issuer, "mod-alice");
+
+    // Lifted from the panel, with a reason: they get back in.
+    let unban = RevokePunishment {
+        kind: PunishmentKind::Ban,
+        target: "Cheater".into(),
+        issuer: None,
+        reason: Some("appeal accepted".into()),
+        staff: staff(),
+    };
+    let reply: PunishmentReply = one.post_json(routes::PUNISHMENTS_REVOKE, &unban).await;
+    assert_eq!((reply.ok, reply.id), (true, Some(ban_id)), "{reply:?}");
+    assert!(matches!(
+        login_as(&one, target, "Cheater", "proxy-a").await,
+        LoginDecision::Allow { .. }
+    ));
+    let page: PunishmentPage = one
+        .get_json(&format!(
+            "{}?player=cheater&kind=ban",
+            routes::PUNISHMENTS_SEARCH
+        ))
+        .await;
+    let revoked = page.entries[0].revoked.as_ref().expect("revoked");
+    assert_eq!(
+        (
+            revoked.by.as_str(),
+            revoked.by_kind,
+            revoked.reason.as_deref()
+        ),
+        ("mod-alice", IssuerKind::Staff, Some("appeal accepted"))
+    );
+    assert!(!page.entries[0].active);
+
+    // A staff member needs a name.
+    let nameless = IssuePunishment {
+        staff: Some(StaffMember {
+            name: " ".into(),
+            panel_user: None,
+        }),
+        ..panel(PunishmentKind::Warn, None)
+    };
+    let reply: PunishmentReply = one.post_json(routes::PUNISHMENTS, &nameless).await;
+    assert!(!reply.ok, "{reply:?}");
+
+    // Templates: four to start with, names unique without case.
+    let templates: Vec<PunishmentTemplate> = one.get_json(routes::PUNISHMENT_TEMPLATES).await;
+    let cheating = templates.iter().find(|t| t.name == "Cheating").unwrap();
+    assert_eq!(
+        (cheating.kind, cheating.duration_seconds),
+        (PunishmentKind::Ban, Some(30 * 86400))
+    );
+    let save = |name: &str, kind, duration_seconds| SaveTemplate {
+        name: name.into(),
+        kind,
+        duration_seconds,
+        reason: "Swearing in chat".into(),
+    };
+    let res = one
+        .post(
+            routes::PUNISHMENT_TEMPLATES,
+            &save("cheating", PunishmentKind::Mute, None),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        res.json::<ApiError>()
+            .await
+            .unwrap()
+            .fields
+            .contains_key("name")
+    );
+    let res = one
+        .post(
+            routes::PUNISHMENT_TEMPLATES,
+            &save("Swearing", PunishmentKind::Warn, Some(60)),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "warnings don't last");
+    let created: PunishmentTemplate = one
+        .post_json(
+            routes::PUNISHMENT_TEMPLATES,
+            &save("Swearing", PunishmentKind::Mute, Some(3600)),
+        )
+        .await;
+    let res = one
+        .put(
+            &routes::punishment_template(created.id),
+            &save("Swearing", PunishmentKind::Mute, Some(7200)),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let updated: PunishmentTemplate = res.json().await.unwrap();
+    assert_eq!(updated.duration_seconds, Some(7200));
+    let res = one
+        .send(one.http.delete(format!(
+            "{}{}",
+            one.base,
+            routes::punishment_template(created.id)
+        )))
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = one
+        .put(
+            &routes::punishment_template(created.id),
+            &save("Swearing", PunishmentKind::Mute, None),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    admin
+        .execute(hallow_db::sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// Ranks from the panel: create one with nodes, give it to a player, who
+/// gets its nodes at their next login; the default rank stays.
+#[tokio::test]
+async fn ranks_from_the_panel() {
+    use hallow_db::sqlx::Executor;
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    let one = Instance::start(config).await;
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    let helper = Uuid::new_v4();
+    login_as(&one, helper, "Helper", "proxy-a").await;
+
+    let res = one
+        .put(
+            &routes::rank("mod"),
+            &SaveRank {
+                display_prefix: "&2[MOD] ".into(),
+                weight: 50,
+                permissions: vec!["hallow.staff.*".into(), "Not A Node".into()],
+                is_default: false,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        res.json::<ApiError>()
+            .await
+            .unwrap()
+            .fields
+            .contains_key("permissions")
+    );
+    let res = one
+        .put(
+            &routes::rank("mod"),
+            &SaveRank {
+                display_prefix: "&2[MOD] ".into(),
+                weight: 50,
+                permissions: vec![
+                    "hallow.staff.*".into(),
+                    " HALLOW.STAFF.*".into(),
+                    "-hallow.staff.alert".into(),
+                ],
+                is_default: false,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let saved: RankInfo = res.json().await.unwrap();
+    assert_eq!(saved.permissions, ["hallow.staff.*", "-hallow.staff.alert"]);
+    assert_eq!(saved.display_prefix, "&2[MOD] ", "the trailing space stays");
+
+    let ranks: PlayerRanks = one
+        .post_json(
+            routes::RANK_GRANTS,
+            &GrantRank {
+                player: "helper".into(),
+                rank: "mod".into(),
+                duration_seconds: None,
+                staff: None,
+            },
+        )
+        .await;
+    assert_eq!(ranks.ranks, ["mod", "default"]);
+    assert_eq!(ranks.grants.len(), 1);
+    let list: Vec<RankInfo> = one.get_json(routes::RANKS).await;
+    assert_eq!(
+        list.iter()
+            .map(|r| (r.name.as_str(), r.members))
+            .collect::<Vec<_>>(),
+        [("mod", 1), ("default", 0)]
+    );
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: helper,
+            proxy: "proxy-a".into(),
+        },
+    )
+    .await;
+    let LoginDecision::Allow { permissions, .. } =
+        login_as(&one, helper, "Helper", "proxy-a").await
+    else {
+        panic!()
+    };
+    assert_eq!(permissions, ["hallow.staff.*", "-hallow.staff.alert"]);
+
+    let res = one
+        .send(
+            one.http
+                .delete(format!("{}{}", one.base, routes::rank("default"))),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let res = one
+        .post(
+            routes::RANK_GRANTS,
+            &GrantRank {
+                player: "helper".into(),
+                rank: "nope".into(),
+                duration_seconds: None,
+                staff: None,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let ranks: PlayerRanks = one
+        .post_json(
+            routes::RANK_GRANTS_REVOKE,
+            &RevokeRank {
+                player: "Helper".into(),
+                rank: "mod".into(),
+                staff: None,
+            },
+        )
+        .await;
+    assert_eq!(ranks.ranks, ["default"]);
+    let fetched: PlayerRanks = one.get_json(&routes::rank_grants_of("helper")).await;
+    assert_eq!(fetched, ranks);
+    let res = one
+        .send(
+            one.http
+                .delete(format!("{}{}", one.base, routes::rank("mod"))),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    admin
+        .execute(hallow_db::sqlx::AssertSqlSafe(format!(
             "DROP DATABASE {db_name} WITH (FORCE)"
         )))
         .await

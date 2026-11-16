@@ -23,6 +23,7 @@ pub mod presence;
 pub mod proxy;
 pub mod punishment;
 pub mod queue;
+pub mod rank;
 pub mod routes;
 pub mod server;
 pub mod signal;

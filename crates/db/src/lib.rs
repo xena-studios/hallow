@@ -1,6 +1,7 @@
 //! Hallow's PostgreSQL schema and the typed queries the control plane runs
-//! against it: accounts, ranks, sessions, punishments, anticheat signals,
-//! fleet settings, node join tokens, player stats and server kinds.
+//! against it: accounts, ranks, sessions, punishments and their templates,
+//! anticheat signals, fleet settings, node join tokens, player stats and
+//! server kinds.
 //!
 //! Every table lives in the `hallow` schema, so Hallow and the Calagopus
 //! panel can share one database. Queries are checked at runtime
@@ -44,12 +45,14 @@ pub use nodes::{
     delete_join_tokens_before, finish_join, list_nodes, node_exists, release_join_token,
 };
 pub use punishments::{
-    Actor, NewPunishment, Punishment, PunishmentKind, Revocation, active_ban, active_mute,
-    add_punishment, punishment_history, revoke_punishment,
+    Actor, NewPunishment, NewTemplate, Punishment, PunishmentFilter, PunishmentKind,
+    PunishmentTemplate, PunishmentWithTarget, Revocation, TemplateError, active_ban, active_mute,
+    add_punishment, add_template, delete_template, list_templates, punishment_history,
+    revoke_punishment, search_punishments, update_template,
 };
 pub use ranks::{
-    AccountPermissions, Rank, account_permissions, active_ranks, grant_rank, revoke_rank,
-    upsert_rank,
+    AccountPermissions, Rank, RankGrant, RankWithMembers, account_permissions, active_ranks,
+    delete_rank, grant_rank, list_ranks, rank_grants, revoke_rank, save_rank, upsert_rank,
 };
 pub use sessions::{
     NewSession, Session, close_proxy_sessions, close_session, open_session, set_session_server,

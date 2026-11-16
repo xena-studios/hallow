@@ -137,3 +137,86 @@ pub async fn account_permissions(
     }
     Ok(AccountPermissions { ranks, nodes })
 }
+
+/// A rank with how many accounts hold an unexpired grant of it.
+#[derive(Clone, Debug, PartialEq, Eq, FromRow)]
+pub struct RankWithMembers {
+    #[sqlx(flatten)]
+    pub rank: Rank,
+    pub members: i64,
+}
+
+/// Every rank, highest weight first (ties by name), with its member count.
+pub async fn list_ranks(pool: &PgPool) -> Result<Vec<RankWithMembers>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT r.name, r.display_prefix, r.weight, r.permissions, r.is_default,
+                (SELECT count(*) FROM hallow.account_ranks ar
+                 WHERE ar.rank_name = r.name
+                   AND (ar.expires_at IS NULL OR ar.expires_at > now())) AS members
+         FROM hallow.ranks r
+         ORDER BY r.weight DESC, r.name",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Like [`upsert_rank`], but making the rank the default first takes the
+/// flag off the old default, in one transaction.
+pub async fn save_rank(pool: &PgPool, rank: &Rank) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if rank.is_default {
+        sqlx::query("UPDATE hallow.ranks SET is_default = false WHERE is_default AND name <> $1")
+            .bind(&rank.name)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query(
+        "INSERT INTO hallow.ranks (name, display_prefix, weight, permissions, is_default)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (name) DO UPDATE SET
+            display_prefix = EXCLUDED.display_prefix,
+            weight = EXCLUDED.weight,
+            permissions = EXCLUDED.permissions,
+            is_default = EXCLUDED.is_default",
+    )
+    .bind(&rank.name)
+    .bind(&rank.display_prefix)
+    .bind(rank.weight)
+    .bind(&rank.permissions)
+    .bind(rank.is_default)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
+}
+
+/// Deletes a rank and every grant of it. Returns whether it existed.
+pub async fn delete_rank(pool: &PgPool, name: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM hallow.ranks WHERE name = $1")
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// A rank an account was given.
+#[derive(Clone, Debug, PartialEq, Eq, FromRow)]
+pub struct RankGrant {
+    pub rank_name: String,
+    pub granted_at: DateTime<Utc>,
+    pub granted_by: Option<Uuid>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// The account's unexpired grants, highest-weight rank first.
+pub async fn rank_grants(pool: &PgPool, account: Uuid) -> Result<Vec<RankGrant>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT ar.rank_name, ar.granted_at, ar.granted_by, ar.expires_at
+         FROM hallow.account_ranks ar
+         JOIN hallow.ranks r ON r.name = ar.rank_name
+         WHERE ar.account_uuid = $1 AND (ar.expires_at IS NULL OR ar.expires_at > now())
+         ORDER BY r.weight DESC, r.name",
+    )
+    .bind(account)
+    .fetch_all(pool)
+    .await
+}

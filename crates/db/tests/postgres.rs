@@ -135,6 +135,7 @@ async fn migrations_stay_in_the_hallow_schema() {
             "node_join_tokens",
             "nodes",
             "player_stats",
+            "punishment_templates",
             "punishments",
             "ranks",
             "server_kinds",
@@ -430,7 +431,7 @@ async fn bans_and_mutes() {
     assert_eq!(active.issuer, Actor::Account(staff));
 
     // Revoking it leaves the temporary one.
-    let revoked = hallow_db::revoke_punishment(pool, perm.id, Actor::Console, Some("appeal"))
+    let revoked = hallow_db::revoke_punishment(pool, perm.id, &Actor::Console, Some("appeal"))
         .await
         .unwrap()
         .unwrap();
@@ -439,7 +440,7 @@ async fn bans_and_mutes() {
     assert_eq!(revocation.reason.as_deref(), Some("appeal"));
     assert!(!revoked.is_active_at(Utc::now()));
     assert_eq!(
-        hallow_db::revoke_punishment(pool, perm.id, Actor::Console, None)
+        hallow_db::revoke_punishment(pool, perm.id, &Actor::Console, None)
             .await
             .unwrap(),
         None
@@ -453,7 +454,7 @@ async fn bans_and_mutes() {
         temp.id
     );
 
-    hallow_db::revoke_punishment(pool, temp.id, Actor::Account(staff), None)
+    hallow_db::revoke_punishment(pool, temp.id, &Actor::Account(staff), None)
         .await
         .unwrap()
         .unwrap();

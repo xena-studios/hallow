@@ -1,6 +1,7 @@
 # hallow-db
 
 Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions, punishments, anticheat signals and player stats. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
+Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions, punishments and their templates. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
 
 - Migrations are in [`migrations/`](migrations), embedded with `sqlx::migrate!` and applied by `hallow_db::migrate`.
 - Queries are checked at runtime (`sqlx::query_as`), not by sqlx's compile-time macros, so building needs no database.
@@ -41,8 +42,9 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `player_stats` | Running totals per account, server kind and stat name (`play_time_s`, `joins`, `kills`, ...). `add_stats` adds a batch of increases in one upsert (`value = value + n`); increases for accounts that never joined are skipped | `(account_uuid, kind, stat)` |
 | `server_kinds` | Server kinds the control plane starts instances of: name, the kind's spec (`hallow_proto::instance::KindSpec` as JSON: live image, role, players, scaling, env), who changed it last and when. Instances are live state in Redis, never rows | `name` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
+| `punishment_templates` | Reasons staff pick from: name (unique without case), kind, length (`NULL` is permanent) and reason | `id` |
 
-A punishment's issuer and revoker are an actor: a staff `account` (with its UUID), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.
+A punishment's issuer and revoker are an actor: a staff `account` (with its UUID, in game), `staff` (a panel staff member, with their panel username and panel user id, who has no Minecraft account), the `console`, `system` (automation) or `anticheat` (the verdict service, see [Anticheat](../../docs/ANTICHEAT.md)). Kicks never expire.
 
 ### Indexes for the control plane's queries
 
@@ -50,6 +52,7 @@ A punishment's issuer and revoker are an actor: a staff `account` (with its UUID
 |---|---|
 | Is this account banned now? Its active mute? | `punishments_active_idx`: `(target_uuid, kind, expires_at)` over unrevoked bans and mutes. Expiry is checked at query time, since `now()` can't go in an index predicate |
 | A player's punishment history | `punishments_target_history_idx`: `(target_uuid, created_at DESC)` |
+| The panel's list of every punishment, newest first | `punishments_created_idx`: `(created_at DESC, id DESC)` |
 | An account by username, ignoring case | `accounts_username_lower_idx` on `lower(username)`; `account_usernames_username_lower_idx` for past names |
 | An account's ranks | the `account_ranks` primary key, which starts with `account_uuid` |
 | A player's sessions; accounts seen on an IP; open sessions on a proxy | `sessions_account_idx`, `sessions_ip_idx`, `sessions_open_by_proxy_idx` |
