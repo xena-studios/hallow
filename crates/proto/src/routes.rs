@@ -32,6 +32,13 @@
 //! | `POST` | [`PUNISHMENT_TEMPLATES`] | [`SaveTemplate`](crate::punishment::SaveTemplate) | [`PunishmentTemplate`](crate::punishment::PunishmentTemplate), or `400` with fields |
 //! | `PUT` | [`punishment_template`] | [`SaveTemplate`](crate::punishment::SaveTemplate) | [`PunishmentTemplate`](crate::punishment::PunishmentTemplate), or `400` / `404` |
 //! | `DELETE` | [`punishment_template`] | | `204` or `404` |
+//! | `POST` | [`REPORTS`] | [`CreateReport`](crate::report::CreateReport) | [`ReportCreated`](crate::report::ReportCreated); `404` if the target never joined, `400` for yourself or a bad reason, `409` with an open report on them already, `429` past 5 reports in 10 minutes |
+//! | `GET` | [`REPORTS`]`?status=&target=&limit=&offset=` | | [`ReportPage`](crate::report::ReportPage), newest first; `status` is one status or `active` |
+//! | `GET` | [`report`] | | [`Report`](crate::report::Report) or `404` |
+//! | `POST` | [`report_claim`] | [`ClaimReport`](crate::report::ClaimReport) | [`Report`](crate::report::Report); `409` once closed |
+//! | `POST` | [`report_unclaim`] | | [`Report`](crate::report::Report), open again; `409` once closed |
+//! | `POST` | [`report_resolve`] | [`CloseReport`](crate::report::CloseReport) | [`Report`](crate::report::Report); `400` if the punishment isn't the target's, `409` once closed |
+//! | `POST` | [`report_dismiss`] | [`CloseReport`](crate::report::CloseReport) | [`Report`](crate::report::Report); `409` once closed |
 //! | `GET` | [`RANKS`] | | `Vec<`[`RankInfo`](crate::rank::RankInfo)`>`, highest weight first |
 //! | `PUT` | [`rank`] | [`SaveRank`](crate::rank::SaveRank) | [`RankInfo`](crate::rank::RankInfo), or `400` with fields |
 //! | `DELETE` | [`rank`] | | `204`, `404`, or `409` for the default rank |
@@ -96,6 +103,12 @@ pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 pub const PUNISHMENTS_SEARCH: &str = "/v1/punishments/search";
 pub const PUNISHMENT_TEMPLATES: &str = "/v1/punishments/templates";
 pub const RANKS: &str = "/v1/ranks";
+pub const REPORTS: &str = "/v1/reports";
+
+/// How many reports [`REPORTS`] returns when `limit` is left out, and the
+/// most it returns.
+pub const REPORTS_DEFAULT: u32 = 50;
+pub const REPORTS_MAX: u32 = 200;
 pub const RANK_GRANTS: &str = "/v1/rank-grants";
 pub const RANK_GRANTS_REVOKE: &str = "/v1/rank-grants/revoke";
 
@@ -195,6 +208,37 @@ pub fn punishment_template_path(id: &str) -> String {
 }
 
 #[must_use]
+pub fn report(id: i64) -> String {
+    report_path(&id.to_string())
+}
+
+/// [`report`] with any segment, such as `{id}` for a router.
+#[must_use]
+pub fn report_path(id: &str) -> String {
+    format!("{REPORTS}/{id}")
+}
+
+#[must_use]
+pub fn report_claim(id: i64) -> String {
+    format!("{}/claim", report(id))
+}
+
+#[must_use]
+pub fn report_unclaim(id: i64) -> String {
+    format!("{}/unclaim", report(id))
+}
+
+#[must_use]
+pub fn report_resolve(id: i64) -> String {
+    format!("{}/resolve", report(id))
+}
+
+#[must_use]
+pub fn report_dismiss(id: i64) -> String {
+    format!("{}/dismiss", report(id))
+}
+
+#[must_use]
 pub fn rank(name: &str) -> String {
     format!("{RANKS}/{name}")
 }
@@ -280,6 +324,8 @@ mod tests {
         assert_eq!(player_by_name("Steve_1"), "/v1/players?name=Steve_1");
         assert_eq!(rank_grants_of("Steve"), "/v1/rank-grants?name=Steve");
         assert_eq!(punishment_template(7), "/v1/punishments/templates/7");
+        assert_eq!(report(4), "/v1/reports/4");
+        assert_eq!(report_resolve(4), "/v1/reports/4/resolve");
         assert_eq!(
             player_by_name(".Bedrock Guy"),
             "/v1/players?name=.Bedrock%20Guy"

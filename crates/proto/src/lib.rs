@@ -25,6 +25,7 @@ pub mod proxy;
 pub mod punishment;
 pub mod queue;
 pub mod rank;
+pub mod report;
 pub mod routes;
 pub mod server;
 pub mod signal;
@@ -62,6 +63,8 @@ pub enum ErrorCode {
     Conflict,
     /// The control plane can't serve this right now; retry with backoff.
     Unavailable,
+    /// The caller did this too often; try again later (`429`).
+    RateLimited,
 }
 
 /// A long-poll response: either something changed since the caller's
