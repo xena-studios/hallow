@@ -39,7 +39,7 @@ How to run it again: [Dev network, dynamic games](../deploy/compose/README.md#dy
 
 1. **Old Java clients:** closed. Vine translates them (Decisions 33).
 2. **Multiple proxies:** closed. The control plane and the Vine plugin share state across any number of proxies, and the gate ran across two.
-3. **Proxy CPU:** still open. Vine hasn't been profiled, and its CPU with many old clients (chunk translation) isn't measured. This moves to Phase 2, before the closed beta.
+3. **Proxy CPU:** still open. Vine hasn't been profiled, and its CPU with many old clients (chunk translation) isn't measured. This moves to Phase 2, before the closed beta (#124).
 
 ## Moving to Phase 2
 
@@ -48,10 +48,10 @@ How to run it again: [Dev network, dynamic games](../deploy/compose/README.md#dy
 | Bedrock players' own identity behind Vine (Floodgate handoff) | Not written. Today Geyser runs without Floodgate in the dev network. Needed before Bedrock players join the closed beta | #72 |
 | A blank real machine becoming a node | `install.sh` and Wings have only run in a container (`tools/wings-e2e`). Runs for real with the Hetzner Cloud provider | #48, #42 |
 | Server repos on GitHub and image versions | The template and `hub` are still in this repo; no base image tag is published; `live` and `canary` channels, promote and roll back aren't built (Decisions 27) | #20 |
-| Packet timing for anticheat | Vine's collector needs a packet hook in Vine; movement and combat samples already flow | #69 |
+| Packet timing for anticheat | Vine's collector needs a packet hook in Vine; movement and combat samples already flow | #123 |
 | Real clients | Every check so far used headless bots. A real 26.3 client switching servers, a real Bedrock client over NetherNet, and old clients for rendering, combat and building | Closed beta, #33 |
-| Vine CPU | See gap 3 | Closed beta, #33 |
+| Vine CPU | See gap 3 | #124 |
 
 ## Recommendation
 
-Start Phase 2. First the things the closed beta can't run without: the Floodgate handoff (#72), the Hetzner Cloud provider and a real node (#42, #48), and server repos published with versions (#20); alongside them `hallow-sdk` (#27) and choosing the two launch games (#29). Profile Vine before the beta. Nothing found in Phase 1 blocks the architecture.
+Start Phase 2. First the things the closed beta can't run without: the Floodgate handoff (#72), the Hetzner Cloud provider and a real node (#42, #48), and server repos published with versions (#20); alongside them `hallow-sdk` (#27) and choosing the two launch games (#29). Profile Vine before the beta (#124). Nothing found in Phase 1 blocks the architecture.

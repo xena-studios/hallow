@@ -72,8 +72,8 @@ Carried from Phase 1 ([report](PHASE1.md#moving-to-phase-2)):
 - [ ] Vine: accept Bedrock players from Geyser with their own identity (Floodgate handoff, #72)
 - [ ] A blank real machine becomes a node with `deploy/node` (#48), with the Hetzner Cloud provider
 - [ ] Server repos on GitHub: `hallow-server-template` and `hub` in their own repos, a published base image tag, `live` and `canary` channels with promote and roll back (#20)
-- [ ] Vine packet hook, so the anticheat collector records packet timing
-- [ ] Profile Vine's CPU (crowded lobbies, and many old clients) and send fixes upstream
+- [ ] Vine packet hook, so the anticheat collector records packet timing (#123)
+- [ ] Profile Vine's CPU (crowded lobbies, and many old clients) and send fixes upstream (#124)
 - [ ] Real clients: a 26.3 client switching servers, a Bedrock client over NetherNet, old clients for rendering, combat and building; set the launch version range
 
 New in Phase 2:
