@@ -2,6 +2,9 @@ name: Network
 
 # Builds the proxy and server images from the pinned submodules, starts the
 # dev network and runs netcheck: join through the proxy, switch servers.
+# Then the two-proxy network with the control plane and dynamic instances
+# runs the never-dropped checks (deploy/compose/neverdrop.sh): bans, a
+# killed game, every hub stopped, the control plane down.
 # main requires the "netcheck" job. Changes that only touch docs skip the
 # build and pass, so the required check never blocks them.
 on:
@@ -69,6 +72,18 @@ jobs:
             server.cache-from=type=gha,scope=server
             server.cache-to=type=gha,scope=server,mode=max
 
+      - name: Build the control plane image
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        with:
+          source: .
+          files: docker-bake.hcl
+          targets: control-plane
+          load: true
+          set: |
+            control-plane.cache-from=type=gha,scope=control-plane
+            control-plane.cache-to=type=gha,scope=control-plane,mode=max
+
       - name: Build netcheck
         if: steps.changes.outputs.run == 'true'
         run: cargo build --locked -p netcheck
@@ -88,3 +103,39 @@ jobs:
       - name: Stop the network
         if: always() && steps.changes.outputs.run == 'true'
         run: docker compose -f deploy/compose/compose.yaml down
+
+      - name: Start the two-proxy network with dynamic instances
+        if: steps.changes.outputs.run == 'true'
+        env:
+          HALLOW_DOCKER_NETWORK: neverdrop
+          # Long enough to kill the test game mid-match.
+          TEST_GAME_MATCH_SECS: "600"
+        run: >-
+          docker compose -p neverdrop
+          -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml -f deploy/compose/compose.instances.yaml
+          up -d --no-build --wait --wait-timeout 240
+
+      - name: Never dropped
+        if: steps.changes.outputs.run == 'true'
+        env:
+          HALLOW_DOCKER_NETWORK: neverdrop
+          TEST_GAME_MATCH_SECS: "600"
+        run: deploy/compose/neverdrop.sh neverdrop
+
+      - name: Show the two-proxy network's logs
+        if: failure() && steps.changes.outputs.run == 'true'
+        env:
+          HALLOW_DOCKER_NETWORK: neverdrop
+        run: |
+          docker compose -p neverdrop -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml -f deploy/compose/compose.instances.yaml logs --no-color
+          for c in $(docker ps -aq --filter label=hallow.owner=neverdrop); do docker logs "$c" 2>&1 | tail -100; done
+
+      - name: Stop the two-proxy network
+        if: always() && steps.changes.outputs.run == 'true'
+        env:
+          HALLOW_DOCKER_NETWORK: neverdrop
+        run: |
+          files="-f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml -f deploy/compose/compose.instances.yaml"
+          docker compose -p neverdrop $files stop control-plane || true
+          docker rm -f $(docker ps -aq --filter label=hallow.owner=neverdrop) 2>/dev/null || true
+          docker compose -p neverdrop $files down -v

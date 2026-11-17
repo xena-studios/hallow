@@ -1540,9 +1540,12 @@ name = "netcheck"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "hallow-proto",
  "pumpkin-data",
  "pumpkin-protocol",
  "pumpkin-util",
+ "reqwest",
+ "serde",
  "tokio",
  "uuid",
 ]

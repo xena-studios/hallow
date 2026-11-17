@@ -9,6 +9,23 @@
 //! netcheck --bots 100 [--ramp 10] [--stay 60] [--name load]   # load test; bots are load0000, load0001, ...
 //! ```
 //!
+//! With `--control-plane 127.0.0.1:18090 --token-file <file>`, route steps
+//! can also check and act through the control plane, for the never-dropped
+//! checks (docs/ARCHITECTURE.md):
+//!
+//! | Step | Does |
+//! |---|---|
+//! | `@lobby` | Waits (up to 90 s, following moves) until the control plane says the bot is on a server whose name starts with `lobby`; with `*` or `?` in it, one the whole name matches (`@test-game-??????` is a game instance, not its lobby) |
+//! | `?text` | Waits (up to 60 s) until the bot has been shown text containing `text` (chat, action bar or title) since the last `?` step |
+//! | `!ban 1h Some reason` | Bans the bot (`perm` for permanent) through `POST /v1/punishments`, as the console |
+//! | `!unban` | Lifts the bot's ban |
+//! | `!kick Some reason` | Kicks the bot |
+//! | `$docker compose stop lobby` | Runs a shell command, answering the server while it runs |
+//! | `^` | Disconnects and joins again |
+//!
+//! Ban, unban and kick need nothing more than the console's view of the
+//! bot's name; `@` asks `GET /v1/players?name=`.
+//!
 //! With `--bots`, that many bots join (`--ramp` per second), walk around spawn
 //! like idle players for `--stay` seconds, and a summary reports how many
 //! joined, their join times and how many were still connected at the end.
@@ -75,6 +92,8 @@ struct Bot {
     position: Vector3<f64>,
     /// Print chat the player receives.
     verbose: bool,
+    /// Text shown to the player since the last `?` step.
+    seen: Vec<String>,
 }
 
 async fn send_to<P: ClientPacket + MultiVersionJavaPacket>(
@@ -127,6 +146,7 @@ impl Bot {
             writer: TCPNetworkEncoder::new(BufWriter::new(write)),
             position: Vector3::new(0.0, 0.0, 0.0),
             verbose: true,
+            seen: Vec::new(),
         };
 
         bot.send(&SHandShake {
@@ -403,9 +423,18 @@ impl Bot {
             let id = read_i32(&packet.payload).ok_or("bad ping")?;
             self.send(&SPlayPong { id }).await?;
             Ok(true)
-        } else if packet.id == clientbound::play::SYSTEM_CHAT {
-            if self.verbose {
-                println!("    {} sees: {}", self.name, text_of(&packet.payload));
+        } else if packet.id == clientbound::play::SYSTEM_CHAT
+            || packet.id == clientbound::play::SET_TITLE_TEXT
+            || packet.id == clientbound::play::SET_SUBTITLE_TEXT
+            || packet.id == clientbound::play::SET_ACTION_BAR_TEXT
+        {
+            let text = text_of(&packet.payload);
+            if self.verbose && self.seen.last() != Some(&text) {
+                println!("    {} sees: {text}", self.name);
+            }
+            self.seen.push(text);
+            if self.seen.len() > 500 {
+                self.seen.drain(..250);
             }
             Ok(true)
         } else if packet.id == clientbound::play::DISCONNECT {
@@ -457,6 +486,62 @@ struct Args {
     stay: u64,
     bots: u32,
     ramp: u32,
+    control_plane: Option<ControlPlane>,
+}
+
+/// The control plane's API, for `@`, `!` steps.
+struct ControlPlane {
+    base: String,
+    token: String,
+    http: reqwest::Client,
+}
+
+impl ControlPlane {
+    /// The server the control plane has `name` on, if they're online.
+    async fn server_of(&self, name: &str) -> Result<Option<String>, String> {
+        let res = self
+            .http
+            .get(format!(
+                "{}{}",
+                self.base,
+                hallow_proto::routes::player_by_name(name)
+            ))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|err| format!("asking the control plane: {err}"))?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let location: hallow_proto::presence::PlayerLocation = res
+            .error_for_status()
+            .map_err(|err| format!("asking the control plane: {err}"))?
+            .json()
+            .await
+            .map_err(|err| format!("reading the control plane's answer: {err}"))?;
+        Ok(location.server)
+    }
+
+    /// Issues or lifts a punishment and returns the control plane's reply.
+    async fn punish<B: serde::Serialize>(&self, path: &str, body: &B) -> Result<String, String> {
+        let reply: hallow_proto::punishment::PunishmentReply = self
+            .http
+            .post(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .json(body)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|err| format!("calling the control plane: {err}"))?
+            .json()
+            .await
+            .map_err(|err| format!("reading the control plane's answer: {err}"))?;
+        if reply.ok {
+            Ok(text_of(reply.message.as_bytes()))
+        } else {
+            Err(format!("refused: {}", reply.message))
+        }
+    }
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -467,7 +552,9 @@ fn parse_args() -> Result<Args, String> {
         stay: 0,
         bots: 0,
         ramp: 10,
+        control_plane: None,
     };
+    let (mut cp_addr, mut token_file) = (None, None);
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -495,6 +582,8 @@ fn parse_args() -> Result<Args, String> {
                     .parse()
                     .map_err(|err| format!("--bots {value}: {err}"))?;
             }
+            "--control-plane" => cp_addr = Some(value),
+            "--token-file" => token_file = Some(value),
             "--ramp" => {
                 args.ramp = value
                     .parse::<u32>()
@@ -503,6 +592,21 @@ fn parse_args() -> Result<Args, String> {
             }
             _ => return Err(format!("unknown flag {flag}")),
         }
+    }
+    if let Some(addr) = cp_addr {
+        let file = token_file.ok_or("--control-plane needs --token-file")?;
+        let token = std::fs::read_to_string(&file)
+            .map_err(|err| format!("--token-file {file}: {err}"))?
+            .trim()
+            .to_owned();
+        args.control_plane = Some(ControlPlane {
+            base: format!("http://{addr}"),
+            token,
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .map_err(|err| format!("HTTP client: {err}"))?,
+        });
     }
     Ok(args)
 }
@@ -515,13 +619,7 @@ async fn run(args: &Args) -> Result<(), String> {
         args.name,
         CURRENT_MC_VERSION.protocol_version()
     );
-    let mut bot = Bot::login(args.proxy, &args.name)
-        .await
-        .map_err(|err| format!("login: {err}"))?;
-    bot.configure()
-        .await
-        .map_err(|err| format!("configuration: {err}"))?;
-    bot.spawn().await.map_err(|err| format!("spawn: {err}"))?;
+    let mut bot = rejoin(args).await?;
     println!(
         "  ok  joined the default server ({} ms)",
         started.elapsed().as_millis()
@@ -529,6 +627,20 @@ async fn run(args: &Args) -> Result<(), String> {
 
     for server in &args.route {
         let step = Instant::now();
+        if control_step(&mut bot, args, server)
+            .await
+            .map_err(|err| format!("step {server}: {err}"))?
+        {
+            println!("  ok  {server} ({} ms)", step.elapsed().as_millis());
+            continue;
+        }
+        if server == "^" {
+            bot = rejoin(args)
+                .await
+                .map_err(|err| format!("rejoining: {err}"))?;
+            println!("  ok  joined again ({} ms)", step.elapsed().as_millis());
+            continue;
+        }
         // `~N` waits N seconds (still answering keep-alives and printing chat),
         // a step starting with `/` runs that command, and anything else is a
         // server to switch to.
@@ -588,6 +700,163 @@ async fn run(args: &Args) -> Result<(), String> {
     }
     println!("netcheck: passed in {} ms", started.elapsed().as_millis());
     Ok(())
+}
+
+/// Logs in, configures and spawns.
+async fn rejoin(args: &Args) -> Result<Bot, String> {
+    let mut bot = Bot::login(args.proxy, &args.name)
+        .await
+        .map_err(|err| format!("login: {err}"))?;
+    bot.configure()
+        .await
+        .map_err(|err| format!("configuration: {err}"))?;
+    bot.spawn().await.map_err(|err| format!("spawn: {err}"))?;
+    Ok(bot)
+}
+
+/// How long `@` waits for the bot to land, and `?` for text.
+const LAND_TIMEOUT: Duration = Duration::from_secs(90);
+const TEXT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runs a step that checks or acts through the control plane or the shell
+/// (`@`, `?`, `!`, `$`). Returns false if `step` isn't one.
+async fn control_step(bot: &mut Bot, args: &Args, step: &str) -> Result<bool, String> {
+    let cp = || {
+        args.control_plane
+            .as_ref()
+            .ok_or_else(|| "this step needs --control-plane and --token-file".to_owned())
+    };
+    if let Some(prefix) = step.strip_prefix('@') {
+        let cp = cp()?;
+        let deadline = Instant::now() + LAND_TIMEOUT;
+        loop {
+            let server = cp.server_of(&args.name).await?;
+            if server.as_deref().is_some_and(|s| server_matches(prefix, s)) {
+                println!("    {} is on {}", args.name, server.unwrap_or_default());
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "still on {} after {}s",
+                    server.as_deref().unwrap_or("no server"),
+                    LAND_TIMEOUT.as_secs()
+                ));
+            }
+            bot.stay(1).await?;
+        }
+    }
+    if let Some(text) = step.strip_prefix('?') {
+        let deadline = Instant::now() + TEXT_TIMEOUT;
+        loop {
+            if bot.seen.iter().any(|seen| seen.contains(text)) {
+                bot.seen.clear();
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("not shown within {}s", TEXT_TIMEOUT.as_secs()));
+            }
+            bot.stay(1).await?;
+        }
+    }
+    if let Some(action) = step.strip_prefix('!') {
+        let cp = cp()?;
+        let mut words = action.split_whitespace();
+        let verb = words.next().unwrap_or_default();
+        let rest: Vec<&str> = words.collect();
+        use hallow_proto::punishment::{IssuePunishment, PunishmentKind, RevokePunishment};
+        let issue = |kind, duration_seconds, reason: &[&str]| IssuePunishment {
+            kind,
+            target: args.name.clone(),
+            issuer: None,
+            reason: if reason.is_empty() {
+                "netcheck".into()
+            } else {
+                reason.join(" ")
+            },
+            duration_seconds,
+            staff: None,
+        };
+        let routes = hallow_proto::routes::PUNISHMENTS;
+        let answer = match (verb, rest.as_slice()) {
+            ("ban", [length, reason @ ..]) => {
+                let duration = if *length == "perm" {
+                    None
+                } else {
+                    Some(parse_length(length).ok_or_else(|| format!("bad length {length}"))?)
+                };
+                cp.punish(routes, &issue(PunishmentKind::Ban, duration, reason))
+                    .await?
+            }
+            ("kick", reason) => {
+                cp.punish(routes, &issue(PunishmentKind::Kick, None, reason))
+                    .await?
+            }
+            ("unban", reason) => {
+                let revoke = RevokePunishment {
+                    kind: PunishmentKind::Ban,
+                    target: args.name.clone(),
+                    issuer: None,
+                    reason: (!reason.is_empty()).then(|| reason.join(" ")),
+                    staff: None,
+                };
+                cp.punish(hallow_proto::routes::PUNISHMENTS_REVOKE, &revoke)
+                    .await?
+            }
+            _ => return Err("use !ban <length|perm> <reason>, !unban or !kick <reason>".into()),
+        };
+        println!("    control plane: {answer}");
+        return Ok(true);
+    }
+    if let Some(command) = step.strip_prefix('$') {
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .spawn()
+            .map_err(|err| format!("starting it: {err}"))?;
+        // Keep answering the server while it runs.
+        loop {
+            if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
+                if !status.success() {
+                    return Err(format!("exited with {status}"));
+                }
+                return Ok(true);
+            }
+            bot.stay(1).await?;
+        }
+    }
+    Ok(false)
+}
+
+/// An `@` step's pattern: a prefix, or a glob (`*`, `?`) over the whole name.
+fn server_matches(pattern: &str, name: &str) -> bool {
+    if !pattern.contains(['*', '?']) {
+        return name.starts_with(pattern);
+    }
+    fn glob(p: &[u8], n: &[u8]) -> bool {
+        match (p.first(), n.first()) {
+            (None, None) => true,
+            (Some(b'*'), _) => glob(&p[1..], n) || (!n.is_empty() && glob(p, &n[1..])),
+            (Some(b'?'), Some(_)) => glob(&p[1..], &n[1..]),
+            (Some(a), Some(b)) if a == b => glob(&p[1..], &n[1..]),
+            _ => false,
+        }
+    }
+    glob(pattern.as_bytes(), name.as_bytes())
+}
+
+/// `30s`, `5m`, `2h`, `7d` in seconds.
+fn parse_length(text: &str) -> Option<u64> {
+    let (number, unit) = text.split_at(text.len().checked_sub(1)?);
+    let n: u64 = number.parse().ok()?;
+    Some(
+        n * match unit {
+            "s" => 1,
+            "m" => 60,
+            "h" => 3600,
+            "d" => 86_400,
+            _ => return None,
+        },
+    )
 }
 
 /// One load-test bot: join, then wander. Returns the join time.
@@ -705,5 +974,24 @@ async fn main() -> ExitCode {
             eprintln!("  FAIL {err}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_patterns() {
+        assert!(server_matches("lobby", "lobby"));
+        assert!(server_matches("test-game-lobby", "test-game-lobby-a1b2c3"));
+        assert!(server_matches("test-game-??????", "test-game-a1b2c3"));
+        assert!(!server_matches(
+            "test-game-??????",
+            "test-game-lobby-a1b2c3"
+        ));
+        assert!(server_matches("test-*-lobby-*", "test-game-lobby-a1b2c3"));
+        assert_eq!(parse_length("2h"), Some(7200));
+        assert_eq!(parse_length("2x"), None);
     }
 }
