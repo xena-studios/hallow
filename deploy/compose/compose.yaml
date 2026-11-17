@@ -29,6 +29,8 @@ services:
       - "25565:25565"
     volumes:
       - ./config/vine.toml:/proxy/vine.toml:ro
+      # Floodgate's dev key, shared with Geyser (compose.geyser.yaml).
+      - ./config/floodgate/key.pem:/proxy/floodgate/key.pem:ro
     depends_on:
       lobby:
         condition: service_healthy

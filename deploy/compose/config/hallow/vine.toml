@@ -49,6 +49,17 @@ enabled = false
 [bedrock]
 enabled = false
 
+# Bedrock players from Geyser (compose.geyser.yaml), identified by Floodgate's
+# handoff. Geyser joins on the Geyser-only listener (25567, not published),
+# where a valid handoff is required; on 25565 a Java player needs none, and an
+# invalid one is refused. config/floodgate/key.pem is a dev key shared with
+# Geyser; never reuse it outside the dev network.
+[floodgate]
+enabled = true
+key_file = "/proxy/floodgate/key.pem"
+username_prefix = "."
+bind_address = "0.0.0.0:25567"
+
 [plugins]
 enabled = true
 plugin_dir = "./plugins"
