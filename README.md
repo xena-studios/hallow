@@ -4,7 +4,7 @@
 
 Hallow is a Xena Studios project. It exists to show that Pumpkin and its ecosystem can run a large-network setup, not just a single server, and to send what we build back upstream.
 
-> **Status:** planning. Nothing here runs yet. The first step is [Phase 0](docs/ROADMAP.md#phase-0-validation-spike), a two-week spike that proves old clients, Bedrock and server switching work on the stack before any game is written.
+> **Status:** Phase 2, first games. The network core runs on the [dev network](deploy/compose/README.md): two proxies, the control plane, the matchmaker starting game instances, the server plugin and the panel. Not yet on real machines or with real players. See the [Phase 1 report](docs/PHASE1.md) and the [roadmap](docs/ROADMAP.md).
 
 ## How it fits together
 
@@ -69,6 +69,7 @@ Old Java clients (1.7.2 to 26.2) are translated on the proxy: Vine links [pumpki
 - [Roadmap](docs/ROADMAP.md): phases, gates and every task
 - [Validation](docs/VALIDATION.md): the Phase 0 test matrix
 - [Phase 0 report](docs/PHASE0.md): what Phase 0 proved, the gaps, and whether Phase 1 can start
+- [Phase 1 report](docs/PHASE1.md): the network core, the gate, and what moves to Phase 2
 - [Risks](docs/RISKS.md): what could go wrong and the fallback for each
 - [Decisions](docs/DECISIONS.md): every locked decision and why
 - [Anticheat](docs/ANTICHEAT.md): where checks run, how verdicts are made, and when each part lands

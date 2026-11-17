@@ -61,9 +61,22 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [x] Node bootstrap: cloud-init and install script for Docker, Wings, WireGuard and firewall; one-time join tokens (run for real in a container by `tools/wings-e2e`; not yet on a real machine)
 - [x] Anticheat signal collection: Vine and the server plugin record timing, movement and combat data to the verdict service ([Anticheat](ANTICHEAT.md)). Both collectors send samples; packet timing waits on a Vine packet hook
 
-**Gate:** with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.
+**Gate: passed 2026-11-16** on the dev network with bots, and through a real Wings in a container (`tools/wings-e2e`). Real machines, real clients, server repos on GitHub and the Floodgate handoff move to Phase 2. See the [Phase 1 report](PHASE1.md).
+
+Original gate: with two proxies running, a player joins the `hub`, queues, the matchmaker starts a fresh instance of a test game repo, and the player lands in it; staff see it all in the panel.
 
 ## Phase 2: first games
+
+Carried from Phase 1 ([report](PHASE1.md#moving-to-phase-2)):
+
+- [ ] Vine: accept Bedrock players from Geyser with their own identity (Floodgate handoff, #72)
+- [ ] A blank real machine becomes a node with `deploy/node` (#48), with the Hetzner Cloud provider
+- [ ] Server repos on GitHub: `hallow-server-template` and `hub` in their own repos, a published base image tag, `live` and `canary` channels with promote and roll back (#20)
+- [ ] Vine packet hook, so the anticheat collector records packet timing
+- [ ] Profile Vine's CPU (crowded lobbies, and many old clients) and send fixes upstream
+- [ ] Real clients: a 26.3 client switching servers, a Bedrock client over NetherNet, old clients for rendering, combat and building; set the launch version range
+
+New in Phase 2:
 
 - [ ] `hallow-sdk`: minigame library (arenas, teams, kits, scoreboards, spectating, stats) for server repos
 - [ ] Anticheat core checks (movement, reach, click rate, timer) in observe-only mode, panel review page
