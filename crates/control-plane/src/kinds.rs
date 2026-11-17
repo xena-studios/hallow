@@ -149,7 +149,7 @@ pub async fn put(
     if !fields.is_empty() {
         return Err(Failure::invalid_fields("invalid kind", fields));
     }
-    let stored = hallow_db::put_kind(db(&state)?, &name, &spec).await?;
+    let stored = hallow_db::register_kind(db(&state)?, &name, &spec).await?;
     if let Some(instances) = &state.instances {
         instances.kinds_changed();
     }

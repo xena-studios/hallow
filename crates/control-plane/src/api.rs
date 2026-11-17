@@ -43,6 +43,7 @@ use crate::{
     error::Failure,
     events, fleet, friends, kinds, lobbies, nodes, punish, ranks, signals, stats,
     store::{LoginOutcome, RegisterError},
+    versions,
 };
 
 type Shared = State<Arc<AppState>>;
@@ -154,6 +155,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             &routes::kind("{name}"),
             get(kinds::get).put(kinds::put).delete(kinds::delete),
         )
+        .route(
+            &routes::kind_versions("{name}"),
+            get(versions::get).post(versions::add),
+        )
+        .route(&routes::kind_canary("{name}"), post(versions::canary))
+        .route(
+            &routes::kind_canary_stop("{name}"),
+            post(versions::stop_canary),
+        )
+        .route(&routes::kind_promote("{name}"), post(versions::promote))
+        .route(&routes::kind_rollback("{name}"), post(versions::rollback))
+        .route(routes::VERSION_AUDIT, get(versions::audit_log))
         .route(routes::INSTANCES, get(kinds::instances))
         .route(
             &routes::instance("{name}"),

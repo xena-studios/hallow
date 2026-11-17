@@ -29,6 +29,7 @@ use crate::{
     AppState,
     orchestrator::{Handle, InstanceSpec, NodeSlot, Orchestrator, wings::WingsOrchestrator},
     store::{Store, StoreError},
+    versions::KindRollout,
 };
 
 pub use plan::Settings;
@@ -51,6 +52,13 @@ pub struct InstancesConfig {
     pub control_plane: String,
     /// Environment for every instance, such as `HALLOW_VINE_SECRET`.
     pub env: BTreeMap<String, String>,
+}
+
+/// The image and version a new instance starts on.
+#[derive(Clone, Copy, Debug)]
+struct Started<'a> {
+    image: &'a str,
+    version: Option<&'a str>,
 }
 
 /// One slow piece of work the plan left for a task.
@@ -88,6 +96,7 @@ pub struct Manager {
     db: PgPool,
     config: InstancesConfig,
     kinds: RwLock<Cached<BTreeMap<String, KindSpec>>>,
+    rollouts: RwLock<Cached<BTreeMap<String, KindRollout>>>,
     nodes: RwLock<Cached<Vec<NodeSlot>>>,
 }
 
@@ -123,6 +132,7 @@ impl Manager {
             db,
             config,
             kinds: RwLock::default(),
+            rollouts: RwLock::default(),
             nodes: RwLock::default(),
         }
     }
@@ -137,12 +147,38 @@ impl Manager {
         self.wings.as_deref()
     }
 
-    /// Forgets the cached kinds, after one changed.
+    /// Forgets the cached kinds and their channels, after one changed.
     pub fn kinds_changed(&self) {
         self.kinds
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .at = None;
+        self.rollouts
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .at = None;
+    }
+
+    /// Every kind's live version and canary (docs/INSTANCES.md#versions).
+    async fn rollouts(&self) -> Result<BTreeMap<String, KindRollout>, PlanError> {
+        {
+            let cached = self
+                .rollouts
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if cached.fresh() {
+                return Ok(cached.value.clone());
+            }
+        }
+        let rollouts = crate::versions::rollouts(&self.db).await?;
+        *self
+            .rollouts
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Cached {
+            at: Some(Instant::now()),
+            value: rollouts.clone(),
+        };
+        Ok(rollouts)
     }
 
     /// Whether `kind` is a registered game. Reads the database when the
@@ -221,11 +257,21 @@ impl Manager {
     /// [`Manager::run`] once it has let go.
     pub async fn plan(&self, store: &Store) -> Result<Vec<Work>, PlanError> {
         let kinds = self.kinds().await?;
+        let rollouts = self.rollouts().await?;
         let instances = store.instances().await?;
         let (_, servers) = store.read_servers().await?;
         let queued = store.queued_entry_sizes().await?;
         let players_online = store.online().await?;
         let nodes = self.nodes().await;
+        let outdated = crate::versions::outdated(&kinds, &rollouts, &instances);
+        // The versions each kind's live instances run, for the canary's share.
+        let mut running: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
+        for instance in instances.iter().filter(|i| i.state.is_live()) {
+            running
+                .entry(instance.kind.clone())
+                .or_default()
+                .push(instance.version.clone());
+        }
         let actions = plan::plan(&plan::World {
             now_ms: now_ms(),
             kinds: &kinds,
@@ -235,6 +281,7 @@ impl Manager {
             players_online,
             nodes: &nodes,
             settings: &self.config.settings,
+            outdated: &outdated,
         });
         let mut work = Vec::new();
         for action in actions {
@@ -243,7 +290,15 @@ impl Manager {
                     let Some(spec) = kinds.get(&kind) else {
                         continue;
                     };
-                    if let Some(name) = self.add(store, &kind, spec, &node, port).await? {
+                    let running = running.entry(kind.clone()).or_default();
+                    let (image, version) =
+                        crate::versions::choose(spec, rollouts.get(&kind), running);
+                    let started = Started {
+                        image: &image,
+                        version: version.as_deref(),
+                    };
+                    if let Some(name) = self.add(store, &kind, spec, started, &node, port).await? {
+                        running.push(version);
                         work.push(Work::Create { name });
                     }
                 }
@@ -280,12 +335,14 @@ impl Manager {
         Ok(work)
     }
 
-    /// Records a new instance of `kind`; returns its name.
+    /// Records a new instance of `kind` on `started`'s image; returns its
+    /// name.
     async fn add(
         &self,
         store: &Store,
         kind: &str,
         spec: &KindSpec,
+        started: Started<'_>,
         node: &str,
         port: Option<u16>,
     ) -> Result<Option<String>, PlanError> {
@@ -304,7 +361,8 @@ impl Manager {
                 name: name.clone(),
                 kind: kind.to_owned(),
                 uuid,
-                image: spec.image.clone(),
+                image: started.image.to_owned(),
+                version: started.version.map(str::to_owned),
                 node: node.to_owned(),
                 state: InstanceState::Creating,
                 state_since_ms: now,
@@ -321,7 +379,7 @@ impl Manager {
                 name: name.clone(),
                 uuid,
                 kind: kind.to_owned(),
-                image: spec.image.clone(),
+                image: started.image.to_owned(),
                 env: self.env(&name, spec, &token),
                 port,
                 memory_mb: spec.memory_mb.unwrap_or(DEFAULT_MEMORY_MB),
@@ -331,7 +389,7 @@ impl Manager {
                 .add_instance(&info, &instance_spec, &token_hash)
                 .await?
             {
-                tracing::info!(instance = %name, %kind, %node, "creating instance");
+                tracing::info!(instance = %name, %kind, %node, image = %started.image, version = ?started.version, "creating instance");
                 return Ok(Some(name));
             }
         }
