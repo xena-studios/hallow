@@ -12,7 +12,7 @@ use hallow_db::{PgPool, ServerKind};
 use hallow_proto::{
     ErrorCode,
     fleet::FieldErrors,
-    instance::{InstanceInfo, KindInfo, KindSpec},
+    instance::{InstanceInfo, KindInfo, KindRole, KindSpec},
 };
 
 use crate::{AppState, error::Failure};
@@ -88,12 +88,34 @@ pub fn check_spec(spec: &KindSpec) -> FieldErrors {
             fields.insert(format!("env.{name}"), "HALLOW_ names are reserved".into());
         }
     }
+    if !spec.enabled && spec.role == KindRole::Hub {
+        fields.insert(
+            "enabled".into(),
+            "a hub can't be disabled: logins land there".into(),
+        );
+    }
     if let Some(by) = &spec.updated_by
         && (by.is_empty() || by.chars().count() > 64)
     {
         fields.insert("updated_by".into(), "must be 1 to 64 characters".into());
     }
     fields
+}
+
+/// Whether `kind` is registered and disabled. Through the instance
+/// lifecycle's cache when it runs, else from the database; a kind that
+/// isn't registered (or no database) isn't disabled.
+pub async fn is_disabled(state: &AppState, kind: &str) -> Result<bool, Failure> {
+    if let Some(instances) = &state.instances {
+        return Ok(instances.kind(kind).await.is_some_and(|k| !k.enabled));
+    }
+    let Some(db) = &state.db else {
+        return Ok(false);
+    };
+    Ok(hallow_db::list_kinds(db)
+        .await?
+        .iter()
+        .any(|k| k.name == kind && !k.spec.0.enabled))
 }
 
 fn info(kind: ServerKind) -> KindInfo {
@@ -196,7 +218,7 @@ pub async fn end_instance(State(state): Shared, Path(name): Path<String>) -> Rep
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hallow_proto::instance::{KindPlayers, KindRole, KindScaling};
+    use hallow_proto::instance::{KindPlayers, KindScaling};
 
     #[test]
     fn kind_names_follow_hallow_toml() {
@@ -222,6 +244,7 @@ mod tests {
             env: [("MODE".to_owned(), "solo".to_owned())].into(),
             memory_mb: Some(1024),
             updated_by: Some("alice".into()),
+            enabled: true,
         };
         assert!(check_spec(&spec).is_empty());
         spec.image = "has space".into();
@@ -243,5 +266,25 @@ mod tests {
                 "scaling.warm"
             ]
         );
+    }
+
+    #[test]
+    fn only_hubs_must_stay_enabled() {
+        let mut spec = KindSpec {
+            image: "hallow-hub:dev".into(),
+            role: KindRole::Game,
+            lobby: None,
+            players: KindPlayers { min: 1, max: 100 },
+            scaling: KindScaling::default(),
+            env: Default::default(),
+            memory_mb: None,
+            updated_by: None,
+            enabled: false,
+        };
+        assert!(check_spec(&spec).is_empty());
+        spec.role = KindRole::Hub;
+        assert!(check_spec(&spec).contains_key("enabled"));
+        spec.enabled = true;
+        assert!(check_spec(&spec).is_empty());
     }
 }

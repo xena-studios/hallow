@@ -331,6 +331,7 @@ fn kind(role: KindRole, lobby: Option<&str>, warm: u32, max: u32) -> KindSpec {
         env: std::collections::BTreeMap::new(),
         memory_mb: None,
         updated_by: Some("test".into()),
+        enabled: true,
     }
 }
 

@@ -41,7 +41,7 @@ use crate::{
     AppState, accounts,
     auth::Caller,
     error::Failure,
-    events, fleet, friends, kinds, lobbies, nodes, punish, ranks, signals, stats,
+    events, fleet, friends, kinds, lobbies, nodes, punish, ranks, reports, signals, stats,
     store::{LoginOutcome, RegisterError},
 };
 
@@ -129,6 +129,24 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             &routes::punishment_template_path("{id}"),
             axum::routing::put(update_template).delete(delete_template),
+        )
+        .route(routes::REPORTS, post(reports::create).get(reports::list))
+        .route(&routes::report_path("{id}"), get(reports::get))
+        .route(
+            &format!("{}/claim", routes::report_path("{id}")),
+            post(reports::claim),
+        )
+        .route(
+            &format!("{}/unclaim", routes::report_path("{id}")),
+            post(reports::unclaim),
+        )
+        .route(
+            &format!("{}/resolve", routes::report_path("{id}")),
+            post(reports::resolve_report),
+        )
+        .route(
+            &format!("{}/dismiss", routes::report_path("{id}")),
+            post(reports::dismiss),
         )
         .route(routes::RANKS, get(list_ranks))
         .route(
@@ -778,6 +796,12 @@ async fn party_of(State(state): Shared, Path(uuid): Path<String>) -> Reply<Body<
 /// A refusal (`409`) carries a message for the player.
 async fn join_queue(State(state): Shared, Body(req): Body<JoinQueue>) -> Reply<Body<QueueStatus>> {
     check_name("game kind", &req.kind)?;
+    if kinds::is_disabled(&state, &req.kind).await? {
+        return Err(Failure::new(
+            ErrorCode::Conflict,
+            format!("{} is disabled right now.", req.kind),
+        ));
+    }
     let startable = match &state.instances {
         Some(instances) => instances.is_game_kind(&req.kind).await,
         None => false,

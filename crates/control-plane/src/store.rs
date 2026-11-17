@@ -38,9 +38,11 @@ use crate::{Config, DuplicateLogin, events};
 
 mod instances;
 mod lobby;
+mod metrics;
 mod party;
 mod queue;
 
+pub use metrics::{QUEUE_WAIT_BUCKETS, QueueWait};
 pub use queue::Placement;
 
 /// Commands kept per proxy for polls that fall behind.
@@ -927,6 +929,15 @@ impl Store {
 
     pub async fn online(&self) -> Result<u32> {
         Ok(self.conn().hlen(self.keys.online()).await?)
+    }
+
+    /// Every online player's UUID.
+    pub async fn online_players(&self) -> Result<Vec<Uuid>> {
+        let uuids: Vec<String> = self.conn().hkeys(self.keys.online()).await?;
+        Ok(uuids
+            .iter()
+            .filter_map(|uuid| Uuid::parse_str(uuid).ok())
+            .collect())
     }
 
     /// Looks an online player up by username, ignoring ASCII case.

@@ -299,6 +299,8 @@ impl Store {
                     // Everyone in it went offline.
                     continue;
                 };
+                // The first players onto an empty game server start a game.
+                let first = server.players == 0;
                 // Count them now; the server's next heartbeat has the truth.
                 server.players += size;
                 let name = server.name.clone();
@@ -325,6 +327,8 @@ impl Store {
                     )
                     .await?;
                 }
+                self.count_placement(&kind, now_ms().saturating_sub(entry.since_ms), first)
+                    .await?;
                 placements.push(Placement {
                     kind: kind.clone(),
                     server: name,

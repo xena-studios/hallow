@@ -150,6 +150,13 @@ impl Manager {
     /// ago can be queued for before the next plan; the cache if the
     /// database can't be read.
     pub async fn is_game_kind(&self, kind: &str) -> bool {
+        self.kind(kind)
+            .await
+            .is_some_and(|k| k.role == KindRole::Game)
+    }
+
+    /// A registered kind's spec, read like [`Manager::is_game_kind`].
+    pub async fn kind(&self, kind: &str) -> Option<KindSpec> {
         let kinds = match self.kinds().await {
             Ok(kinds) => kinds,
             Err(err) => {
@@ -161,7 +168,7 @@ impl Manager {
                     .clone()
             }
         };
-        kinds.get(kind).is_some_and(|k| k.role == KindRole::Game)
+        kinds.get(kind).cloned()
     }
 
     async fn kinds(&self) -> Result<BTreeMap<String, KindSpec>, PlanError> {
@@ -624,6 +631,7 @@ pub fn read_kinds_file(path: &Path) -> Result<Vec<(String, KindSpec)>, String> {
             env: BTreeMap::new(),
             memory_mb: entry.memory_mb,
             updated_by: Some("kinds-file".into()),
+            enabled: true,
         };
         kinds.push((manifest.name, spec));
     }

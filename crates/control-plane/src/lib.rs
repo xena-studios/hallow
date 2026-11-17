@@ -28,6 +28,7 @@ pub mod panel;
 mod punish;
 mod ranks;
 mod remote;
+mod reports;
 mod signals;
 mod stats;
 pub mod store;
@@ -287,7 +288,15 @@ async fn start_instances(
         }
     };
     if let Some(path) = &setup.kinds_file {
-        for (name, spec) in instances::read_kinds_file(path)? {
+        // Staff may have disabled a kind; a restart doesn't turn it back on.
+        let disabled: Vec<String> = hallow_db::list_kinds(db)
+            .await?
+            .into_iter()
+            .filter(|k| !k.spec.0.enabled)
+            .map(|k| k.name)
+            .collect();
+        for (name, mut spec) in instances::read_kinds_file(path)? {
+            spec.enabled = !disabled.contains(&name);
             hallow_db::put_kind(db, &name, &spec).await?;
             tracing::info!(kind = %name, image = %spec.image, "kind registered from the kinds file");
         }
