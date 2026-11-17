@@ -15,6 +15,12 @@
 //!   `on_ground`, so air time isn't measured.
 //! - **Reach on mobs.** There's no entity lookup by id and no hitbox size, so
 //!   reach is measured only when the target is a player.
+//!
+//! Attacks are seen through `EntityDamageByEntityEvent`: from 26.1 the
+//! client attacks with its own packet, which Pumpkin handles without firing
+//! `PlayerInteractEntityEvent`, and every client reaches the servers as 26.3
+//! (Vine translates older ones). So only hits that deal damage count: none
+//! where PvP is off, or on an invulnerable or creative target.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -23,12 +29,12 @@ use hallow_proto::signal::PlayerSignals;
 use pumpkin_plugin_api::{
     Context, Server,
     events::{
-        EventHandler, EventPriority, PlayerAnimationEvent, PlayerInteractEntityEvent,
+        EntityDamageByEntityEvent, EventHandler, EventPriority, PlayerAnimationEvent,
         PlayerJoinEvent, PlayerMoveEvent,
     },
     events_wit::{
-        EntityInteractionAction, PlayerAnimationEventData, PlayerInteractEntityEventData,
-        PlayerJoinEventData, PlayerMoveEventData,
+        EntityDamageByEntityEventData, PlayerAnimationEventData, PlayerJoinEventData,
+        PlayerMoveEventData,
     },
     wit::pumpkin::plugin::uuid::Uuid as WitUuid,
 };
@@ -82,8 +88,8 @@ pub fn register(context: &Context) {
             context.register_event_handler(OnSwing, EventPriority::Lowest, false),
         ),
         (
-            "interact-entity",
-            context.register_event_handler(OnAttack, EventPriority::Lowest, false),
+            "entity-damage-by-entity",
+            context.register_event_handler(OnHit, EventPriority::Lowest, false),
         ),
         (
             "join",
@@ -155,32 +161,43 @@ impl EventHandler<PlayerAnimationEvent> for OnSwing {
     }
 }
 
-struct OnAttack;
+struct OnHit;
 
-impl EventHandler<PlayerInteractEntityEvent> for OnAttack {
+impl EventHandler<EntityDamageByEntityEvent> for OnHit {
     fn handle(
         &self,
         server: Server,
-        event: PlayerInteractEntityEventData,
-    ) -> PlayerInteractEntityEventData {
-        if event.cancelled || event.action != EntityInteractionAction::Attack {
+        event: EntityDamageByEntityEventData,
+    ) -> EntityDamageByEntityEventData {
+        if event.cancelled {
             return event;
         }
-        let player = uuid(&event.player.get_id());
+        // The damager is the entity that hit directly: an arrow, not its
+        // shooter, so only melee hits by players count.
+        let Some((attacker, target)) =
+            with(|c| (c.player(event.damager_id), c.player(event.entity_id)))
+        else {
+            return event;
+        };
+        let Some(attacker) = attacker else {
+            return event;
+        };
         let now = now_ms();
+        let find = |player: Uuid| {
+            let (high, low) = player.as_u64_pair();
+            server.get_player_by_uuid(WitUuid { high, low })
+        };
         // Pumpkin already refuses attacks beyond the interaction range plus
         // one block, so this sees reach up to that limit.
-        let reach = with(|c| c.player(event.entity_id))
-            .flatten()
-            .and_then(|target| {
-                let (high, low) = target.as_u64_pair();
-                server.get_player_by_uuid(WitUuid { high, low })
-            })
-            .map(|target| {
-                let eye = signals::eye(event.player.get_position(), event.sneaking);
+        let reach = target
+            .and_then(find)
+            .zip(find(attacker))
+            .map(|(target, attacker)| {
+                let sneaking = attacker.as_entity().is_sneaking();
+                let eye = signals::eye(attacker.get_position(), sneaking);
                 signals::reach(eye, target.get_position())
             });
-        with(|c| c.attacked(player, now, reach));
+        with(|c| c.attacked(attacker, now, reach));
         event
     }
 }

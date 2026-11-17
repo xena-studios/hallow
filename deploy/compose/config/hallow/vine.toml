@@ -49,6 +49,11 @@ enabled = false
 [bedrock]
 enabled = false
 
+# Vine times each player's packets natively; hallow_vine takes the timing
+# once per window for the anticheat (docs/ANTICHEAT.md).
+[packet_timing]
+enabled = true
+
 [plugins]
 enabled = true
 plugin_dir = "./plugins"

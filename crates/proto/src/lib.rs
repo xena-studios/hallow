@@ -29,6 +29,7 @@ pub mod routes;
 pub mod server;
 pub mod signal;
 pub mod stats;
+pub mod violation;
 
 use std::collections::BTreeMap;
 
