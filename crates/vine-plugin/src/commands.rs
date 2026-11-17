@@ -20,9 +20,12 @@
 //! | `/unmute <player> [reason]` | `hallow.staff.mute` | Lift a mute |
 //! | `/warn <player> <reason>` | `hallow.staff.warn` | Warn, on the record |
 //! | `/history <player>` | `hallow.staff.history` | A player's last 10 punishments |
+//! | `/report <player> <reason>` | | Report a player to staff, online or not |
 //!
-//! Punishments are kept in PostgreSQL, so they need a control plane with a
-//! database.
+//! Punishments and reports are kept in PostgreSQL, so they need a control
+//! plane with a database. Online players whose ranks grant
+//! `hallow.staff.reports` are told of every new report, on whichever proxy
+//! they are; staff work through reports in the panel.
 //!
 //! Staff permissions come from the player's ranks in the database, sent with
 //! their login (`hallow.staff.*` and the like; see `hallow_proto::permission`).
@@ -39,6 +42,7 @@ use hallow_proto::{
         IssuePunishment, PunishmentKind, PunishmentRecord, PunishmentReply, RevokePunishment,
     },
     queue::{JoinQueue, QueueStatus},
+    report::{CreateReport, ReportCreated},
     routes,
 };
 use uuid::Uuid;
@@ -64,6 +68,7 @@ const HISTORY: u32 = 24;
 const FRIEND: u32 = 25;
 const LOBBY: u32 = 26;
 const HUB: u32 = 27;
+const REPORT: u32 = 28;
 
 const FRIEND_USAGE: &str = "/friend <player> | add <player> | accept <player> | deny <player> | remove <player> | list | requests";
 const FRIEND_SUBCOMMANDS: [&str; 6] = ["add", "accept", "deny", "remove", "list", "requests"];
@@ -90,6 +95,7 @@ pub fn register(ctx: &Context) {
     ctx.register_command(PLAY, "play", "Queue for a game", &[], None);
     ctx.register_command(LOBBY, "lobby", "Go to a game mode's lobby", &[], None);
     ctx.register_command(HUB, "hub", "Go to the hub", &[], None);
+    ctx.register_command(REPORT, "report", "Report a player to staff", &[], None);
     ctx.register_command(
         LEAVE_QUEUE,
         "leavequeue",
@@ -377,6 +383,10 @@ impl State {
             (LOBBY, [mode]) => self.to_lobby(sender, Some(mode)),
             (LOBBY, _) => usage("/lobby [mode]"),
             (HUB, _) => usage("/hub"),
+            (REPORT, [target, reason @ ..]) if !reason.is_empty() => {
+                self.report(sender, target, &plain(reason))
+            }
+            (REPORT, _) => usage("/report <player> <reason>"),
             _ => Err("§cUnknown command.".into()),
         }
     }
@@ -389,7 +399,7 @@ impl State {
             .map(|a| a.to_ascii_lowercase())
             .unwrap_or_default();
         let names_at = match id {
-            MSG | FIND | GKICK => 1,
+            MSG | FIND | GKICK | REPORT => 1,
             PARTY if args.len() <= 1 => {
                 return PARTY_SUBCOMMANDS
                     .iter()
@@ -463,6 +473,34 @@ impl State {
                     crate::Level::Warn,
                     &format!("sending to a lobby failed: {err}"),
                 );
+                Err(crate::UNAVAILABLE.into())
+            }
+        }
+    }
+
+    /// Sends a report to staff; the control plane tells online staff.
+    fn report(&self, sender: &CommandSender, target: &str, reason: &str) -> Result<i32, String> {
+        let request = CreateReport {
+            reporter: self.player_id(sender)?,
+            target: target.to_owned(),
+            reason: reason.to_owned(),
+        };
+        match self
+            .client
+            .post::<_, ReportCreated>(routes::REPORTS, &request)
+        {
+            Ok(created) => {
+                reply(sender, &created.message);
+                Ok(1)
+            }
+            Err(http::Error::Status(400 | 404 | 409 | 429, Some(err))) => {
+                Err(format!("§c{}", err.message))
+            }
+            Err(http::Error::Status(503, _)) => {
+                Err("§cReports need the network's database, which isn't set up.".into())
+            }
+            Err(err) => {
+                crate::log(crate::Level::Warn, &format!("report failed: {err}"));
                 Err(crate::UNAVAILABLE.into())
             }
         }
