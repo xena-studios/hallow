@@ -100,6 +100,11 @@ pub use kit::Kit;
 pub use lifecycle::Phase;
 pub use teams::Team;
 
+/// Pumpkin's plugin API, the version the SDK builds against, so a game
+/// needs no dependency of its own (`hallow_sdk::pumpkin::register_plugin!`).
+pub use pumpkin_plugin_api as pumpkin;
+pub use uuid::Uuid;
+
 use pumpkin_plugin_api::permissions as perm;
 
 /// The permissions the SDK needs: the data folder (to read maps and copy

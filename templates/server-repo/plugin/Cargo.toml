@@ -1,0 +1,23 @@
+# The game's Pumpkin plugin, on hallow-sdk. Built to WASM into ../plugins/
+# (CI's prepare step does it; see .github/workflows/image.yml):
+#   cargo build --release --target wasm32-wasip2
+#   cp target/wasm32-wasip2/release/example.wasm ../plugins/
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pin a Hallow release tag (or a commit) and move it with the base image in
+# the Dockerfile and hallow.toml. Cargo fetches Hallow's submodules for it.
+hallow-sdk = { git = "https://github.com/xena-studios/hallow", branch = "main" }
+
+# Its own workspace, apart from anything else in the repo.
+[workspace]
+
+[profile.release]
+lto = "thin"

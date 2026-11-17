@@ -15,14 +15,21 @@ warm = 1                     # idle instances kept ready while players are onlin
 max_instances = 100
 
 # [maps]                     # games: map worlds, read by hallow-sdk
-# dir = "maps"
+# dir = "maps"               # copied into the first plugin's data folder on start
 # pick = "random"            # or "vote"
 
-# The game's WASM plugins, copied into Pumpkin's plugins/ folder. name
-# defaults to the file name without .wasm.
-# [[plugins]]
-# file = "plugins/example.wasm"
-# permissions = ["fs.read.data"]
+# The game's WASM plugins, copied into Pumpkin's plugin folder. name
+# defaults to the file name without .wasm. plugin/ builds example.wasm on
+# hallow-sdk; these permissions are hallow_sdk::permissions().
+[[plugins]]
+file = "plugins/example.wasm"
+permissions = [
+  "fs.read.data",
+  "fs.write.data",
+  "sys.env.HALLOW_MIN_PLAYERS",
+  "sys.env.HALLOW_MAX_PLAYERS",
+  "sys.env.HALLOW_MAPS_PICK",
+]
 
 # Pumpkin settings that differ from Hallow's defaults, merged over the base
 # image's pumpkin.toml. Networking, telemetry and Hallow's own plugin are
