@@ -14,6 +14,11 @@ name: Server image
 # Tags follow Decisions 27: a vX.Y.Z git tag publishes X.Y.Z; a push to the
 # default branch publishes sha-<commit> and dev, which never go live on
 # production; pull requests build and check without publishing.
+#
+# With `control-plane` and the `control-plane-token` secret, a tag build also
+# records its version in the control plane (POST /v1/kinds/<name>/versions),
+# so staff can canary and promote it (docs/SERVERS.md#versions). Nothing goes
+# live from CI.
 on:
   workflow_call:
     inputs:
@@ -37,10 +42,21 @@ on:
         description: Publish the image. Pull requests never publish.
         type: boolean
         default: true
+      control-plane:
+        description: The control plane's URL, such as https://cp.example.net. Set it to record tag builds as versions.
+        type: string
+        default: ""
+    secrets:
+      control-plane-token:
+        description: A control plane token that may add versions.
+        required: false
     outputs:
       tags:
         description: The image tags built.
         value: ${{ jobs.image.outputs.tags }}
+      version:
+        description: The version built, X.Y.Z for a tag or sha-<commit>.
+        value: ${{ jobs.image.outputs.version }}
 
 permissions:
   contents: read
@@ -52,6 +68,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.manifest.outputs.version }}
     defaults:
       run:
         working-directory: ${{ inputs.context }}
@@ -88,13 +105,14 @@ jobs:
           docker run --rm -v "$PWD:/repo:ro" --entrypoint hallow-manifest "$base" \
             check /repo --base-version "$version"
           name=$(sed -n 's/^name *= *"\([a-z0-9-]*\)".*/\1/p' hallow.toml | head -n 1)
+          range=$(sed -n 's/^base *= *"\([^"]*\)".*/\1/p' hallow.toml | head -n 1)
           if [ -z "$IMAGE" ]; then
             IMAGE="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/$name"
           fi
-          # What the server reports to the control plane: the git tag, or the
-          # dev build's sha- tag.
+          # What the server reports to the control plane and the version's
+          # name there: the image tag, X.Y.Z from vX.Y.Z, or sha-<commit>.
           if [ "$GITHUB_REF_TYPE" = tag ]; then
-            server_version=$GITHUB_REF_NAME
+            server_version=${GITHUB_REF_NAME#v}
           else
             server_version=sha-${GITHUB_SHA::7}
           fi
@@ -102,6 +120,7 @@ jobs:
             echo "image=$IMAGE"
             echo "kind=$name"
             echo "base-version=$version"
+            echo "base=$range"
             echo "version=$server_version"
           } >> "$GITHUB_OUTPUT"
 
@@ -140,3 +159,30 @@ jobs:
             HALLOW_SERVER_VERSION=${{ steps.manifest.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Record the version in the control plane
+        if: >-
+          inputs.push && inputs.control-plane != '' && github.ref_type == 'tag'
+          && github.event_name != 'pull_request'
+        env:
+          CONTROL_PLANE: ${{ inputs.control-plane }}
+          TOKEN: ${{ secrets.control-plane-token }}
+          KIND: ${{ steps.manifest.outputs.kind }}
+          IMAGE: ${{ steps.manifest.outputs.image }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+          BASE: ${{ steps.manifest.outputs.base }}
+          BASE_VERSION: ${{ steps.manifest.outputs.base-version }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "control-plane is set but the control-plane-token secret isn't"
+            exit 1
+          fi
+          jq -n --arg version "$VERSION" --arg image "$IMAGE:$VERSION" --arg base "$BASE" \
+            --arg base_version "$BASE_VERSION" --arg commit "${GITHUB_SHA::12}" \
+            --arg by "ci:$GITHUB_REPOSITORY" \
+            '{version: $version, image: $image, base: $base, base_version: $base_version, commit: $commit, by: ($by | .[0:64])}' \
+            > version.json
+          curl -fsS --retry 3 -X POST -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' --data @version.json \
+            "${CONTROL_PLANE%/}/v1/kinds/$KIND/versions" > /dev/null
+          echo "Recorded $KIND $VERSION in the control plane"

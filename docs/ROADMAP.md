@@ -66,6 +66,7 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 ## Phase 2: first games
 
 - [ ] `hallow-sdk`: minigame library (arenas, teams, kits, scoreboards, spectating, stats) for server repos
+- [ ] Server repos on GitHub and versions (#20): `live` and `canary` channels per kind with promote and roll back, base range checks and an audit log in the control plane, and image workflows for server repos and the base image, are done ([Instances](INSTANCES.md#versions)); creating the `hallow-server-template` and `hub` repos on GitHub, publishing the first `server-base-v*` tag, and the panel's versions page are still to do
 - [ ] Anticheat core checks (movement, reach, click rate, timer) in observe-only mode, panel review page
 - [ ] Cheating bots in `netcheck` (speed, fly, reach, auto-clicker, timer) as a CI suite
 - [ ] 1.8-style combat module, if [Decisions](DECISIONS.md) keeps it
