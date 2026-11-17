@@ -191,7 +191,7 @@ pub fn server_may(method: &Method, route: &str, path_name: Option<&str>, own: &s
     if route == routes::STATS || route == routes::SIGNALS || route == routes::LOBBIES_SEND {
         return method == Method::POST;
     }
-    if route == routes::LOBBIES {
+    if route == routes::LOBBIES || route == routes::ban_of("{uuid}") {
         return method == Method::GET;
     }
     false

@@ -19,12 +19,13 @@ use hallow_proto::{
     node::{IssueJoinToken, JoinReply, JoinRequest, JoinToken, NodeInfo},
     party::{PartyAction, PartyInfo, PartyReply},
     presence::{
-        LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerLocation, PlayerSwitched,
+        Fallback, FallbackRequest, LoginDecision, LoginRequest, NetworkCount, PlayerLeft,
+        PlayerLocation, PlayerSwitched,
     },
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy, SetDraining},
     punishment::{
-        IssuePunishment, PunishmentPage, PunishmentRecord, PunishmentReply, PunishmentSearch,
-        PunishmentTemplate, RevokePunishment, SaveTemplate,
+        BanInfo, IssuePunishment, PunishmentPage, PunishmentRecord, PunishmentReply,
+        PunishmentSearch, PunishmentTemplate, RevokePunishment, SaveTemplate,
     },
     queue::{JoinQueue, QueueStatus},
     rank::{GrantRank, PlayerRanks, RankInfo, RevokeRank, SaveRank},
@@ -106,6 +107,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route(routes::PRESENCE_LOGIN, post(login))
         .route(routes::PRESENCE_SWITCH, post(switch))
+        .route(routes::PRESENCE_FALLBACK, post(fallback))
+        .route(&routes::ban_of("{uuid}"), get(ban_of))
         .route(routes::PRESENCE_LEAVE, post(leave))
         .route(routes::PRESENCE_COUNT, get(count))
         .route(routes::PLAYERS, get(player_by_name))
@@ -383,28 +386,28 @@ async fn poll_servers(
 
 // Presence
 
-/// With a database, a banned account is refused before it touches presence,
-/// and an allowed login gets its permission nodes and an open session.
+/// With a database, a banned account is sent to the banned lobby instead of
+/// a hub, and an admitted login gets its permission nodes and an open
+/// session. Nobody is refused for a ban, a full network or a missing hub;
+/// see [`crate::store::Store::login`].
 async fn login(State(state): Shared, Body(req): Body<LoginRequest>) -> Reply<Body<LoginDecision>> {
-    let mut grant = accounts::Grant {
-        permissions: Vec::new(),
-        mute: None,
-    };
+    let mut grant = accounts::Grant::default();
     if let Some(db) = &state.db {
-        match accounts::check_login(db, &req, &state.config.admins).await? {
-            Ok(granted) => grant = granted,
-            Err(reason) => return Ok(Body(LoginDecision::Deny { reason })),
-        }
+        grant = accounts::check_login(db, &req, &state.config).await?;
     }
-    let decision = match state.store.login(req.clone(), &state.config).await? {
-        LoginOutcome::Decided(decision) => decision,
+    let decision = match state
+        .store
+        .login(req.clone(), &state.config, grant.ban.as_ref())
+        .await?
+    {
+        LoginOutcome::Decided(decision) => *decision,
         LoginOutcome::UnknownProxy => {
             return Err(Failure::not_found("proxy isn't registered; register again"));
         }
     };
-    let LoginDecision::Allow { server, .. } = decision else {
+    if matches!(decision, LoginDecision::Deny { .. }) {
         return Ok(Body(decision));
-    };
+    }
     if let Some(db) = &state.db {
         // A session left open by a lost leave ends here.
         if let Some(old) = state.store.take_session(&req.uuid).await? {
@@ -414,11 +417,59 @@ async fn login(State(state): Shared, Body(req): Body<LoginRequest>) -> Reply<Bod
         state.store.set_session(&req.uuid, &session).await?;
         friends::announce(db, &state.store, req.uuid, &req.username, true).await;
     }
-    Ok(Body(LoginDecision::Allow {
-        server,
-        permissions: grant.permissions,
-        mute: grant.mute,
+    Ok(Body(match decision {
+        LoginDecision::Allow { server, ban, .. } => LoginDecision::Allow {
+            server,
+            permissions: grant.permissions,
+            mute: grant.mute,
+            ban,
+        },
+        LoginDecision::Wait {
+            reason, position, ..
+        } => LoginDecision::Wait {
+            reason,
+            position,
+            permissions: grant.permissions,
+            mute: grant.mute,
+        },
+        deny @ LoginDecision::Deny { .. } => deny,
     }))
+}
+
+/// `POST /v1/presence/fallback`: a server dropped the player; where to.
+async fn fallback(State(state): Shared, Body(req): Body<FallbackRequest>) -> Reply<Body<Fallback>> {
+    crate::limbo::fallback(&state, &req)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("player isn't online"))
+}
+
+/// `GET /v1/bans/{uuid}`: the player's active ban. A server's scoped token
+/// may only ask about players on that server (the banned lobby).
+async fn ban_of(
+    State(state): Shared,
+    Extension(caller): Extension<Caller>,
+    Path(uuid): Path<String>,
+) -> Reply<Body<BanInfo>> {
+    let uuid = Uuid::parse_str(&uuid).map_err(|_| Failure::bad_request("not a UUID"))?;
+    if let Caller::Server { name, .. } = &caller {
+        let on_proxy = state.store.player(&uuid).await?.and_then(|p| p.server);
+        let here = on_proxy.as_deref() == Some(name.as_str())
+            || state.store.server_of(&uuid).await?.as_deref() == Some(name.as_str());
+        if !here {
+            return Err(Failure::forbidden(format!(
+                "server {name} can only ask about its own players"
+            )));
+        }
+    }
+    if let Some(ban) = state.store.restriction(&uuid).await? {
+        return Ok(Body(ban));
+    }
+    let db = database(&state)?;
+    punish::active_ban_info(db, &state.config, uuid)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("player isn't banned"))
 }
 
 async fn switch(State(state): Shared, Body(moved): Body<PlayerSwitched>) -> Reply<StatusCode> {
@@ -427,7 +478,19 @@ async fn switch(State(state): Shared, Body(moved): Body<PlayerSwitched>) -> Repl
     {
         hallow_db::set_session_server(db, session, &moved.server).await?;
     }
+    let uuid = moved.uuid;
+    let in_limbo = moved.server == state.config.limbo;
     if state.store.switch(moved).await? {
+        // Whoever lands in limbo waits for a place; anyone placed elsewhere
+        // doesn't.
+        if in_limbo {
+            state
+                .store
+                .start_waiting(&uuid, crate::store::now_millis())
+                .await?;
+        } else {
+            state.store.stop_waiting(&uuid).await?;
+        }
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(Failure::not_found("player isn't online"))
@@ -577,7 +640,9 @@ async fn issue_punishment(
     Body(req): Body<IssuePunishment>,
 ) -> Reply<Body<PunishmentReply>> {
     let db = database(&state)?;
-    Ok(Body(punish::issue(db, &state.store, req).await?))
+    Ok(Body(
+        punish::issue(db, &state.store, &state.config, req).await?,
+    ))
 }
 
 async fn revoke_punishment(
@@ -585,7 +650,9 @@ async fn revoke_punishment(
     Body(req): Body<RevokePunishment>,
 ) -> Reply<Body<PunishmentReply>> {
     let db = database(&state)?;
-    Ok(Body(punish::revoke(db, &state.store, req).await?))
+    Ok(Body(
+        punish::revoke(db, &state.store, &state.config, req).await?,
+    ))
 }
 
 async fn punishment_history(
@@ -798,11 +865,31 @@ async fn leave_queue(State(state): Shared, Path(uuid): Path<String>) -> Reply<St
 
 // Commands
 
+/// A kick holds the player in limbo, then sends them to a hub; it never
+/// disconnects them. A banned player can't be sent anywhere but a banned
+/// lobby or limbo.
 async fn send_command(
     State(state): Shared,
     Body(command): Body<NetworkCommand>,
 ) -> Reply<StatusCode> {
-    if state.store.send_command(command).await? {
+    let delivered = match &command {
+        NetworkCommand::Kick { player, reason } => {
+            crate::limbo::kick(&state.store, &state.config, player, reason).await?
+        }
+        NetworkCommand::Send { player, server } => {
+            if state.store.restriction(player).await?.is_some() {
+                let kind = state.store.server(server).await?.map(|s| s.kind);
+                let allowed = crate::limbo::allowed_while_banned(&state.config, server)
+                    || kind.is_some_and(|k| crate::limbo::allowed_while_banned(&state.config, &k));
+                if !allowed {
+                    return Err(Failure::new(ErrorCode::Conflict, crate::limbo::LOCKED));
+                }
+            }
+            state.store.send_command(command).await?
+        }
+        _ => state.store.send_command(command).await?,
+    };
+    if delivered {
         Ok(StatusCode::ACCEPTED)
     } else {
         Err(Failure::not_found("player isn't online"))

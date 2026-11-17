@@ -16,6 +16,7 @@
 //! | `names` | hash | lower-case username → UUID of online players, for lookups by name |
 //! | `commands:{id}` | sorted set | `"{rev}\|{json}"` [`ProxyCommand`]s scored by revision, last [`COMMANDS_KEPT`] |
 //! | `commands:{id}:rev` | integer | that proxy's command revision |
+//! | `limbo`, `limbo-sent`, `limbo-told`, `limbo-hold`, `restricted` | | Players waiting in limbo and banned players online; see [`limbo`](self::limbo) |
 //!
 //! Changes that need several keys to agree run as Lua scripts, so concurrent
 //! control plane instances never see half of one.
@@ -26,6 +27,7 @@ use hallow_proto::{
     command::{NetworkCommand, ProxyCommand},
     presence::{LoginDecision, LoginRequest, PlayerLeft, PlayerLocation, PlayerSwitched},
     proxy::{ProxyHeartbeat, ProxyInfo, ProxyRegistered, RegisterProxy},
+    punishment::BanInfo,
     server::{
         RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged,
         ServerState,
@@ -37,10 +39,12 @@ use uuid::Uuid;
 use crate::{Config, DuplicateLogin, events};
 
 mod instances;
-mod lobby;
+mod limbo;
+pub mod lobby;
 mod party;
 mod queue;
 
+pub use limbo::Waiting;
 pub use queue::Placement;
 
 /// Commands kept per proxy for polls that fall behind.
@@ -280,7 +284,7 @@ pub struct Reaped {
 /// The result of [`Store::login`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoginOutcome {
-    Decided(LoginDecision),
+    Decided(Box<LoginDecision>),
     /// The proxy asking isn't registered (or expired); it should re-register.
     UnknownProxy,
 }
@@ -759,8 +763,23 @@ impl Store {
 
     // Presence
 
-    /// Decides whether a player may join, and where they land.
-    pub async fn login(&self, req: LoginRequest, config: &Config) -> Result<LoginOutcome> {
+    /// Records a player's login and decides where they land. The network
+    /// never turns a player away for something it can fix:
+    ///
+    /// - a banned player (`ban`) goes to the least full banned lobby, or
+    ///   waits in limbo for one, and can't leave;
+    /// - with the network full or no hub free, a player waits in limbo and
+    ///   is moved on, oldest first, when there is room ([`crate::limbo`]);
+    /// - otherwise they go to the least full hub.
+    ///
+    /// The only refusals left are a second login racing this one, and a
+    /// duplicate login with [`DuplicateLogin::Deny`].
+    pub async fn login(
+        &self,
+        req: LoginRequest,
+        config: &Config,
+        ban: Option<&BanInfo>,
+    ) -> Result<LoginOutcome> {
         let proxy_alive: bool = self
             .conn()
             .exists(self.keys.proxy_alive(&req.proxy))
@@ -768,10 +787,6 @@ impl Store {
         if !proxy_alive {
             return Ok(LoginOutcome::UnknownProxy);
         }
-        // Before anything that changes state, such as kicking an old session.
-        let Some(hub) = self.pick_hub(&config.hub_kind).await? else {
-            return Ok(deny("No lobby is free right now. Try again in a moment."));
-        };
 
         let uuid = req.uuid.to_string();
         let existing = self.player(&req.uuid).await?;
@@ -781,17 +796,23 @@ impl Store {
                 .conn()
                 .exists(self.keys.proxy_alive(&old.proxy))
                 .await?;
+            // A draining proxy hands its players over (a transfer), so a
+            // login from one of them always replaces it.
+            let old_draining: bool = self
+                .conn()
+                .exists(self.keys.proxy_drain(&old.proxy))
+                .await?;
             if old_alive && old.proxy != req.proxy {
                 match config.duplicate_login {
-                    DuplicateLogin::Deny => {
+                    DuplicateLogin::Deny if !old_draining => {
                         return Ok(deny("You are already online on this network."));
                     }
-                    DuplicateLogin::KickOld => {
+                    _ => {
                         self.push_command(
                             &old.proxy,
                             &ProxyCommand::Kick {
                                 player: req.uuid,
-                                reason: "You logged in from another location.".into(),
+                                reason: "§cYou logged in from another location.".into(),
                             },
                         )
                         .await?;
@@ -799,13 +820,8 @@ impl Store {
                 }
             }
             // A stale entry (its proxy is gone or this is the same proxy) or a
-            // kicked session: the new login takes its place.
+            // replaced session: the new login takes its place.
             replaces = Some(old.proxy);
-        } else {
-            let online: u32 = self.conn().hlen(self.keys.online()).await?;
-            if online >= config.max_players {
-                return Ok(deny("The network is full."));
-            }
         }
 
         let name = req.username.to_ascii_lowercase();
@@ -815,7 +831,7 @@ impl Store {
             proxy: req.proxy.clone(),
             server: None,
         })?;
-        match replaces {
+        match &replaces {
             None => {
                 // Two proxies can race the same new login; only one wins.
                 let claimed: bool = self
@@ -831,7 +847,7 @@ impl Store {
                     .atomic()
                     .hset(self.keys.online(), &uuid, &location)
                     .ignore()
-                    .srem(self.keys.proxy_players(&old_proxy), &uuid)
+                    .srem(self.keys.proxy_players(old_proxy), &uuid)
                     .ignore()
                     .query_async(&mut self.conn())
                     .await?;
@@ -845,11 +861,52 @@ impl Store {
             .ignore()
             .query_async(&mut self.conn())
             .await?;
-        Ok(LoginOutcome::Decided(LoginDecision::Allow {
-            server: hub,
+
+        // Where they go. An old session's place in limbo, hold or ban is
+        // decided afresh.
+        self.stop_waiting(&req.uuid).await?;
+        let now = now_ms();
+        if let Some(ban) = ban {
+            self.restrict(&req.uuid, ban).await?;
+            let server = match self.pick_lobby(&config.banned_kind).await? {
+                Some(lobby) => lobby.name,
+                None => {
+                    self.start_waiting(&req.uuid, now).await?;
+                    config.limbo.clone()
+                }
+            };
+            return Ok(LoginOutcome::Decided(Box::new(LoginDecision::Allow {
+                server,
+                permissions: Vec::new(),
+                mute: None,
+                ban: Some(ban.clone()),
+            })));
+        }
+        let _ = self.unrestrict(&req.uuid).await?;
+
+        // Everyone online but those waiting, this player included.
+        let online: u32 = self.conn().hlen(self.keys.online()).await?;
+        let placed = online.saturating_sub(self.waiting_count().await?);
+        let reason = if replaces.is_none() && placed > config.max_players {
+            "The network is full."
+        } else if let Some(hub) = self.pick_hub(&config.hub_kind).await? {
+            return Ok(LoginOutcome::Decided(Box::new(LoginDecision::Allow {
+                server: hub,
+                permissions: Vec::new(),
+                mute: None,
+                ban: None,
+            })));
+        } else {
+            "No hub is free right now."
+        };
+        self.start_waiting(&req.uuid, now).await?;
+        let position = self.waiting_position(&req.uuid).await?;
+        Ok(LoginOutcome::Decided(Box::new(LoginDecision::Wait {
+            reason: reason.into(),
+            position,
             permissions: Vec::new(),
             mute: None,
-        }))
+        })))
     }
 
     /// The emptiest hub that is ready, has room and isn't ending.
@@ -894,6 +951,7 @@ impl Store {
             // Queue first: it reads the party to know who queued together.
             self.queue_on_leave(uuid, username).await?;
             self.party_on_leave(uuid, username).await?;
+            self.limbo_on_leave(uuid).await?;
         }
         Ok(removed == 1)
     }
@@ -991,9 +1049,15 @@ impl Store {
 }
 
 fn deny(reason: &str) -> LoginOutcome {
-    LoginOutcome::Decided(LoginDecision::Deny {
+    LoginOutcome::Decided(Box::new(LoginDecision::Deny {
         reason: reason.into(),
-    })
+    }))
+}
+
+/// Wall-clock time, Unix milliseconds.
+#[must_use]
+pub fn now_millis() -> u64 {
+    now_ms()
 }
 
 fn now_ms() -> u64 {

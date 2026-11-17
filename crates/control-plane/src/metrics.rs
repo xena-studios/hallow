@@ -54,6 +54,28 @@ pub async fn render(app: &AppState) -> store::Result<String> {
         "The network's player limit.",
     );
     let _ = writeln!(out, "hallow_players_max {}", app.config.max_players);
+    family(
+        &mut out,
+        "hallow_limbo_waiting",
+        "gauge",
+        "Players waiting in limbo for a place: a hub, a banned lobby, or the end of a kick.",
+    );
+    let _ = writeln!(
+        out,
+        "hallow_limbo_waiting {}",
+        app.store.waiting_count().await?
+    );
+    family(
+        &mut out,
+        "hallow_players_banned_online",
+        "gauge",
+        "Banned players online, kept in the banned lobby or limbo.",
+    );
+    let _ = writeln!(
+        out,
+        "hallow_players_banned_online {}",
+        app.store.restricted().await?.len()
+    );
 
     let proxies = app.store.proxies().await?;
     family(

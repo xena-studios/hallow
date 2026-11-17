@@ -219,8 +219,13 @@ impl Manager {
     /// Plans and makes the quick decisions; see the module docs. The caller
     /// holds the matchmaker lock and runs the returned work with
     /// [`Manager::run`] once it has let go.
-    pub async fn plan(&self, store: &Store) -> Result<Vec<Work>, PlanError> {
+    pub async fn plan(
+        &self,
+        store: &Store,
+        config: &crate::Config,
+    ) -> Result<Vec<Work>, PlanError> {
         let kinds = self.kinds().await?;
+        let waiting = crate::limbo::waiting_by_kind(store, config).await?;
         let instances = store.instances().await?;
         let (_, servers) = store.read_servers().await?;
         let queued = store.queued_entry_sizes().await?;
@@ -232,6 +237,7 @@ impl Manager {
             instances: &instances,
             servers: &servers,
             queued: &queued,
+            waiting: &waiting,
             players_online,
             nodes: &nodes,
             settings: &self.config.settings,
@@ -409,7 +415,7 @@ impl Manager {
                 let store = &state.store;
                 let result = match &item {
                     Work::Create { name } => manager.create(store, name).await,
-                    Work::End { name } => manager.end(store, name, &state.config.hub_kind).await,
+                    Work::End { name } => manager.end(store, name, &state.config).await,
                 };
                 if let Err(err) = result {
                     tracing::warn!(%err, ?item, "instance work failed");
@@ -462,7 +468,12 @@ impl Manager {
         Ok(())
     }
 
-    async fn end(&self, store: &Store, name: &str, hub: &str) -> Result<(), StoreError> {
+    async fn end(
+        &self,
+        store: &Store,
+        name: &str,
+        config: &crate::Config,
+    ) -> Result<(), StoreError> {
         let Some(info) = store.instance(name).await? else {
             return Ok(());
         };
@@ -477,7 +488,7 @@ impl Manager {
             .ok()
             .and_then(|kinds| kinds.get(&info.kind).and_then(|k| k.lobby.clone()));
         if let Err(err) =
-            crate::lobbies::evacuate(store, name, lobby.as_deref(), hub, EVACUATE_WAIT).await
+            crate::lobbies::evacuate(store, config, name, lobby.as_deref(), EVACUATE_WAIT).await
         {
             tracing::warn!(instance = %name, %err, "couldn't send its players to a lobby");
         }

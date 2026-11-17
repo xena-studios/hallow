@@ -197,8 +197,10 @@ fn names(poll: &Poll<Vec<ServerInfo>>) -> Vec<String> {
 async fn two_proxies_share_state() {
     let Some(redis) = redis_url() else { return };
     let prefix = format!("test-{}", Uuid::new_v4());
-    let one = Instance::start(config(&redis, &prefix)).await;
-    let two = Instance::start(config(&redis, &prefix)).await;
+    let mut config = config(&redis, &prefix);
+    config.duplicate_login = DuplicateLogin::Deny;
+    let one = Instance::start(config.clone()).await;
+    let two = Instance::start(config).await;
 
     let a = one.register_proxy("proxy-a").await;
     let b = two.register_proxy("proxy-b").await;
@@ -242,13 +244,15 @@ async fn two_proxies_share_state() {
         server: "hub-1".into(),
         permissions: vec![],
         mute: None,
+        ban: None,
     };
     assert_eq!(one.login(p1, "proxy-a").await, hub);
     assert_eq!(two.login(p2, "proxy-b").await, hub);
     assert_eq!(one.count().await, 2);
     assert_eq!(two.count().await, 2);
 
-    // The same account can't be online twice.
+    // The same account can't be online twice; with `deny` the new login is
+    // refused.
     assert!(matches!(
         two.login(p1, "proxy-b").await,
         LoginDecision::Deny { .. }
@@ -393,13 +397,14 @@ async fn expiry_removes_dead_proxies_and_servers() {
     assert_eq!(err.code, ErrorCode::NotFound);
 }
 
-/// With `kick_old`, a second login kicks the first session on its proxy.
+/// By default (`kick_old`), a second login replaces the first session,
+/// which its proxy disconnects.
 #[tokio::test]
 async fn kick_old_session() {
     let Some(redis) = redis_url() else { return };
     let prefix = format!("test-{}", Uuid::new_v4());
-    let mut config = config(&redis, &prefix);
-    config.duplicate_login = DuplicateLogin::KickOld;
+    let config = config(&redis, &prefix);
+    assert_eq!(config.duplicate_login, DuplicateLogin::KickOld);
     let one = Instance::start(config).await;
 
     let a = one.register_proxy("proxy-a").await;
@@ -701,6 +706,23 @@ async fn parties() {
 }
 
 impl Instance {
+    async fn register_lobby(&self, name: &str, kind: &str) {
+        let res = self
+            .post(
+                routes::SERVERS,
+                &RegisterServer {
+                    name: name.into(),
+                    kind: kind.into(),
+                    version: "v1.0.0".into(),
+                    role: ServerRole::Lobby,
+                    address: format!("{name}:25565"),
+                    max_players: 500,
+                },
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    }
+
     async fn register_game(&self, name: &str, kind: &str, max_players: u32, players: u32) {
         let res = self
             .post(
@@ -1002,7 +1024,8 @@ async fn database_logins() {
     assert_eq!(server.as_deref(), Some("hub-1"));
     assert!(closed);
 
-    // A ban refuses the next login, before it reaches presence.
+    // A banned player is let in, but to the banned lobby (limbo while none
+    // is up), with the ban to show and no permissions.
     hallow_db::add_punishment(
         &pool,
         &hallow_db::NewPunishment {
@@ -1015,14 +1038,34 @@ async fn database_logins() {
     )
     .await
     .unwrap();
-    let LoginDecision::Deny { reason } = login_as(&one, player, "pleb", "proxy-a").await else {
-        panic!("banned player let in")
+    let LoginDecision::Allow {
+        server,
+        permissions,
+        ban: Some(ban),
+        ..
+    } = login_as(&one, player, "pleb", "proxy-a").await
+    else {
+        panic!("banned player not sent to the banned lobby")
     };
-    assert!(
-        reason.contains("testing bans") && reason.contains("2d 23h"),
-        "{reason}"
-    );
-    assert_eq!(one.count().await, 1);
+    assert_eq!(server, "limbo");
+    assert!(permissions.is_empty());
+    assert_eq!(ban.reason, "testing bans");
+    assert_eq!(ban.issuer, "boss");
+    assert!(ban.expires_ms.is_some());
+    let shown: hallow_proto::punishment::BanInfo =
+        one.get_json(&routes::ban_of(&player.to_string())).await;
+    assert_eq!(shown, ban);
+    one.register_lobby("banned-1", "banned").await;
+    let LoginDecision::Allow {
+        server,
+        ban: Some(_),
+        ..
+    } = login_as(&one, player, "pleb", "proxy-a").await
+    else {
+        panic!()
+    };
+    assert_eq!(server, "banned-1");
+    assert_eq!(one.count().await, 2);
 
     // A lost leave: logging in again closes the stale session.
     let LoginDecision::Allow { .. } = login_as(&one, boss, "boss", "proxy-a").await else {
@@ -1094,7 +1137,8 @@ async fn punishments_in_game() {
         "{data:?}"
     );
 
-    // A ban kicks the player where they are, and refuses the next login.
+    // A ban moves the player to limbo (no banned lobby is up) and locks
+    // them there; the next login goes to the banned lobby too.
     let reply: PunishmentReply = one
         .post_json(routes::PUNISHMENTS, &issue(PunishmentKind::Ban, None))
         .await;
@@ -1106,9 +1150,14 @@ async fn punishments_in_game() {
         panic!()
     };
     assert!(
-        data.iter().any(|c| matches!(c, ProxyCommand::Kick { player, reason } if *player == target && reason.contains("being rude"))),
+        data.iter().any(|c| matches!(c, ProxyCommand::Restrict { player, ban: Some(ban) } if *player == target && ban.reason == "being rude")),
         "{data:?}"
     );
+    assert!(
+        data.iter().any(|c| matches!(c, ProxyCommand::Send { player, server } if *player == target && server == "limbo")),
+        "{data:?}"
+    );
+    assert!(!data.iter().any(|c| matches!(c, ProxyCommand::Kick { .. })));
     one.post(
         routes::PRESENCE_LEAVE,
         &PlayerLeft {
@@ -1119,7 +1168,7 @@ async fn punishments_in_game() {
     .await;
     assert!(matches!(
         login_as(&one, target, "Griefer", "proxy-b").await,
-        LoginDecision::Deny { .. }
+        LoginDecision::Allow { ban: Some(_), .. }
     ));
 
     // Offline players are found by name; the console can act.
@@ -1179,9 +1228,11 @@ async fn punishments_in_game() {
 }
 
 /// The #25 gate: a moderator bans from the panel and every proxy enforces
-/// it. The player is kicked from the proxy holding them through the same
-/// command path as `/ban`, and refused at login on either proxy until a
-/// staff member lifts it. Kicks, the network-wide search and templates too.
+/// it. The player is moved to the banned lobby (limbo while none is up) by
+/// the proxy holding them, through the same command path as `/ban`, and
+/// sent there at login on either proxy until a staff member lifts it; then
+/// they go to a hub without reconnecting. Kicks, the network-wide search and
+/// templates too.
 #[tokio::test]
 async fn punishments_from_the_panel() {
     use hallow_db::sqlx::Executor;
@@ -1214,7 +1265,8 @@ async fn punishments_from_the_panel() {
         staff: staff(),
     };
 
-    // A kick needs the player online; it disconnects them and is recorded.
+    // A kick needs the player online; it holds them in limbo (no
+    // disconnect) and is recorded.
     let reply: PunishmentReply = one
         .post_json(routes::PUNISHMENTS, &panel(PunishmentKind::Kick, None))
         .await;
@@ -1225,11 +1277,12 @@ async fn punishments_from_the_panel() {
     };
     assert!(
         data.iter()
-            .any(|c| matches!(c, ProxyCommand::Kick { player, .. } if *player == target)),
+            .any(|c| matches!(c, ProxyCommand::Send { player, server } if *player == target && server == "limbo")),
         "{data:?}"
     );
+    assert!(!data.iter().any(|c| matches!(c, ProxyCommand::Kick { .. })));
 
-    // The ban: kicked where they are, at once, like /ban.
+    // The ban: locked in and moved where they are, at once, like /ban.
     let reply: PunishmentReply = one
         .post_json(
             routes::PUNISHMENTS,
@@ -1242,7 +1295,7 @@ async fn punishments_from_the_panel() {
         panic!("the ban didn't reach proxy-b")
     };
     assert!(
-        data.iter().any(|c| matches!(c, ProxyCommand::Kick { player, reason } if *player == target && reason.contains("Cheating"))),
+        data.iter().any(|c| matches!(c, ProxyCommand::Restrict { player, ban: Some(ban) } if *player == target && ban.reason.contains("Cheating") && ban.issuer == "mod-alice")),
         "{data:?}"
     );
     // Nothing for the proxy that doesn't hold them.
@@ -1250,6 +1303,47 @@ async fn punishments_from_the_panel() {
         one.commands("proxy-a", a.commands_revision).await,
         Poll::Unchanged { .. }
     ));
+    // Banned players can't leave: no /lobby, /hub, queues or sends.
+    let res = one
+        .post(
+            routes::LOBBIES_SEND,
+            &hallow_proto::lobby::SendToLobby {
+                player: target,
+                lobby: None,
+                fallback_hub: false,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let res = one
+        .post(
+            routes::COMMANDS,
+            &NetworkCommand::Send {
+                player: target,
+                server: "hub-1".into(),
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    // Logging in again, on either proxy, lands in the banned lobby (limbo
+    // while none is up) with the ban.
+    let mut revision_b = revision;
+    for proxy in ["proxy-a", "proxy-b"] {
+        let LoginDecision::Allow {
+            server,
+            ban: Some(ban),
+            ..
+        } = login_as(&one, target, "Cheater", proxy).await
+        else {
+            panic!("banned player not held on {proxy}")
+        };
+        assert_eq!(server, "limbo");
+        assert!(ban.reason.contains("Cheating"), "{ban:?}");
+    }
+    if let Poll::Changed { revision, .. } = one.commands("proxy-b", revision_b).await {
+        revision_b = revision;
+    }
+    // Offline now, so a kick is refused and not recorded.
     one.post(
         routes::PRESENCE_LEAVE,
         &PlayerLeft {
@@ -1258,13 +1352,6 @@ async fn punishments_from_the_panel() {
         },
     )
     .await;
-    for proxy in ["proxy-a", "proxy-b"] {
-        let LoginDecision::Deny { reason } = login_as(&one, target, "Cheater", proxy).await else {
-            panic!("banned player let in on {proxy}")
-        };
-        assert!(reason.contains("Cheating"), "{reason}");
-    }
-    // Offline now, so a kick is refused and not recorded.
     let reply: PunishmentReply = one
         .post_json(routes::PUNISHMENTS, &panel(PunishmentKind::Kick, None))
         .await;
@@ -1315,7 +1402,12 @@ async fn punishments_from_the_panel() {
     let history: Vec<PunishmentRecord> = one.get_json(&routes::punishment_history("cheater")).await;
     assert_eq!(history[0].issuer, "mod-alice");
 
-    // Lifted from the panel, with a reason: they get back in.
+    // Lifted from the panel, with a reason, while they're online: unlocked
+    // and sent to a hub where they are, then let in normally.
+    login_as(&one, target, "Cheater", "proxy-b").await;
+    if let Poll::Changed { revision, .. } = one.commands("proxy-b", revision_b).await {
+        revision_b = revision;
+    }
     let unban = RevokePunishment {
         kind: PunishmentKind::Ban,
         target: "Cheater".into(),
@@ -1325,6 +1417,19 @@ async fn punishments_from_the_panel() {
     };
     let reply: PunishmentReply = one.post_json(routes::PUNISHMENTS_REVOKE, &unban).await;
     assert_eq!((reply.ok, reply.id), (true, Some(ban_id)), "{reply:?}");
+    let Poll::Changed { data, .. } = one.commands("proxy-b", revision_b).await else {
+        panic!("the unban didn't reach proxy-b")
+    };
+    assert!(
+        data.iter().any(
+            |c| matches!(c, ProxyCommand::Restrict { player, ban: None } if *player == target)
+        ),
+        "{data:?}"
+    );
+    assert!(
+        data.iter().any(|c| matches!(c, ProxyCommand::Send { player, server } if *player == target && server == "hub-1")),
+        "{data:?}"
+    );
     assert!(matches!(
         login_as(&one, target, "Cheater", "proxy-a").await,
         LoginDecision::Allow { .. }
@@ -2080,6 +2185,331 @@ async fn stats_add_up() {
 
     admin
         .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// Every command queued for `proxy` after `since`, waiting up to `wait` for
+/// one matching `want`. Returns the revision reached and all commands seen.
+async fn wait_for_command(
+    one: &Instance,
+    proxy: &str,
+    since: u64,
+    wait: Duration,
+    want: impl Fn(&ProxyCommand) -> bool,
+) -> (u64, Vec<ProxyCommand>) {
+    let deadline = tokio::time::Instant::now() + wait;
+    let (mut revision, mut seen) = (since, Vec::new());
+    while tokio::time::Instant::now() < deadline {
+        if let Poll::Changed { revision: r, data } = one.commands(proxy, revision).await {
+            revision = r;
+            seen.extend(data);
+            if seen.iter().any(&want) {
+                break;
+            }
+        }
+    }
+    (revision, seen)
+}
+
+async fn switched(one: &Instance, uuid: Uuid, server: &str) {
+    let res = one
+        .post(
+            routes::PRESENCE_SWITCH,
+            &PlayerSwitched {
+                uuid,
+                server: server.into(),
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+/// Nobody is turned away: with no hub, or a full network, players wait in
+/// limbo with their place in line, and the control plane sends them on,
+/// oldest first, once there's room.
+#[tokio::test]
+async fn limbo_holds_players_until_there_is_room() {
+    let Some(redis) = redis_url() else { return };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.long_poll = Duration::from_millis(200);
+    config.max_players = 2;
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+
+    // No hub at all: the first player waits.
+    let (p1, p2, p3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let LoginDecision::Wait {
+        reason, position, ..
+    } = one.login(p1, "proxy-a").await
+    else {
+        panic!("expected to wait")
+    };
+    assert!(reason.contains("No hub"), "{reason}");
+    assert_eq!(position, Some(1));
+    switched(&one, p1, "limbo").await;
+
+    // A hub comes up: the waiting player is sent there.
+    one.register_hub("hub-1").await;
+    let (revision, seen) = wait_for_command(&one, "proxy-a", a.commands_revision, Duration::from_secs(5), |c| {
+        matches!(c, ProxyCommand::Send { player, server } if *player == p1 && server == "hub-1")
+    })
+    .await;
+    assert!(
+        seen.iter()
+            .any(|c| matches!(c, ProxyCommand::Send { player, .. } if *player == p1)),
+        "{seen:?}"
+    );
+    switched(&one, p1, "hub-1").await;
+
+    // The network holds 2: the second gets in, the third waits behind.
+    assert!(matches!(
+        one.login(p2, "proxy-a").await,
+        LoginDecision::Allow { .. }
+    ));
+    switched(&one, p2, "hub-1").await;
+    let LoginDecision::Wait {
+        reason, position, ..
+    } = one.login(p3, "proxy-a").await
+    else {
+        panic!("expected a full network")
+    };
+    assert!(reason.contains("full"), "{reason}");
+    assert_eq!(position, Some(1));
+    switched(&one, p3, "limbo").await;
+    // Room again when someone leaves; the waiting player goes on.
+    one.post(
+        routes::PRESENCE_LEAVE,
+        &PlayerLeft {
+            uuid: p2,
+            proxy: "proxy-a".into(),
+        },
+    )
+    .await;
+    let (_, seen) = wait_for_command(&one, "proxy-a", revision, Duration::from_secs(5), |c| {
+        matches!(c, ProxyCommand::Send { player, server } if *player == p3 && server == "hub-1")
+    })
+    .await;
+    assert!(
+        seen.iter().any(|c| matches!(c, ProxyCommand::Send { player, server } if *player == p3 && server == "hub-1")),
+        "{seen:?}"
+    );
+}
+
+/// A server that drops a player sends them, through their proxy, to the
+/// game's lobby, another lobby of its kind, a hub, or limbo, in that order.
+#[tokio::test]
+async fn fallbacks_go_to_a_lobby_a_hub_or_limbo() {
+    use hallow_proto::presence::{Fallback, FallbackRequest};
+    let Some(redis) = redis_url() else { return };
+    let one = Instance::start(config(&redis, &format!("test-{}", Uuid::new_v4()))).await;
+    one.register_proxy("proxy-a").await;
+    let player = Uuid::new_v4();
+    assert!(matches!(
+        one.login(player, "proxy-a").await,
+        LoginDecision::Wait { .. }
+    ));
+    let ask = |from: &str, reason: Option<&str>| FallbackRequest {
+        uuid: player,
+        from: from.into(),
+        reason: reason.map(str::to_owned),
+    };
+
+    // Nowhere to go: limbo.
+    let to: Fallback = one
+        .post_json(routes::PRESENCE_FALLBACK, &ask("sw-abc123", None))
+        .await;
+    assert_eq!(to.server, "limbo");
+    assert!(to.message.contains("sw-abc123 went offline"), "{to:?}");
+
+    // A hub, and another instance of a lobby's own kind first.
+    one.register_hub("hub-1").await;
+    one.register_lobby("swl-1", "skywars-lobby").await;
+    one.register_lobby("swl-2", "skywars-lobby").await;
+    let to: Fallback = one
+        .post_json(routes::PRESENCE_FALLBACK, &ask("swl-1", Some("Restarting")))
+        .await;
+    assert_eq!(to.server, "swl-2");
+    assert!(to.message.contains("Restarting"), "{to:?}");
+    let to: Fallback = one
+        .post_json(routes::PRESENCE_FALLBACK, &ask("hub-1", None))
+        .await;
+    assert_eq!(to.server, "limbo", "the lost hub isn't picked again");
+    let to: Fallback = one
+        .post_json(routes::PRESENCE_FALLBACK, &ask("mystery", Some("Kicked")))
+        .await;
+    assert_eq!(to.server, "hub-1");
+
+    // Someone not online gets a 404.
+    let res = one
+        .post(
+            routes::PRESENCE_FALLBACK,
+            &FallbackRequest {
+                uuid: Uuid::new_v4(),
+                from: "hub-1".into(),
+                reason: None,
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+/// A kick never disconnects: the player waits in limbo for the hold, with a
+/// title, then goes to a hub.
+#[tokio::test]
+async fn kicks_hold_players_in_limbo_then_send_them_to_a_hub() {
+    let Some(redis) = redis_url() else { return };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.long_poll = Duration::from_millis(200);
+    config.kick_hold = Duration::from_secs(1);
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    let player = Uuid::new_v4();
+    assert!(matches!(
+        one.login(player, "proxy-a").await,
+        LoginDecision::Allow { .. }
+    ));
+    switched(&one, player, "hub-1").await;
+    let res = one
+        .post(
+            routes::COMMANDS,
+            &NetworkCommand::Kick {
+                player,
+                reason: "Spamming".into(),
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    let (revision, seen) = wait_for_command(
+        &one,
+        "proxy-a",
+        a.commands_revision,
+        Duration::from_secs(3),
+        |c| matches!(c, ProxyCommand::Send { server, .. } if server == "limbo"),
+    )
+    .await;
+    assert!(
+        seen.iter().any(
+            |c| matches!(c, ProxyCommand::Title { subtitle, .. } if subtitle.contains("Spamming"))
+        ),
+        "{seen:?}"
+    );
+    assert!(!seen.iter().any(|c| matches!(c, ProxyCommand::Kick { .. })));
+    switched(&one, player, "limbo").await;
+    let started = std::time::Instant::now();
+    let (_, seen) = wait_for_command(
+        &one,
+        "proxy-a",
+        revision,
+        Duration::from_secs(5),
+        |c| matches!(c, ProxyCommand::Send { server, .. } if server == "hub-1"),
+    )
+    .await;
+    assert!(
+        seen.iter()
+            .any(|c| matches!(c, ProxyCommand::Send { server, .. } if server == "hub-1")),
+        "{seen:?}"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(500),
+        "the hold was skipped"
+    );
+}
+
+/// A temporary ban ends by itself: the player is unlocked and sent from the
+/// banned lobby to a hub without reconnecting. Parties and queues are shut
+/// to them while it lasts.
+#[tokio::test]
+async fn bans_end_by_themselves() {
+    use hallow_db::sqlx::Executor;
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    config.long_poll = Duration::from_millis(200);
+    config.appeal_url = Some("https://example.net/appeal".into());
+    let one = Instance::start(config).await;
+    let a = one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    one.register_lobby("banned-1", "banned").await;
+    let player = Uuid::new_v4();
+    login_as(&one, player, "Shortban", "proxy-a").await;
+    switched(&one, player, "hub-1").await;
+    let reply: PunishmentReply = one
+        .post_json(
+            routes::PUNISHMENTS,
+            &IssuePunishment {
+                kind: PunishmentKind::Ban,
+                target: "shortban".into(),
+                issuer: None,
+                reason: "Cooling off".into(),
+                duration_seconds: Some(2),
+                staff: None,
+            },
+        )
+        .await;
+    assert!(reply.ok, "{reply:?}");
+    let (revision, seen) = wait_for_command(
+        &one,
+        "proxy-a",
+        a.commands_revision,
+        Duration::from_secs(3),
+        |c| matches!(c, ProxyCommand::Send { server, .. } if server == "banned-1"),
+    )
+    .await;
+    assert!(
+        seen.iter().any(|c| matches!(c, ProxyCommand::Restrict { ban: Some(ban), .. } if ban.appeal_url.as_deref() == Some("https://example.net/appeal") && ban.issuer == "console")),
+        "{seen:?}"
+    );
+    switched(&one, player, "banned-1").await;
+
+    // Locked in meanwhile.
+    let reply: PartyReply = one
+        .post_json(
+            routes::PARTIES,
+            &PartyAction::Invite {
+                player,
+                target: "anyone".into(),
+            },
+        )
+        .await;
+    assert!(!reply.ok, "{reply:?}");
+    let res = one
+        .post(
+            routes::QUEUES,
+            &JoinQueue {
+                player,
+                kind: "skywars".into(),
+            },
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    let (_, seen) = wait_for_command(
+        &one,
+        "proxy-a",
+        revision,
+        Duration::from_secs(6),
+        |c| matches!(c, ProxyCommand::Send { server, .. } if server == "hub-1"),
+    )
+    .await;
+    assert!(
+        seen.iter()
+            .any(|c| matches!(c, ProxyCommand::Restrict { ban: None, .. })),
+        "{seen:?}"
+    );
+    assert!(
+        seen.iter()
+            .any(|c| matches!(c, ProxyCommand::Send { server, .. } if server == "hub-1")),
+        "{seen:?}"
+    );
+    admin
+        .execute(hallow_db::sqlx::AssertSqlSafe(format!(
             "DROP DATABASE {db_name} WITH (FORCE)"
         )))
         .await
