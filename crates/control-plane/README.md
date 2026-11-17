@@ -56,6 +56,7 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `GET /v1/fleet/settings` returns the settings in force with who changed them last and when, or the defaults if nobody has;
   - `PUT /v1/fleet/settings` with `{settings, updated_by}` replaces them; invalid settings get a `400` whose `fields` names each bad field;
   - every change goes in an append-only history, `GET /v1/fleet/settings/history?limit=` (newest first, 50 by default, at most 500).
+- **Fleet manager** (with `HALLOW_FLEET_FILE` and the database, `src/fleet_manager/`): buys, drains and cancels nodes from live load within the budgets, dry run by default, drains idle proxies, and keeps an audit log in `hallow.fleet_events`. `GET /v1/fleet`, `GET /v1/fleet/events`, `PUT /v1/fleet/dry-run` and `POST /v1/fleet/nodes/{name}/drain|reinstate|approve-cancel` serve the panel ([Fleet](../../docs/FLEET.md#the-fleet-manager)).
 - **Node joins** (with the database and the panel, `HALLOW_PANEL_*`; see [deploy/node](../../deploy/node/README.md)):
   - `POST /v1/nodes/join-tokens` issues a one-time token for a node's role, region and labels; only its SHA-256 is kept;
   - `POST /v1/nodes/join`, with the token as the bearer, creates the node and its game-port allocations in the panel and returns a Wings enrollment code; the token is claimed atomically and spent only when the join finishes, so a failed join can be retried;

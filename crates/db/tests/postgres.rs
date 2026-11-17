@@ -128,6 +128,8 @@ async fn migrations_stay_in_the_hallow_schema() {
             "account_ranks",
             "account_usernames",
             "accounts",
+            "fleet_events",
+            "fleet_nodes",
             "fleet_settings",
             "fleet_settings_history",
             "friend_requests",

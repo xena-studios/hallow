@@ -1,0 +1,21 @@
+# The fleet manager in dry run on the dev network: an override for
+# compose.yaml + compose.hallow.yaml + compose.instances.yaml. It reads
+# config/hallow/fleet.toml; dry-run nodes take instances on the local Docker
+# Engine, so a queue past the floor's 32 slots shows a buy, and the drain and
+# cancel follow once the games end. Never calls a provider (no token).
+#
+#   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml \
+#     -f deploy/compose/compose.instances.yaml -f deploy/compose/compose.fleet.yaml up --build -d
+#   curl -s -H "Authorization: Bearer $(cat deploy/compose/config/hallow/control-plane.token)" \
+#     localhost:18090/v1/fleet
+#
+# Proxy scaling is on by default (players_per_proxy 400): after ten quiet
+# minutes the second proxy is drained. Set players_per_proxy to 0 in the
+# fleet settings to leave proxies alone.
+
+services:
+  control-plane:
+    environment:
+      HALLOW_FLEET_FILE: /etc/hallow/fleet.toml
+    volumes:
+      - ./config/hallow/fleet.toml:/etc/hallow/fleet.toml:ro

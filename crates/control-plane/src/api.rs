@@ -51,7 +51,7 @@ type Reply<T> = Result<T, Failure>;
 /// `Json<T>` that rejects with an [`ApiError`](hallow_proto::ApiError) body.
 #[derive(FromRequest)]
 #[from_request(via(axum::Json), rejection(Failure))]
-struct Body<T>(T);
+pub(crate) struct Body<T>(pub(crate) T);
 
 impl<T: serde::Serialize> IntoResponse for Body<T> {
     fn into_response(self) -> Response {
@@ -147,6 +147,24 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(fleet_settings).put(update_fleet_settings),
         )
         .route(routes::FLEET_SETTINGS_HISTORY, get(fleet_settings_history))
+        .route(routes::FLEET, get(crate::fleet_manager::api::state))
+        .route(routes::FLEET_EVENTS, get(crate::fleet_manager::api::events))
+        .route(
+            routes::FLEET_DRY_RUN,
+            axum::routing::put(crate::fleet_manager::api::set_dry_run),
+        )
+        .route(
+            &routes::fleet_node_drain("{name}"),
+            post(crate::fleet_manager::api::drain),
+        )
+        .route(
+            &routes::fleet_node_reinstate("{name}"),
+            post(crate::fleet_manager::api::reinstate),
+        )
+        .route(
+            &routes::fleet_node_approve_cancel("{name}"),
+            post(crate::fleet_manager::api::approve_cancel),
+        )
         .route(routes::NODES, get(list_nodes))
         .route(routes::NODE_JOIN_TOKENS, post(issue_join_token))
         .route(routes::KINDS, get(kinds::list))
@@ -782,8 +800,18 @@ async fn join_queue(State(state): Shared, Body(req): Body<JoinQueue>) -> Reply<B
         Some(instances) => instances.is_game_kind(&req.kind).await,
         None => false,
     };
+    let player = req.player;
     match state.store.join_queue(req, startable).await? {
-        Ok(status) => Ok(Body(status)),
+        Ok(mut status) => {
+            // At a budget cap no node is added: say the wait may be long.
+            if state.config.fleet.is_some()
+                && let Some(busy) = crate::fleet_manager::busy(&state.store).await
+            {
+                state.store.send_to_proxy_of(&player, &busy).await?;
+                status.busy = Some(busy);
+            }
+            Ok(Body(status))
+        }
         Err(message) => Err(Failure::new(ErrorCode::Conflict, message)),
     }
 }

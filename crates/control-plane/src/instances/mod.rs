@@ -51,6 +51,10 @@ pub struct InstancesConfig {
     pub control_plane: String,
     /// Environment for every instance, such as `HALLOW_VINE_SECRET`.
     pub env: BTreeMap<String, String>,
+    /// The fleet manager runs: place instances by its node view
+    /// (`crate::fleet_manager::NodesView`), skipping nodes it is draining
+    /// or still setting up and filling the rest up to their slots.
+    pub fleet: bool,
 }
 
 /// One slow piece of work the plan left for a task.
@@ -189,7 +193,7 @@ impl Manager {
         Ok(kinds)
     }
 
-    async fn nodes(&self) -> Vec<NodeSlot> {
+    async fn nodes(&self, store: &Store) -> Vec<NodeSlot> {
         {
             let cached = self
                 .nodes
@@ -199,13 +203,22 @@ impl Manager {
                 return cached.value.clone();
             }
         }
-        let nodes = match self.orchestrator.nodes().await {
+        let mut nodes = match self.orchestrator.nodes().await {
             Ok(nodes) => nodes,
             Err(err) => {
                 tracing::warn!(%err, "can't list nodes; starting nothing");
                 Vec::new()
             }
         };
+        if self.config.fleet {
+            match crate::fleet_manager::NodesView::read(store).await {
+                Ok(Some(view)) => {
+                    nodes = view.apply(nodes, self.orchestrator.places_anywhere());
+                }
+                Ok(None) => {}
+                Err(err) => tracing::warn!(%err, "can't read the fleet's node view"),
+            }
+        }
         *self
             .nodes
             .write()
@@ -225,7 +238,7 @@ impl Manager {
         let (_, servers) = store.read_servers().await?;
         let queued = store.queued_entry_sizes().await?;
         let players_online = store.online().await?;
-        let nodes = self.nodes().await;
+        let nodes = self.nodes(store).await;
         let actions = plan::plan(&plan::World {
             now_ms: now_ms(),
             kinds: &kinds,
@@ -385,10 +398,18 @@ impl Manager {
         state: &Arc<AppState>,
         name: &str,
     ) -> Result<bool, PlanError> {
-        if !self
-            .mark_ending(&state.store, name, "ended by staff")
-            .await?
-        {
+        self.end_for(state, name, "ended by staff").await
+    }
+
+    /// Ends an instance now for `reason`, sending its players to a lobby
+    /// first. Returns false if there is none.
+    pub async fn end_for(
+        self: &Arc<Self>,
+        state: &Arc<AppState>,
+        name: &str,
+        reason: &str,
+    ) -> Result<bool, PlanError> {
+        if !self.mark_ending(&state.store, name, reason).await? {
             return Ok(false);
         }
         self.run(

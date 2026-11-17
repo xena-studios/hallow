@@ -73,10 +73,10 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Stats, leaderboards and ranks
 - [ ] Player website: profiles and leaderboards
 - [ ] Panel: reports, games and stats pages
-- [ ] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run (`crates/fleet` has the trait, the planner and dry run, tested on a simulated day; not yet wired into the control plane, and no audit log yet)
-- [ ] Hetzner Cloud provider: burst nodes on demand (`crates/providers/hetzner-cloud`, tested against a mock API; not yet run against Hetzner)
-- [ ] Scale to one: floor node, per-layer scaling for game instances, lobbies and proxies
-- [ ] Budgets: monthly budget, daily cap, forecast, queueing at the cap (the planner enforces the budget, cap and forecast; panel settings, per-region caps and alerts to come)
+- [x] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run (runs in the control plane from live load, with an audit log in PostgreSQL and an API for the panel; a simulated peak in dry run logs the right buys and cancels. See [Fleet](FLEET.md#the-fleet-manager))
+- [ ] Hetzner Cloud provider: burst nodes on demand (`crates/providers/hetzner-cloud`, tested against a mock API and wired into the fleet manager. **Deferred:** the live run against Hetzner, since real machines are out of scope for now)
+- [x] Scale to one: floor node, per-layer scaling for game instances, lobbies and proxies (nodes take instances up to their slots; idle proxies are drained down to `min_proxies`, but starting new proxies isn't automatic yet)
+- [x] Budgets: monthly budget, daily cap, forecast, queueing at the cap (from the settings; at the cap players queue and are told the network is busy, and staff are alerted in the log, metrics and audit log. Per-region caps may follow)
 - [ ] Panel: Fleet page
 - [ ] Closed beta with real players
 

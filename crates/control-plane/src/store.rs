@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 use crate::{Config, DuplicateLogin, events};
 
+mod fleet;
 mod instances;
 mod lobby;
 mod party;
