@@ -1,20 +1,32 @@
-# A test game for the dev network: an empty Pumpkin world that registers as
-# a game, with a plugin (plugin/, built into plugins/) that runs a timed
-# match when TEST_GAME_MATCH_SECS is set. Players return to test-game-lobby
-# when a match ends.
+# A test game for the dev network, on hallow-sdk: a short Red against Blue
+# match on a platform in the void (plugin/, built into plugins/), when
+# TEST_GAME_MATCH_SECS is set. Players return to test-game-lobby when a
+# match ends. See plugin/src/lib.rs for which SDK part does what.
 name = "test-game"
 role = "game"
 lobby = "test-game-lobby"
 base = "^0.2"
 
 [players]
-min = 2                      # start a match when this many are queued
+min = 1                      # one bot can play a match on the dev network
 max = 16                     # one match per instance
 
 [scaling]
 warm = 1                     # idle instances kept ready while players are online
 max_instances = 20
 
+[maps]
+dir = "maps"                 # copied to the plugin's data folder; hallow-sdk loads one
+pick = "random"
+
 [[plugins]]
 file = "plugins/hallow_test_game.wasm"
-permissions = ["sys.env.TEST_GAME_MATCH_SECS"]
+# hallow-sdk's (hallow_sdk::permissions()) and the match length.
+permissions = [
+  "fs.read.data",
+  "fs.write.data",
+  "sys.env.HALLOW_MIN_PLAYERS",
+  "sys.env.HALLOW_MAX_PLAYERS",
+  "sys.env.HALLOW_MAPS_PICK",
+  "sys.env.TEST_GAME_MATCH_SECS",
+]
