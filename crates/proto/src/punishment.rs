@@ -75,6 +75,29 @@ pub struct MuteInfo {
     pub until_ms: Option<u64>,
 }
 
+/// A banned player's ban, as the banned lobby shows it and the proxy needs
+/// it to keep them there: `GET /v1/bans/{uuid}`, and carried by a banned
+/// login and [`crate::command::ProxyCommand::Restrict`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BanInfo {
+    /// The punishment id, for appeals.
+    pub id: i64,
+    pub reason: String,
+    /// Who issued it, as the panel shows it: a player's username, a panel
+    /// staff member's name, or `console`, `system` or `anticheat`.
+    pub issuer: String,
+    pub issuer_kind: IssuerKind,
+    pub created_ms: u64,
+    /// Unix milliseconds; `None` is permanent.
+    pub expires_ms: Option<u64>,
+    /// How to appeal (`HALLOW_APPEAL_TEXT`), legacy `§` text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appeal: Option<String>,
+    /// Where to appeal (`HALLOW_APPEAL_URL`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appeal_url: Option<String>,
+}
+
 /// One line of `GET /v1/punishments?name=`, newest first.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PunishmentRecord {

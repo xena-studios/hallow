@@ -19,7 +19,10 @@ pub struct LoginRequest {
     pub ip: Option<String>,
 }
 
-/// The answer to [`LoginRequest`].
+/// The answer to [`LoginRequest`]: where the player goes. The network never
+/// turns a player away for something it can fix: a ban sends them to the
+/// banned lobby, a full network or no free hub holds them in limbo until
+/// there is room (docs/ARCHITECTURE.md, "A player's path").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum LoginDecision {
@@ -33,11 +36,59 @@ pub enum LoginDecision {
         /// The player's active mute, if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mute: Option<crate::punishment::MuteInfo>,
+        /// Set for a banned player: `server` is a banned lobby (or limbo
+        /// while none is up) and the player can't leave it. The control
+        /// plane lifts it when the ban ends.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ban: Option<crate::punishment::BanInfo>,
     },
-    /// Refuse the login with `reason`, shown to the player. Used for a
-    /// duplicate login when the network keeps the old session, bans, and a
-    /// full network.
+    /// Let the player in but hold them in limbo ([`LIMBO`]) until there is
+    /// room: the network is full or no hub is free. The control plane moves
+    /// them on by itself, oldest first.
+    Wait {
+        /// Why they wait, shown to the player.
+        reason: String,
+        /// Their place among the players waiting, from 1.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        permissions: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mute: Option<crate::punishment::MuteInfo>,
+    },
+    /// Refuse the login with `reason`. Hallow only sends it when the
+    /// network is set to keep an old session over a new one
+    /// (`HALLOW_DUPLICATE_LOGIN=deny`).
     Deny { reason: String },
+}
+
+/// The server name of the proxy's built-in limbo, where players wait when
+/// the network can't place them. Vine answers it itself, so it is there
+/// whenever the proxy is ([Vine fork], `[limbo]` in `vine.toml`).
+///
+/// [Vine fork]: https://github.com/xena-studios/Vine
+pub const LIMBO: &str = "limbo";
+
+/// `POST /v1/presence/fallback`, sent by a proxy when a server kicked a
+/// player, crashed, stopped, or couldn't be reached: where should they go?
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FallbackRequest {
+    pub uuid: Uuid,
+    /// The server the player lost.
+    pub from: String,
+    /// The server's kick message, if it sent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// The answer to [`FallbackRequest`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fallback {
+    /// A game's lobby, a hub, a banned lobby for a banned player, or
+    /// [`LIMBO`].
+    pub server: String,
+    /// What the player is told once they arrive.
+    pub message: String,
 }
 
 /// `POST /v1/presence/switch`, sent when a player lands on another server.
@@ -91,6 +142,20 @@ mod tests {
             allow,
             LoginDecision::Allow {
                 server: "hub-1".into(),
+                permissions: vec![],
+                mute: None,
+                ban: None,
+            }
+        );
+        let wait: LoginDecision = serde_json::from_value(
+            json!({"decision": "wait", "reason": "The network is full.", "position": 3}),
+        )
+        .unwrap();
+        assert_eq!(
+            wait,
+            LoginDecision::Wait {
+                reason: "The network is full.".into(),
+                position: Some(3),
                 permissions: vec![],
                 mute: None,
             }
