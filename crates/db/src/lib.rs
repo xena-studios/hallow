@@ -60,7 +60,11 @@ pub use sessions::{
 
 pub use signals::{NewSignal, Signal, add_signals, delete_signals_before, recent_signals};
 pub use sqlx::{self, PgPool, migrate::MigrateError};
-pub use stats::{StatIncrease, StatTotal, add_stats, stats_of};
+pub use stats::{
+    BoardRow, NewGame, NewGamePlayer, PlayedGame, RankedAccount, StatIncrease, StatKind, StatTotal,
+    add_stats, delete_daily_stats_before, leaderboard, network_totals, primary_ranks, recent_games,
+    record_game, search_accounts, stat_kinds, stats_of,
+};
 
 /// The schema every Hallow table lives in.
 pub const SCHEMA: &str = "hallow";

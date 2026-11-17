@@ -62,9 +62,21 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `GET /v1/nodes` lists joined nodes.
 - **Stats** (with the database):
   - servers `POST /v1/stats` batches of per-player increases for their kind (`play_time_s`, `joins`, and whatever a game counts, such as `kills`, `deaths` or `wins`);
-  - they're added to running totals in `hallow.player_stats` in one upsert; increases for players who never joined are skipped;
+  - they're added to running totals in `hallow.player_stats` in one upsert, and to the day's totals for weekly and monthly leaderboards; increases for players who never joined are skipped. Days older than 62 are deleted hourly;
   - stat names are 1 to 64 of `a-z 0-9 _ .`, increases can't be negative, and a batch carries at most 1000 players with 64 stats each; a batch breaking a rule is refused whole (`400`);
   - `GET /v1/stats/{player}` (UUID or username) returns every total, by kind then stat.
+- **Games** (with the database):
+  - a game server `POST /v1/games` one `GameResult` per finished game: its id, kind, start and end, and each player's win, placement, team and stats;
+  - the control plane stores it and adds `games` +1 for everyone, `wins` +1 for winners and their stats to their totals, in one transaction. A repeated id changes nothing, so retries count once;
+  - a scoped token may only report games for its own server name and kind.
+- **Leaderboards** (with the database): `GET /v1/leaderboards` lists every kind with stats; `GET /v1/leaderboards/{kind}/{stat}?window=all|week|month&limit=` returns the top totals (10 by default, at most 100), ties by name, with each player's rank prefix. Weeks start on Monday and months on the 1st, at 00:00 UTC.
+- **Rank display**: `POST /v1/display` with up to 1000 UUIDs returns each player's primary rank and prefix (nothing for the default rank), for chat and the tab list. Scoped tokens may call it.
+- **Public API** (`/public/v1`, no token; see [`hallow_proto::public`](../proto/src/public.rs)): profiles (rank, stats per kind, the last 10 games), name search, the leaderboards and network totals, for the [player website](../../web/README.md):
+  - read-only, and it shows nothing a player couldn't see in game: no addresses, sessions, punishments or servers;
+  - rate limited per client address (IPv6 by `/64`), 120 a minute with bursts of 40 by default; over it, `429` with `Retry-After`. Each control plane instance counts on its own;
+  - the address is the peer's, or for a peer in `HALLOW_PUBLIC_TRUSTED_PROXIES` (the website), the last untrusted one in `X-Forwarded-For`;
+  - answers are cached for 10 s, and carry `Access-Control-Allow-Origin: *`;
+  - `HALLOW_PUBLIC_API=off` turns it off.
 - **Metrics.** `GET /metrics` (no token) serves Prometheus' text format, read from live state:
   - players online and the limit;
   - players per proxy;

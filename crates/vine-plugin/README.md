@@ -23,6 +23,9 @@
   - Permissions: `hallow.staff.ban`, `.mute`, `.warn` and `.history`.
   - A ban kicks the player wherever they are and refuses their logins.
   - A muted player's chat, `/msg`, `/r` and party chat are blocked until the mute ends.
+- **Stats** (needs the control plane's database), from any server:
+  - `/stats [player] [game]`: a player's totals in every game (wins, games, kills, play time and what each game counts), or all of one game's.
+  - `/leaderboard [game] [stat] [all|month|week]` (`/lb`, `/top`): the top 10 with rank prefixes; the stat defaults to `wins`. Without a game, it lists the games and their stats. Games match without case or dashes (`/lb testgame`). The table is in [`src/stats.rs`](src/stats.rs).
 - **Anticheat signals.** Every 30 s, one sample per player goes to the control plane (`POST /v1/signals`): chat and command counts and peak rates, plugin messages, server switches and time online. The list is in [`src/signals.rs`](src/signals.rs). Measurement only; nothing acts on them yet.
 - **Recovery.**
   - If the control plane forgets the proxy, for example after it expired or Redis was reset, the plugin registers again and re-reports its players.

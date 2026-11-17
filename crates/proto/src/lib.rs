@@ -22,6 +22,7 @@ pub mod party;
 pub mod permission;
 pub mod presence;
 pub mod proxy;
+pub mod public;
 pub mod punishment;
 pub mod queue;
 pub mod rank;
@@ -62,6 +63,9 @@ pub enum ErrorCode {
     Conflict,
     /// The control plane can't serve this right now; retry with backoff.
     Unavailable,
+    /// Too many requests from this client (the public API); retry after the
+    /// `Retry-After` header's seconds.
+    RateLimited,
 }
 
 /// A long-poll response: either something changed since the caller's

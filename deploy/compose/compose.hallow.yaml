@@ -9,6 +9,7 @@
 #
 # Proxies: localhost:25565 (proxy-1) and localhost:25566 (proxy-2).
 # Control plane: localhost:18090 (token in config/hallow/control-plane.token).
+# Player website: http://localhost:18095 (HALLOW_WEB_PORT).
 
 # Both proxies mount the same Vine config, plugin, token and secret; only
 # config.toml (proxy id and address) differs. A missing hallow_vine.wasm or
@@ -57,6 +58,10 @@ services:
       HALLOW_DATABASE_URL: postgres://postgres:hallow-dev@postgres:5432/hallow
       # Dev only: the netcheck bot used for the staff command test.
       HALLOW_ADMINS: netstaff
+      # The player website calls the public API for its visitors; believe its
+      # X-Forwarded-For so each visitor gets their own rate limit. Compose
+      # networks are private ranges; production lists the site's address.
+      HALLOW_PUBLIC_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     volumes:
       - ./config/hallow/control-plane.token:/run/hallow/token:ro
     ports:
@@ -65,6 +70,21 @@ services:
       valkey:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The player website, on the control plane's public API (no token).
+  web:
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+    image: hallow-web:${HALLOW_IMAGE_TAG:-dev}
+    environment:
+      HALLOW_PUBLIC_API: http://control-plane:8080
+    ports:
+      - "127.0.0.1:${HALLOW_WEB_PORT:-18095}:8080"
+    depends_on:
+      control-plane:
         condition: service_healthy
     restart: unless-stopped
 

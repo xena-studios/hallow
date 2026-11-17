@@ -8,6 +8,8 @@
   - A state change is sent within a second or two, without waiting for the next heartbeat.
 - **Presence.** Within a second or two of a player joining or leaving, it reports who joined and left to `POST /v1/servers/{name}/players` (see [Presence](#presence)).
 - **Stats.** Every 30 s it sends each player's increases for this server's kind to `POST /v1/stats` (see [Stats](#stats)).
+- **Games.** A game plugin reports each finished game over IPC, and the plugin sends it on to `POST /v1/games` (see [Game results](#game-results)).
+- **Ranks.** It puts each player's rank prefix in chat and the tab list (see [Rank prefixes](#rank-prefixes)).
 - **Signals.** Every 30 s it sends each player's movement and combat numbers to `POST /v1/signals`, for the anticheat (see [Anticheat signals](#anticheat-signals)).
 - **Lobbies.** It gives the hub's plugin the game modes and moves players to lobbies for it, and when a game ends it sends everyone to the lobby `hallow.toml` names (see [Lobbies and the way back](#lobbies-and-the-way-back)).
 - **Unregister.** On unload, which Pumpkin does on shutdown after kicking players, it sends `DELETE /v1/servers/{name}`. If that fails, the control plane drops the server after 15 s without heartbeats.
@@ -70,6 +72,49 @@ send_ipc_message("hallow_server", format!("stat {winner} wins 1").as_bytes())??;
 - **Size.** A batch carries at most 1000 players; any more wait for the next.
 - **Shutdown.** Pumpkin kicks players before unloading the plugin, so their leave events close their stay; `on_unload` then sends what's left and waits for it (2 s timeout), before unregistering.
 - **Accounts.** Totals are kept per account, so increases for a player who never joined through a proxy (an offline-mode test client straight to the server) are skipped.
+
+## Game results
+
+When a game ends, its plugin reports the result, then turns `draining`. The plugin sends it on as a `GameResult`. The control plane adds `games` +1 for every player, `wins` +1 for each winner and the players' stats to their totals for this server's kind, and keeps the game for their profiles' recent games.
+
+| Message | Reply |
+|---|---|
+| `game_result <json>` | `ok`, or an error for a bad report. The JSON is a `GameReport` (`hallow_proto::stats`) |
+
+```rust
+use pumpkin_plugin_api::wit::pumpkin::plugin::ipc::send_ipc_message;
+let report = r#"{"players":[
+  {"player":"<uuid>","won":true,"placement":1,"stats":{"kills":3}},
+  {"player":"<uuid>","placement":2,"team":"red","stats":{"kills":1,"deaths":1}}
+]}"#;
+send_ipc_message("hallow_server", format!("game_result {report}").as_bytes())??;
+send_ipc_message("hallow_server", b"draining")??;
+```
+
+| Field | |
+|---|---|
+| `players[].player` | The player's UUID |
+| `players[].won` | Counts a win; default `false` |
+| `players[].placement`, `players[].team` | Optional, shown in recent games |
+| `players[].stats` | What they did this game, added to their totals. Count a stat here or with `stat`, not both |
+| `map` | Optional |
+| `started_ms` | Optional; by default the moment the server last turned `in_game` |
+
+- **Ids.** Each result gets a fresh id, so a retry counts once.
+- **Failures.** Results go one at a time, retried every 5 s for about ten minutes. One the control plane refuses (`4xx`) is logged and dropped. Results still waiting at unload are sent then.
+- **Checks.** At least one and at most 200 players; stat names and values follow the `stat` rules.
+
+`servers/test-game` reports one per match: whoever chatted most wins.
+
+## Rank prefixes
+
+Every 30 s, and a second or two after anyone joins, the plugin asks `POST /v1/display` for the primary rank of everyone on the server.
+
+- **Tab list.** Each player with a rank shows as their prefix and name, such as `[ADMIN] Steve` in red.
+- **Chat.** Once a player's rank is known, their messages go to everyone on the server as `<prefix><name>: <message>`, in place of Pumpkin's line. Players without a rank show in grey. A message another plugin cancelled stays cancelled.
+- **Changes.** A new rank shows within 30 s. Prefixes use the panel's `&` colour codes.
+
+Mutes are enforced on the proxy, before chat reaches the server.
 
 ## Anticheat signals
 
@@ -148,4 +193,4 @@ Lobbies that new players should land on need the kind the control plane uses for
 cargo test -p hallow-server
 ```
 
-They cover the config (environment, file, overrides and errors), the IPC state, stat and lobby messages, where a draining server sends its players, joins and leaves coalescing, stat counting (play time carry, joins, caps, retries), and the signal windows and metrics.
+They cover the config (environment, file, overrides and errors), the IPC state, stat, game result and lobby messages, prefix colour codes and chat lines, where a draining server sends its players, joins and leaves coalescing, stat counting (play time carry, joins, caps, retries), and the signal windows and metrics.

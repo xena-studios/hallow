@@ -132,9 +132,12 @@ async fn migrations_stay_in_the_hallow_schema() {
             "fleet_settings_history",
             "friend_requests",
             "friendships",
+            "game_players",
+            "games",
             "node_join_tokens",
             "nodes",
             "player_stats",
+            "player_stats_daily",
             "punishment_templates",
             "punishments",
             "ranks",
@@ -678,6 +681,20 @@ async fn lookups_use_their_indexes() {
             "accounts_username_lower_idx",
         ),
         (
+            "SELECT * FROM hallow.accounts WHERE lower(username) LIKE 'ste%'",
+            "accounts_username_lower_idx",
+        ),
+        (
+            "SELECT * FROM hallow.game_players WHERE account_uuid = '00000000-0000-0000-0000-000000000001'
+             ORDER BY ended_at DESC LIMIT 10",
+            "game_players_account_idx",
+        ),
+        (
+            "SELECT account_uuid, sum(value) FROM hallow.player_stats_daily
+             WHERE kind = 'duels' AND stat = 'wins' AND day >= '2026-11-01' GROUP BY account_uuid",
+            "player_stats_daily_board_idx",
+        ),
+        (
             "SELECT * FROM hallow.account_usernames WHERE lower(username) = lower('Steve')",
             "account_usernames_username_lower_idx",
         ),
@@ -1049,6 +1066,155 @@ async fn stats_add_up() {
             .await
             .unwrap()
             .is_empty()
+    );
+    db.drop().await;
+}
+
+/// Games count once, add games and wins, show in recent games and feed
+/// all-time and windowed leaderboards with rank prefixes.
+#[tokio::test]
+async fn games_and_leaderboards() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (a, b, c, stranger) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    join(pool, a, "Alpha").await;
+    join(pool, b, "bravo").await;
+    join(pool, c, "charlie").await;
+    hallow_db::upsert_rank(pool, &rank("vip", 10, &[]))
+        .await
+        .unwrap();
+    hallow_db::grant_rank(pool, b, "vip", None, None)
+        .await
+        .unwrap();
+
+    let kills = |n: i64| std::collections::BTreeMap::from([("kills".to_owned(), n)]);
+    let (two, one, none, nine) = (kills(2), kills(1), kills(0), kills(9));
+    let now = Utc::now();
+    let game = |id, players| hallow_db::NewGame {
+        id,
+        kind: "duels",
+        server: "duels-1",
+        map: Some("arena"),
+        started_at: now - Duration::minutes(5),
+        ended_at: now,
+        players,
+    };
+    let player = |account, won, stats| hallow_db::NewGamePlayer {
+        account,
+        won,
+        placement: Some(if won { 1 } else { 2 }),
+        team: None,
+        stats,
+    };
+    let first = Uuid::new_v4();
+    let report = game(
+        first,
+        vec![
+            player(a, true, &two),
+            player(b, false, &one),
+            player(stranger, false, &nine),
+        ],
+    );
+    assert!(hallow_db::record_game(pool, &report).await.unwrap());
+    // The same id again changes nothing.
+    assert!(!hallow_db::record_game(pool, &report).await.unwrap());
+    let second = game(
+        Uuid::new_v4(),
+        vec![player(b, true, &two), player(c, false, &none)],
+    );
+    assert!(hallow_db::record_game(pool, &second).await.unwrap());
+
+    let totals = |account| async move {
+        hallow_db::stats_of(pool, account)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.stat, t.value))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        totals(a).await,
+        [("games".into(), 1), ("kills".into(), 2), ("wins".into(), 1)]
+    );
+    assert_eq!(
+        totals(b).await,
+        [("games".into(), 2), ("kills".into(), 3), ("wins".into(), 1)]
+    );
+    assert_eq!(totals(c).await, [("games".into(), 1)]);
+    assert!(totals(stranger).await.is_empty());
+
+    let recent = hallow_db::recent_games(pool, b, 10).await.unwrap();
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0].players, 3);
+    assert_eq!(recent[0].map.as_deref(), Some("arena"));
+    assert!(recent.iter().any(|g| g.won && g.stats.0["kills"] == 2));
+
+    // All time: ties by name, ignoring case; zero totals left out.
+    let board = |stat, since| async move {
+        hallow_db::leaderboard(pool, "duels", stat, since, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.username, r.value, r.prefix.unwrap_or_default()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        board("wins", None).await,
+        [
+            ("Alpha".into(), 1, String::new()),
+            ("bravo".into(), 1, "&7[vip] ".into())
+        ]
+    );
+    assert_eq!(board("kills", None).await[0].0, "bravo");
+    // Today counts for this week; old days don't.
+    let today = now.date_naive();
+    assert_eq!(board("games", Some(today)).await.len(), 3);
+    sqlx::query("UPDATE hallow.player_stats_daily SET day = day - 40 WHERE account_uuid = $1")
+        .bind(c)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(board("games", Some(today)).await.len(), 2);
+    assert_eq!(
+        hallow_db::delete_daily_stats_before(pool, today - Duration::days(30))
+            .await
+            .unwrap(),
+        1
+    );
+
+    let ranked = hallow_db::primary_ranks(pool, &[a, b, stranger])
+        .await
+        .unwrap();
+    assert_eq!(ranked.len(), 2);
+    let b_rank = ranked.iter().find(|r| r.uuid == b).unwrap();
+    assert_eq!(b_rank.rank_name.as_deref(), Some("vip"));
+    let a_rank = ranked.iter().find(|r| r.uuid == a).unwrap();
+    assert_eq!(a_rank.is_default, Some(true));
+
+    let kinds = hallow_db::stat_kinds(pool).await.unwrap();
+    assert_eq!(kinds.len(), 1);
+    assert_eq!(kinds[0].stats, ["games", "kills", "wins"]);
+    assert_eq!(kinds[0].players, 3);
+    assert_eq!(hallow_db::network_totals(pool).await.unwrap(), (3, 2));
+
+    let found = hallow_db::search_accounts(pool, "a", 10).await.unwrap();
+    assert_eq!(found, [(a, "Alpha".to_owned())]);
+    assert!(
+        hallow_db::search_accounts(pool, "%", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        hallow_db::search_accounts(pool, "BRAVO", 10).await.unwrap()[0].0,
+        b
     );
     db.drop().await;
 }
