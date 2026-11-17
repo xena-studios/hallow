@@ -218,7 +218,11 @@ impl Roster {
             if let Life::Respawning { at } = member.life
                 && at <= now
             {
-                member.life = if member.online { Life::Alive } else { Life::Out };
+                member.life = if member.online {
+                    Life::Alive
+                } else {
+                    Life::Out
+                };
                 if member.online {
                     back.push(*id);
                 }
@@ -298,11 +302,23 @@ impl Start {
     /// teams. A countdown needs two teams; it stops if players leave, and
     /// shortens once the match is full.
     #[must_use]
-    pub fn next(self, phase: Phase, now: u64, players: usize, capacity: usize, teams: usize) -> Phase {
+    pub fn next(
+        self,
+        phase: Phase,
+        now: u64,
+        players: usize,
+        capacity: usize,
+        teams: usize,
+    ) -> Phase {
         let enough = players >= self.min_players.max(2) && teams >= 2;
         match phase {
             Phase::Waiting if enough => Phase::Countdown {
-                starts: now + if players >= capacity { self.full_countdown } else { self.countdown },
+                starts: now
+                    + if players >= capacity {
+                        self.full_countdown
+                    } else {
+                        self.countdown
+                    },
             },
             Phase::Countdown { .. } if !enough => Phase::Waiting,
             Phase::Countdown { starts } if players >= capacity => Phase::Countdown {
@@ -354,7 +370,10 @@ mod tests {
         roster.join(id(2), "b");
         roster.join(id(3), "c"); // team 0 with a
         roster.hit(id(2), id(1), 100);
-        assert_eq!(roster.death(id(2), None, 200, Some(5)).unwrap().killer, None);
+        assert_eq!(
+            roster.death(id(2), None, 200, Some(5)).unwrap().killer,
+            None
+        );
         roster.hit(id(3), id(1), 10);
         assert_eq!(roster.get(id(3)).unwrap().last_hit, None);
     }

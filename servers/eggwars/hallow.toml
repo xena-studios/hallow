@@ -1,0 +1,42 @@
+# Egg Wars: four teams of two on sky islands, each guarding an egg. One
+# match per instance on a map picked from maps/, built fresh as its chunks
+# generate. Players return to eggwars-lobby when it ends. Rules and tuning:
+# docs/games/EGGWARS.md.
+name = "eggwars"
+role = "game"
+lobby = "eggwars-lobby"
+base = "^0.2"
+
+[players]
+min = 2                      # start a countdown when this many are in
+max = 8                      # four teams of two
+
+[scaling]
+warm = 1                     # idle instances kept ready while players are online
+max_instances = 50
+
+[maps]
+dir = "maps"                 # also copied into the plugin's data folder
+pick = "random"              # HALLOW_GAME_MAP picks one by file name
+
+[[plugins]]
+file = "plugins/hallow_eggwars.wasm"
+permissions = [
+  "fs.read.data",
+  "sys.env.HALLOW_GAME_TEST_HOOKS",
+  "sys.env.HALLOW_GAME_MAP",
+  "sys.env.EGGWARS_MIN_PLAYERS",
+  "sys.env.HALLOW_COMBAT",
+]
+
+[pumpkin]
+default_gamemode = "Adventure"
+default_difficulty = "Normal"
+allow_nether = false
+allow_end = false
+
+[pumpkin.pvp]
+enabled = true
+
+[env]
+EGGWARS_MIN_PLAYERS = "2"

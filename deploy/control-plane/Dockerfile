@@ -12,6 +12,10 @@ COPY upstream/Pumpkin upstream/Pumpkin
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin
 COPY servers/test-game/plugin servers/test-game/plugin
+COPY servers/islands servers/islands
+COPY servers/eggwars/plugin servers/eggwars/plugin
+COPY servers/skywars/plugin servers/skywars/plugin
+COPY servers/lobby-plugin servers/lobby-plugin
 # The target cache is shared by every build on this machine, worktrees and
 # other checkouts included, and cargo trusts an artifact newer than its
 # sources. Touching the .rs files makes cargo rebuild the workspace's own

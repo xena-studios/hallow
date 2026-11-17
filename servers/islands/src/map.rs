@@ -483,13 +483,19 @@ impl Map {
                         .team
                         .generators
                         .iter()
-                        .map(|g| Generator { at: t.pos(g.at), ..*g })
+                        .map(|g| Generator {
+                            at: t.pos(g.at),
+                            ..*g
+                        })
                         .collect(),
                     chests: self
                         .team
                         .chests
                         .iter()
-                        .map(|c| Chest { at: t.pos(c.at), ..*c })
+                        .map(|c| Chest {
+                            at: t.pos(c.at),
+                            ..*c
+                        })
                         .collect(),
                 }
             })
@@ -514,18 +520,20 @@ impl Map {
             .generators
             .iter()
             .flat_map(|g| {
-                expand(g.repeat)
-                    .into_iter()
-                    .map(move |t| Generator { at: t.pos(g.at), ..*g })
+                expand(g.repeat).into_iter().map(move |t| Generator {
+                    at: t.pos(g.at),
+                    ..*g
+                })
             })
             .collect();
         let chests = self
             .chests
             .iter()
             .flat_map(|c| {
-                expand(c.repeat)
-                    .into_iter()
-                    .map(move |t| Chest { at: t.pos(c.at), ..*c })
+                expand(c.repeat).into_iter().map(move |t| Chest {
+                    at: t.pos(c.at),
+                    ..*c
+                })
             })
             .collect();
         Layout {

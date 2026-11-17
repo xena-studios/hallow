@@ -862,6 +862,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hallow-eggwars"
+version = "0.1.0"
+dependencies = [
+ "hallow-islands",
+ "pumpkin-plugin-api",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "hallow-fleet"
 version = "0.1.0"
 dependencies = [
@@ -875,6 +885,15 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "hallow-game-lobby"
+version = "0.1.0"
+dependencies = [
+ "pumpkin-plugin-api",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -945,6 +964,16 @@ dependencies = [
  "tracing",
  "uuid",
  "wasip2",
+]
+
+[[package]]
+name = "hallow-skywars"
+version = "0.1.0"
+dependencies = [
+ "hallow-islands",
+ "pumpkin-plugin-api",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

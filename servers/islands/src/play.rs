@@ -42,7 +42,10 @@ pub fn stat(player: Uuid, name: &str, amount: u64) {
         return;
     }
     let message = format!("stat {player} {name} {amount}");
-    if !matches!(send_ipc_message(SERVER_PLUGIN, message.as_bytes()), Ok(Ok(_))) {
+    if !matches!(
+        send_ipc_message(SERVER_PLUGIN, message.as_bytes()),
+        Ok(Ok(_))
+    ) {
         tracing::debug!("islands: couldn't count {name} for {player}");
     }
 }
@@ -353,7 +356,10 @@ mod tests {
     #[test]
     fn hooks_and_clock() {
         assert_eq!(parse_test_hook("!test die"), Some(TestHook::Die));
-        assert_eq!(parse_test_hook(" !test  breakegg "), Some(TestHook::BreakEgg));
+        assert_eq!(
+            parse_test_hook(" !test  breakegg "),
+            Some(TestHook::BreakEgg)
+        );
         assert_eq!(parse_test_hook("!test fly"), None);
         assert_eq!(parse_test_hook("hello"), None);
         assert_eq!(clock(125), "2:05");

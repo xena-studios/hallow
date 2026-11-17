@@ -1,0 +1,124 @@
+# Emberfall: four basalt islands round a smouldering middle. Close and
+# quick: the middle's diamonds are a short bridge from every team.
+name = "Emberfall"
+description = "Four scorched islands round a smouldering middle."
+seed = 7101
+void_y = 30
+border = 72
+copies = 4
+team_size = 2
+waiting = [0.5, 104, 0.5]
+spectate = [0.5, 92, 0.5]
+
+# The north team; the other three are quarter turns of it.
+[team]
+spawn = [0.5, 65, -38.5]
+egg = [0, 65, -46]
+shop = [4.5, 65, -40.5]
+
+[[team.generator]]
+tier = "iron"
+at = [-3, 64, -41]
+
+[[team.generator]]
+tier = "iron"
+at = [-4, 64, -38]
+level = 0
+
+[[team.generator]]
+tier = "gold"
+at = [3, 64, -37]
+
+# Team island and the egg's ledge behind it.
+[[shape]]
+kind = "island"
+at = [0, 64, -39]
+radius = 7.5
+depth = 9
+top = "coarse_dirt"
+soil = "red_terracotta"
+core = "blackstone"
+ore = "magma_block"
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [0, 64, -46]
+radius = 3
+depth = 4
+top = "blackstone"
+soil = "blackstone"
+core = "basalt"
+repeat = true
+
+[[shape]]
+kind = "cylinder"
+at = [0, 64, -46]
+radius = 1.2
+height = 1
+block = "obsidian"
+repeat = true
+
+# Ember pillars at the island's back corners.
+[[shape]]
+kind = "box"
+from = [-4, 65, -43]
+to = [-4, 68, -43]
+block = "polished_basalt"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [4, 65, -43]
+to = [4, 68, -43]
+block = "polished_basalt"
+repeat = true
+
+# Gold outcrops on the diagonals, between teams.
+[[shape]]
+kind = "island"
+at = [24, 62, -24]
+radius = 4.5
+depth = 6
+top = "blackstone"
+soil = "blackstone"
+core = "basalt"
+ore = "gilded_blackstone"
+repeat = true
+
+[[generator]]
+tier = "gold"
+at = [24, 62, -24]
+repeat = true
+
+# The middle.
+[[shape]]
+kind = "island"
+at = [0, 66, 0]
+radius = 11
+depth = 14
+top = "coarse_dirt"
+soil = "red_terracotta"
+core = "blackstone"
+ore = "magma_block"
+
+[[shape]]
+kind = "cylinder"
+at = [0, 67, 0]
+radius = 2.5
+height = 1
+block = "polished_blackstone_bricks"
+
+[[shape]]
+kind = "box"
+from = [0, 67, 0]
+to = [0, 71, 0]
+block = "crying_obsidian"
+
+[[generator]]
+tier = "diamond"
+at = [4, 66, 4]
+
+[[generator]]
+tier = "diamond"
+at = [-5, 66, -5]

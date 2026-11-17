@@ -192,7 +192,12 @@ impl Builder {
     }
 
     /// Writes the part of `shape` inside the columns `[x0, z0, x1, z1]`.
-    fn shape(&self, shape: &Shape, [x0, z0, x1, z1]: [i32; 4], put: &mut impl FnMut(i32, i32, i32, u16)) {
+    fn shape(
+        &self,
+        shape: &Shape,
+        [x0, z0, x1, z1]: [i32; 4],
+        put: &mut impl FnMut(i32, i32, i32, u16),
+    ) {
         let (min, max) = shape.bounds();
         let xs = min[0].max(x0)..=max[0].min(x1);
         let zs = min[2].max(z0)..=max[2].min(z1);
@@ -328,6 +333,102 @@ impl Builder {
         let bottom = (f64::from(depth) * (1.0 - t.powf(1.6)) * jitter).round() as i32;
         Some(bottom.max(1))
     }
+}
+
+/// Builds the whole map (inside its border) and checks that it can be
+/// played: every spawn, egg, shop keeper, generator and chest stands on a
+/// block, with room above. Returns the problems found. For the games'
+/// tests, run over every map file.
+#[must_use]
+pub fn audit(layout: &Layout) -> Vec<String> {
+    let palette: Palette = layout
+        .block_names()
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| (name, u16::try_from(i + 1).unwrap_or(u16::MAX)))
+        .collect();
+    let air = palette.get("air").copied();
+    let builder = match Builder::new(layout, palette) {
+        Ok(builder) => builder,
+        Err(err) => return vec![err],
+    };
+    let mut blocks = BTreeMap::new();
+    let reach = (layout.border / 16.0).ceil() as i32 + 1;
+    for cx in -reach..reach {
+        for cz in -reach..reach {
+            builder.build_chunk(cx, cz, -64, 384, &mut |x, y, z, state| {
+                blocks.insert([cx * 16 + i32::from(x), y, cz * 16 + i32::from(z)], state);
+            });
+        }
+    }
+    let solid = |at: Pos| blocks.get(&at).is_some_and(|s| Some(*s) != air);
+    let mut problems = Vec::new();
+    let standing = |problems: &mut Vec<String>, what: &str, spot: [f64; 3]| {
+        let at = [
+            spot[0].floor() as i32,
+            spot[1].floor() as i32,
+            spot[2].floor() as i32,
+        ];
+        if !solid([at[0], at[1] - 1, at[2]]) {
+            problems.push(format!("{what} at {spot:?} has nothing under it"));
+        }
+        if solid(at) || solid([at[0], at[1] + 1, at[2]]) {
+            problems.push(format!("{what} at {spot:?} is inside blocks"));
+        }
+    };
+    for (i, team) in layout.teams.iter().enumerate() {
+        for spawn in &team.spawns {
+            standing(&mut problems, &format!("team {i}'s spawn"), *spawn);
+        }
+        if let Some(shop) = team.shop {
+            standing(&mut problems, &format!("team {i}'s shop"), shop);
+        }
+        if let Some(egg) = team.egg {
+            let egg = [f64::from(egg[0]), f64::from(egg[1]), f64::from(egg[2])];
+            let at = [egg[0] as i32, egg[1] as i32 - 1, egg[2] as i32];
+            if !solid(at) {
+                problems.push(format!("team {i}'s egg at {egg:?} has nothing under it"));
+            }
+        }
+    }
+    for generator in layout.all_generators() {
+        let [x, y, z] = generator.at;
+        if solid([x, y + 1, z]) || solid([x, y + 2, z]) {
+            problems.push(format!("the generator at {:?} is covered", generator.at));
+        }
+        if !solid([x, y - 1, z]) && !solid([x + 1, y, z]) && !solid([x - 1, y, z]) {
+            problems.push(format!("the generator at {:?} floats", generator.at));
+        }
+    }
+    for chest in layout.all_chests() {
+        let [x, y, z] = chest.at;
+        if solid(chest.at) {
+            problems.push(format!("the chest at {:?} is inside a block", chest.at));
+        }
+        if !solid([x, y - 1, z]) {
+            problems.push(format!("the chest at {:?} has nothing under it", chest.at));
+        }
+    }
+    let spectate = layout.spectate;
+    let at = [
+        spectate[0].floor() as i32,
+        spectate[1].floor() as i32,
+        spectate[2].floor() as i32,
+    ];
+    if solid(at) {
+        problems.push(format!("the spectator spot {spectate:?} is inside a block"));
+    }
+    if let Some(waiting) = layout.waiting {
+        let at = [
+            waiting[0].floor() as i32,
+            waiting[1].floor() as i32 - 1,
+            waiting[2].floor() as i32,
+        ];
+        if !solid(at) {
+            problems.push("the waiting box has no floor".into());
+        }
+    }
+    problems
 }
 
 fn distance(at: Pos, x: i32, z: i32) -> f64 {
@@ -478,6 +579,10 @@ mod tests {
         let layout = Map::parse(MAP).unwrap().layout();
         let mut palette = palette(&layout);
         palette.remove("oak_planks");
-        assert!(Builder::new(&layout, palette).unwrap_err().contains("oak_planks"));
+        assert!(
+            Builder::new(&layout, palette)
+                .unwrap_err()
+                .contains("oak_planks")
+        );
     }
 }

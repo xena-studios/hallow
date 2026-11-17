@@ -5,15 +5,11 @@
 use std::sync::Arc;
 
 use pumpkin_plugin_api::{
-    ChunkBuffer, ChunkGenerator, Dimension, GeneratorManager, Server, World,
-    world::resolve_block_state,
+    ChunkBuffer, ChunkGenerator, GeneratorManager, Server, World, world::resolve_block_state,
 };
 
 use crate::build::{Builder, Palette};
 use crate::map::Layout;
-
-/// The world every match is played in.
-pub const ARENA: &str = "arena";
 
 struct Generator(Arc<Builder>);
 
@@ -52,18 +48,30 @@ pub fn palette(layout: &Layout) -> Result<Palette, String> {
         .collect()
 }
 
-/// Creates the arena world with the layout's generator. Its chunks are
-/// built as players come near them. The world border is set round the map.
+/// Builds the layout into `world` from now on: every chunk Pumpkin
+/// generates from here comes from the map, and the world border is set
+/// round it. Call it from `on_load`, before any player has loaded a chunk;
+/// a fresh instance has none on disk.
 ///
 /// # Errors
 /// The layout uses an unknown block.
-pub fn create_arena(server: &Server, layout: &Layout) -> Result<World, String> {
+pub fn build_into(world: &World, layout: &Layout) -> Result<(), String> {
     let builder = Builder::new(layout, palette(layout)?)?;
     let id = GeneratorManager::register(Generator(Arc::new(builder)));
-    let world = server.create_world(ARENA, Dimension::Overworld);
     world.set_chunk_generator(id);
     let border = world.get_world_border();
     border.set_center(0.0, 0.0);
     border.set_diameter(layout.border * 2.0, None);
-    Ok(world)
+    Ok(())
+}
+
+/// The server's overworld, where matches are played.
+#[must_use]
+pub fn overworld(server: &Server) -> Option<World> {
+    let worlds = server.get_all_worlds();
+    let index = worlds
+        .iter()
+        .position(|w| w.get_dimension().ends_with("overworld"))
+        .unwrap_or(0);
+    worlds.into_iter().nth(index)
 }

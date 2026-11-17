@@ -13,3 +13,30 @@ memory_mb = 1024
 image = "hallow-test-game-lobby:${HALLOW_IMAGE_TAG:-dev}"
 manifest = "test-game-lobby/hallow.toml"
 memory_mb = 1024
+
+# The launch games and their lobbies (servers/eggwars, servers/skywars).
+# Each lobby keeps one instance warm; games start as players queue.
+[[kind]]
+image = "hallow-eggwars:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "eggwars/hallow.toml"
+memory_mb = 1536
+
+[[kind]]
+image = "hallow-eggwars-lobby:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "eggwars-lobby/hallow.toml"
+memory_mb = 1024
+
+[[kind]]
+image = "hallow-skywars:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "skywars/hallow.toml"
+memory_mb = 1536
+
+[[kind]]
+image = "hallow-skywars-teams:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "skywars/hallow-teams.toml"
+memory_mb = 1536
+
+[[kind]]
+image = "hallow-skywars-lobby:${HALLOW_IMAGE_TAG:-dev}"
+manifest = "skywars-lobby/hallow.toml"
+memory_mb = 1024
