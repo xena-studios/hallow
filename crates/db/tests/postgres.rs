@@ -138,6 +138,7 @@ async fn migrations_stay_in_the_hallow_schema() {
             "punishment_templates",
             "punishments",
             "ranks",
+            "reports",
             "server_kinds",
             "sessions",
             "signal_samples"
@@ -1072,6 +1073,7 @@ async fn server_kinds() {
         env: [("MODE".to_owned(), "solo".to_owned())].into(),
         memory_mb: None,
         updated_by: Some("alice".into()),
+        enabled: true,
     };
     let first = hallow_db::put_kind(&db.pool, "test-game", &spec)
         .await
@@ -1099,5 +1101,347 @@ async fn server_kinds() {
     assert_eq!(kinds[1].updated_by, None);
     assert!(hallow_db::delete_kind(&db.pool, "a-game").await.unwrap());
     assert!(!hallow_db::delete_kind(&db.pool, "a-game").await.unwrap());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn server_kinds_can_be_disabled() {
+    use hallow_proto::instance::{KindPlayers, KindRole, KindScaling, KindSpec};
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let mut spec = KindSpec {
+        image: "hallow-test-game:dev".into(),
+        role: KindRole::Game,
+        lobby: None,
+        players: KindPlayers { min: 1, max: 8 },
+        scaling: KindScaling::default(),
+        env: Default::default(),
+        memory_mb: None,
+        updated_by: None,
+        enabled: false,
+    };
+    let stored = hallow_db::put_kind(&db.pool, "test-game", &spec)
+        .await
+        .unwrap();
+    assert!(!stored.spec.0.enabled);
+    let column: bool =
+        sqlx::query_scalar("SELECT enabled FROM hallow.server_kinds WHERE name = 'test-game'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert!(!column);
+    // A spec stored before the column existed reads back enabled.
+    sqlx::query(
+        "INSERT INTO hallow.server_kinds (name, spec)
+         VALUES ('old-game', '{\"image\": \"x\", \"role\": \"game\", \"players\": {\"max\": 4}}')",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let kinds = hallow_db::list_kinds(&db.pool).await.unwrap();
+    assert!(kinds[0].spec.0.enabled, "{:?}", kinds[0]);
+    assert!(!kinds[1].spec.0.enabled);
+    spec.enabled = true;
+    let stored = hallow_db::put_kind(&db.pool, "test-game", &spec)
+        .await
+        .unwrap();
+    assert_eq!(stored.spec.0, spec);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn reports() {
+    use hallow_db::{AddReportError, NewReport, ReportChange, ReportFilter, ReportStatus};
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let (alice, bob, carol, staff) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    join(&db.pool, alice, "alice").await;
+    join(&db.pool, bob, "bob").await;
+    join(&db.pool, carol, "carol").await;
+    join(&db.pool, staff, "Mod").await;
+
+    let first = hallow_db::add_report(
+        &db.pool,
+        &NewReport {
+            reporter: alice,
+            target: bob,
+            reason: "flying",
+            server: Some("skywars-1"),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.status, ReportStatus::Open);
+    assert!(
+        hallow_db::has_active_report(&db.pool, alice, bob)
+            .await
+            .unwrap()
+    );
+    // One open report per reporter and target.
+    let again = hallow_db::add_report(
+        &db.pool,
+        &NewReport {
+            reporter: alice,
+            target: bob,
+            reason: "still flying",
+            server: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(again, Err(AddReportError::AlreadyOpen)),
+        "{again:?}"
+    );
+    // Nobody reports themselves.
+    assert!(
+        hallow_db::add_report(
+            &db.pool,
+            &NewReport {
+                reporter: alice,
+                target: alice,
+                reason: "me",
+                server: None,
+            },
+        )
+        .await
+        .is_err()
+    );
+    let second = hallow_db::add_report(
+        &db.pool,
+        &NewReport {
+            reporter: carol,
+            target: bob,
+            reason: "spam",
+            server: None,
+        },
+    )
+    .await
+    .unwrap();
+    let third = hallow_db::add_report(
+        &db.pool,
+        &NewReport {
+            reporter: bob,
+            target: carol,
+            reason: "rude",
+            server: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        hallow_db::reports_by_since(&db.pool, alice, Utc::now() - Duration::minutes(10))
+            .await
+            .unwrap(),
+        1
+    );
+
+    // Claiming, then handing over to panel staff.
+    let ReportChange::Done(claimed) =
+        hallow_db::claim_report(&db.pool, first.id, &Actor::Account(staff))
+            .await
+            .unwrap()
+    else {
+        panic!("claim failed")
+    };
+    assert_eq!(claimed.status, ReportStatus::Claimed);
+    assert_eq!(claimed.claimed.unwrap().1, Actor::Account(staff));
+    let panel = Actor::Staff {
+        name: "Admin".into(),
+        panel_user: Some("12".into()),
+    };
+    let ReportChange::Done(claimed) = hallow_db::claim_report(&db.pool, first.id, &panel)
+        .await
+        .unwrap()
+    else {
+        panic!("re-claim failed")
+    };
+    assert_eq!(claimed.claimed.unwrap().1, panel);
+    let named = hallow_db::get_report(&db.pool, first.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(named.reporter_name, "alice");
+    assert_eq!(named.target_name, "bob");
+    assert_eq!(named.target_reports, 2);
+    assert_eq!(named.claimed_by_username, None);
+
+    // Resolving with a punishment, then nothing more.
+    let ban = hallow_db::add_punishment(
+        &db.pool,
+        &NewPunishment {
+            kind: PunishmentKind::Ban,
+            target: bob,
+            issuer: Actor::Account(staff),
+            reason: "flying",
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        hallow_db::get_punishment(&db.pool, ban.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .target,
+        bob
+    );
+    let ReportChange::Done(resolved) = hallow_db::close_report(
+        &db.pool,
+        first.id,
+        ReportStatus::Resolved,
+        &Actor::Account(staff),
+        Some("banned"),
+        Some(ban.id),
+    )
+    .await
+    .unwrap() else {
+        panic!("resolve failed")
+    };
+    assert_eq!(resolved.status, ReportStatus::Resolved);
+    assert_eq!(resolved.punishment_id, Some(ban.id));
+    assert_eq!(resolved.note.as_deref(), Some("banned"));
+    assert!(resolved.claimed.is_some(), "the claim is kept");
+    assert_eq!(
+        hallow_db::claim_report(&db.pool, first.id, &panel)
+            .await
+            .unwrap(),
+        ReportChange::Closed
+    );
+    assert_eq!(
+        hallow_db::unclaim_report(&db.pool, first.id).await.unwrap(),
+        ReportChange::Closed
+    );
+    assert_eq!(
+        hallow_db::claim_report(&db.pool, 9999, &panel)
+            .await
+            .unwrap(),
+        ReportChange::NotFound
+    );
+    // Closed, so alice may report bob again.
+    assert!(
+        !hallow_db::has_active_report(&db.pool, alice, bob)
+            .await
+            .unwrap()
+    );
+    let named = hallow_db::get_report(&db.pool, first.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(named.closed_by_username.as_deref(), Some("Mod"));
+
+    // Claim, unclaim, dismiss.
+    hallow_db::claim_report(&db.pool, second.id, &panel)
+        .await
+        .unwrap();
+    let ReportChange::Done(open) = hallow_db::unclaim_report(&db.pool, second.id)
+        .await
+        .unwrap()
+    else {
+        panic!("unclaim failed")
+    };
+    assert_eq!(open.status, ReportStatus::Open);
+    assert!(open.claimed.is_none());
+    hallow_db::close_report(
+        &db.pool,
+        second.id,
+        ReportStatus::Dismissed,
+        &Actor::Console,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Listing, newest first.
+    let (total, all) = hallow_db::search_reports(&db.pool, &ReportFilter::default(), 50, 0)
+        .await
+        .unwrap();
+    assert_eq!(total, 3);
+    let ids: Vec<i64> = all.iter().map(|r| r.report.id).collect();
+    assert_eq!(ids, [third.id, second.id, first.id]);
+    let active = ReportFilter {
+        statuses: vec![ReportStatus::Open, ReportStatus::Claimed],
+        target: None,
+    };
+    let (total, open) = hallow_db::search_reports(&db.pool, &active, 50, 0)
+        .await
+        .unwrap();
+    assert_eq!((total, open[0].report.id), (1, third.id));
+    let on_bob = ReportFilter {
+        statuses: Vec::new(),
+        target: Some(bob),
+    };
+    let (total, page) = hallow_db::search_reports(&db.pool, &on_bob, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!((total, page[0].report.id), (2, first.id));
+    let (total, past) = hallow_db::search_reports(&db.pool, &on_bob, 10, 5)
+        .await
+        .unwrap();
+    assert_eq!((total, past.len()), (2, 0));
+    assert_eq!(
+        hallow_db::count_reports(&db.pool, &[ReportStatus::Open, ReportStatus::Claimed])
+            .await
+            .unwrap(),
+        1
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn permission_holders() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let (moderator, helper, denied, player) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    for (uuid, name) in [
+        (moderator, "moderator"),
+        (helper, "helper"),
+        (denied, "denied"),
+        (player, "player"),
+    ] {
+        join(&db.pool, uuid, name).await;
+    }
+    for r in [
+        rank("mod", 50, &["hallow.staff.*"]),
+        rank("helper", 10, &["hallow.staff.reports"]),
+        rank("muzzled", 5, &["-hallow.staff.reports"]),
+    ] {
+        hallow_db::upsert_rank(&db.pool, &r).await.unwrap();
+    }
+    for (account, r) in [
+        (moderator, "mod"),
+        (helper, "helper"),
+        (denied, "mod"),
+        (denied, "muzzled"),
+    ] {
+        hallow_db::grant_rank(&db.pool, account, r, None, None)
+            .await
+            .unwrap();
+    }
+    let online = [player, denied, helper, moderator];
+    let holders = hallow_db::accounts_with_permission(&db.pool, &online, "hallow.staff.reports")
+        .await
+        .unwrap();
+    assert_eq!(holders, [helper, moderator]);
+    assert!(
+        hallow_db::accounts_with_permission(&db.pool, &online, "hallow.admin")
+            .await
+            .unwrap()
+            .is_empty()
+    );
     db.drop().await;
 }

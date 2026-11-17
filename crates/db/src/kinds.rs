@@ -13,30 +13,44 @@ pub struct ServerKind {
     pub updated_by: Option<String>,
 }
 
-/// Registers a kind or replaces it. `updated_by` comes from the spec.
+/// The spec with `enabled` from its column, which is the truth.
+macro_rules! spec {
+    () => {
+        "spec || jsonb_build_object('enabled', enabled) AS spec"
+    };
+}
+
+/// Registers a kind or replaces it. `updated_by` and `enabled` come from
+/// the spec.
 pub async fn put_kind(
     pool: &PgPool,
     name: &str,
     spec: &KindSpec,
 ) -> Result<ServerKind, sqlx::Error> {
-    sqlx::query_as(
-        "INSERT INTO hallow.server_kinds (name, spec, updated_by) VALUES ($1, $2, $3)
+    sqlx::query_as(concat!(
+        "INSERT INTO hallow.server_kinds (name, spec, updated_by, enabled) VALUES ($1, $2, $3, $4)
          ON CONFLICT (name) DO UPDATE
-           SET spec = EXCLUDED.spec, updated_by = EXCLUDED.updated_by, updated_at = now()
-         RETURNING name, spec, updated_at, updated_by",
-    )
+           SET spec = EXCLUDED.spec, updated_by = EXCLUDED.updated_by,
+               enabled = EXCLUDED.enabled, updated_at = now()
+         RETURNING name, ",
+        spec!(),
+        ", updated_at, updated_by"
+    ))
     .bind(name)
     .bind(Json(spec))
     .bind(spec.updated_by.as_deref())
+    .bind(spec.enabled)
     .fetch_one(pool)
     .await
 }
 
 /// Every kind, by name.
 pub async fn list_kinds(pool: &PgPool) -> Result<Vec<ServerKind>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT name, spec, updated_at, updated_by FROM hallow.server_kinds ORDER BY name",
-    )
+    sqlx::query_as(concat!(
+        "SELECT name, ",
+        spec!(),
+        ", updated_at, updated_by FROM hallow.server_kinds ORDER BY name"
+    ))
     .fetch_all(pool)
     .await
 }

@@ -1,7 +1,7 @@
 //! Hallow's PostgreSQL schema and the typed queries the control plane runs
 //! against it: accounts, ranks, sessions, punishments and their templates,
-//! anticheat signals, fleet settings, node join tokens, player stats and
-//! server kinds.
+//! anticheat signals, fleet settings, node join tokens, player stats,
+//! server kinds and player reports.
 //!
 //! Every table lives in the `hallow` schema, so Hallow and the Calagopus
 //! panel can share one database. Queries are checked at runtime
@@ -22,6 +22,7 @@ mod kinds;
 mod nodes;
 mod punishments;
 mod ranks;
+mod reports;
 mod sessions;
 mod signals;
 mod stats;
@@ -47,12 +48,18 @@ pub use nodes::{
 pub use punishments::{
     Actor, NewPunishment, NewTemplate, Punishment, PunishmentFilter, PunishmentKind,
     PunishmentTemplate, PunishmentWithTarget, Revocation, TemplateError, active_ban, active_mute,
-    add_punishment, add_template, delete_template, list_templates, punishment_history,
-    revoke_punishment, search_punishments, update_template,
+    add_punishment, add_template, delete_template, get_punishment, list_templates,
+    punishment_history, revoke_punishment, search_punishments, update_template,
 };
 pub use ranks::{
-    AccountPermissions, Rank, RankGrant, RankWithMembers, account_permissions, active_ranks,
-    delete_rank, grant_rank, list_ranks, rank_grants, revoke_rank, save_rank, upsert_rank,
+    AccountPermissions, Rank, RankGrant, RankWithMembers, account_permissions,
+    accounts_with_permission, active_ranks, delete_rank, grant_rank, list_ranks, rank_grants,
+    revoke_rank, save_rank, upsert_rank,
+};
+pub use reports::{
+    AddReportError, NewReport, Report, ReportChange, ReportFilter, ReportStatus, ReportWithNames,
+    add_report, claim_report, close_report, count_reports, get_report, has_active_report,
+    reports_by_since, search_reports, unclaim_report,
 };
 pub use sessions::{
     NewSession, Session, close_proxy_sessions, close_session, open_session, set_session_server,
