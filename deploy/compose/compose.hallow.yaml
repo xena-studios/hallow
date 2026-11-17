@@ -59,6 +59,10 @@ services:
       HALLOW_DATABASE_URL: postgres://postgres:hallow-dev@postgres:5432/hallow
       # Dev only: the netcheck bot used for the staff command test.
       HALLOW_ADMINS: netstaff
+      # Shown in the banned lobby.
+      HALLOW_APPEAL_TEXT: "Think this is a mistake? Appeal on the dev network's forum."
+      HALLOW_APPEAL_URL: https://example.net/appeal
+      HALLOW_KICK_HOLD_SECS: ${HALLOW_KICK_HOLD_SECS:-10}
     volumes:
       - ./config/hallow/control-plane.token:/run/hallow/token:ro
     ports:
