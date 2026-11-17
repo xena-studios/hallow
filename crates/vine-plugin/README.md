@@ -2,10 +2,15 @@
 
 `hallow-vine`, Hallow's Vine plugin (`hallow_vine.wasm`). It links each proxy to the [control plane](../control-plane/README.md), so several proxies run as one network.
 
-- **Presence.** Every login asks the control plane first.
-  - It refuses a second login for an account already online on another proxy, and refuses logins when the network is full.
-  - Otherwise it allows the login and names the hub the player lands on.
+- **Presence.** Every login asks the control plane where the player goes: a hub, the banned lobby, or Vine's limbo to wait when the network is full or no hub is free.
+  - A second login from the same account replaces the old session, which is disconnected (unless the control plane is set to `deny`).
   - Switches and leaves are reported back.
+- **Never dropped** ([`src/limbo.rs`](src/limbo.rs); [Architecture](../../docs/ARCHITECTURE.md#never-dropped)).
+  - A server that kicks a player, crashes or stops fires Vine's `server-kick`; the plugin asks the control plane for a fallback (the game's lobby, a hub, limbo). If it can't, it picks the emptiest other hub (`hub_kind`), or limbo.
+  - A login the control plane can't answer (it's down, or this proxy isn't registered yet) goes to limbo, unverified. The player can't leave it; the login is asked again every 2 s and the player is moved where the answer says.
+  - Banned players can only be moved by the control plane: `/server` and every Hallow command are refused, and their chat is off.
+  - Players in limbo see why they wait on their action bar: their place in line, the network having trouble, or their ban and its countdown.
+  - Draining with `transfer_to` set (the load balancer's address), players on lobbies and in limbo are transferred there with the Transfer packet (1.20.5+), five a second; players in a game go once they leave it.
 - **Global ping.** Server-list pings show the network's player count and limit.
 - **One server list.** Servers registered with the control plane are mirrored into Vine's runtime registry.
   - Draining servers are left out, so nobody new is sent there.
@@ -13,7 +18,7 @@
 - **Commands.** Sends, messages, broadcasts and kicks queued for this proxy are carried out.
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
   - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`, `/lobby [mode]` to go to a game mode's lobby and `/hub` to go back to a hub.
-  - Staff: `/find`, `/alert` and `/gkick`, for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
+  - Staff: `/find`, `/alert` and `/gkick` (to limbo for a few seconds, then a hub), for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
 - **Friends** (needs the control plane's database):
   - `/friend` (`/f`): add, accept, deny, remove, list and requests; `/friend <player>` adds.
   - The list shows who's online and on which server.
@@ -21,14 +26,14 @@
 - **Moderation** (needs the control plane's database):
   - `/ban` and `/mute`, with an optional duration (`30m`, `2h`, `7d`, `1w`); `/unban` and `/unmute`; `/warn`; `/history`.
   - Permissions: `hallow.staff.ban`, `.mute`, `.warn` and `.history`.
-  - A ban kicks the player wherever they are and refuses their logins.
+  - A ban moves the player to the banned lobby wherever they are, and sends them there at every login until it ends.
   - A muted player's chat, `/msg`, `/r` and party chat are blocked until the mute ends.
 - **Anticheat signals.** Every 30 s, one sample per player goes to the control plane (`POST /v1/signals`): chat and command counts and peak rates, plugin messages, server switches and time online. The list is in [`src/signals.rs`](src/signals.rs). Measurement only; nothing acts on them yet.
 - **Recovery.**
   - If the control plane forgets the proxy, for example after it expired or Redis was reset, the plugin registers again and re-reports its players.
   - Admitted players who never became live sessions are reported gone after 10 s.
 
-While the plugin isn't registered, logins are refused, since any of them could be a duplicate.
+While the plugin isn't registered, logins wait in limbo, unverified, since any of them could be a duplicate.
 
 ## How it runs
 

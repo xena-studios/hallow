@@ -14,12 +14,13 @@
 #
 # The first argument is the compose project. NETCHECK (default
 # target/debug/netcheck), PROXY (127.0.0.1:25566) and CONTROL_PLANE
-# (127.0.0.1:18090) can be set; ONLY=banned (or crash, hubs, control-plane)
-# runs one scenario.
+# (127.0.0.1:18090) can be set, and EXTRA_FILES ("-f my-ports.yaml") if the
+# network was started with more compose files; ONLY=banned (or crash, hubs,
+# control-plane) runs one scenario.
 set -eu
 project=${1:?usage: neverdrop.sh <compose project>}
 cd "$(dirname "$0")/../.."
-files="-f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml -f deploy/compose/compose.instances.yaml"
+files="-f deploy/compose/compose.yaml -f deploy/compose/compose.hallow.yaml -f deploy/compose/compose.instances.yaml ${EXTRA_FILES:-}"
 compose="docker compose -p $project $files"
 network=${HALLOW_DOCKER_NETWORK:-hallow-dev}
 netcheck=${NETCHECK:-target/debug/netcheck}

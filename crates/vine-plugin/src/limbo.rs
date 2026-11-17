@@ -39,6 +39,9 @@ use crate::{State, commands::duration_text, log, now_ms};
 pub const RETRY_EVERY: Duration = Duration::from_secs(2);
 /// How often limbo players' action bars are redrawn.
 const STATUS_EVERY: Duration = Duration::from_secs(1);
+/// How often players in limbo are reported there again, in case the
+/// control plane missed it (it was down when they arrived).
+const REPORT_EVERY: Duration = Duration::from_secs(10);
 /// Players transferred per tick while draining.
 const TRANSFERS_PER_TICK: usize = 5;
 
@@ -308,6 +311,31 @@ impl State {
         let limbo = self.limbo();
         let wall = now_ms();
         let players = proxy::get_players();
+        if self.registered
+            && self
+                .last_limbo_report
+                .is_none_or(|at| now - at >= REPORT_EVERY)
+        {
+            self.last_limbo_report = Some(now);
+            for player in players.iter().filter(|p| p.current_server == limbo) {
+                if self.unverified.contains_key(&player.uuid) {
+                    continue;
+                }
+                if let Ok(uuid) = Uuid::parse_str(&player.uuid) {
+                    let switched = PlayerSwitched {
+                        uuid,
+                        server: limbo.clone(),
+                    };
+                    if self
+                        .client
+                        .post_empty(routes::PRESENCE_SWITCH, &switched)
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
         for player in &players {
             if player.current_server != limbo {
                 continue;

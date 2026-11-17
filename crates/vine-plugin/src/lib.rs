@@ -136,6 +136,8 @@ struct State {
     /// connects go through even for locked players.
     sending: HashMap<String, String>,
     last_status: Option<Instant>,
+    /// When players in limbo were last reported there.
+    last_limbo_report: Option<Instant>,
     /// Players too old for the Transfer packet, so a draining proxy keeps
     /// them.
     untransferable: HashSet<String>,
@@ -192,6 +194,7 @@ impl Guest for Hallow {
                 waiting: HashMap::new(),
                 sending: HashMap::new(),
                 last_status: None,
+                last_limbo_report: None,
                 untransferable: HashSet::new(),
                 reported_down: false,
                 last_from: HashMap::new(),
