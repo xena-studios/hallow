@@ -1,10 +1,14 @@
 //! Hallow's Vine plugin: links a proxy to the control plane so several
 //! proxies run as one network ([Multi-proxy]).
 //!
-//! - **Presence.** Every login asks the control plane first. It refuses a
-//!   second login for an account that's online on another proxy, refuses
-//!   logins when the network is full, and picks the hub the player lands on.
-//!   Switches and leaves are reported back.
+//! - **Presence.** Every login asks the control plane where the player goes:
+//!   a hub, the banned lobby for a banned player, or Vine's limbo to wait
+//!   when the network is full or no hub is free. Nobody is refused for
+//!   those, and a login the control plane can't answer waits in limbo too
+//!   ([`limbo`]). Switches and leaves are reported back.
+//! - **Never dropped.** A server that kicks a player, crashes or stops
+//!   sends them to a fallback the control plane picks (the game's lobby, a
+//!   hub, limbo) instead of disconnecting them ([`limbo`]).
 //! - **Global ping.** Server-list pings show the network-wide count.
 //! - **One server list.** Servers registered with the control plane are
 //!   mirrored into Vine's runtime registry, so every proxy can route to them.
@@ -31,10 +35,11 @@ wit_bindgen::generate!({
 mod commands;
 mod config;
 mod http;
+mod limbo;
 mod signals;
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use hallow_proto::{
@@ -42,7 +47,7 @@ use hallow_proto::{
     command::ProxyCommand,
     presence::{LoginDecision, LoginRequest, NetworkCount, PlayerLeft, PlayerSwitched},
     proxy::{ProxyHeartbeat, ProxyRegistered, RegisterProxy},
-    punishment::MuteInfo,
+    punishment::{BanInfo, MuteInfo},
     routes,
     server::{ServerInfo, ServerState},
     signal::{self, SignalBatch},
@@ -71,6 +76,7 @@ const DISCONNECT: u32 = 6;
 const CHAT: u32 = 7;
 const COMMAND: u32 = 8;
 const PLUGIN_MESSAGE: u32 = 9;
+const SERVER_KICK: u32 = 10;
 const TICK: u32 = 100;
 
 const HEARTBEAT: Duration = Duration::from_secs(routes::HEARTBEAT_SECONDS);
@@ -97,6 +103,8 @@ struct State {
     commands_revision: u64,
     /// Servers we put into Vine's registry, by name, with their address.
     mirrored: BTreeMap<String, String>,
+    /// The control plane's servers, by name, from the last poll.
+    servers: BTreeMap<String, ServerInfo>,
     count: Option<NetworkCount>,
     last_heartbeat: Option<Instant>,
     last_count: Option<Instant>,
@@ -118,6 +126,19 @@ struct State {
     mutes: HashMap<String, MuteInfo>,
     /// Anticheat signals for the current window.
     signals: signals::Recorder,
+    /// Banned players here, by UUID: only the control plane moves them.
+    restricted: HashMap<String, BanInfo>,
+    /// Players let into limbo while the control plane couldn't answer.
+    unverified: HashMap<String, limbo::Unverified>,
+    /// What players in limbo wait for, by UUID.
+    waiting: HashMap<String, limbo::Waiting>,
+    /// Moves the control plane (or a fallback) asked for, by UUID: these
+    /// connects go through even for locked players.
+    sending: HashMap<String, String>,
+    last_status: Option<Instant>,
+    /// Players too old for the Transfer packet, so a draining proxy keeps
+    /// them.
+    untransferable: HashSet<String>,
 }
 
 thread_local! {
@@ -165,6 +186,13 @@ impl Guest for Hallow {
                 hubs: HashMap::new(),
                 admitted: HashMap::new(),
                 protocols: HashMap::new(),
+                servers: BTreeMap::new(),
+                restricted: HashMap::new(),
+                unverified: HashMap::new(),
+                waiting: HashMap::new(),
+                sending: HashMap::new(),
+                last_status: None,
+                untransferable: HashSet::new(),
                 reported_down: false,
                 last_from: HashMap::new(),
                 permissions: HashMap::new(),
@@ -190,6 +218,8 @@ impl Guest for Hallow {
             EventPriority::Monitor,
         );
 
+        // Picks where a player goes when a server drops them.
+        ctx.register_event(SERVER_KICK, EventType::ServerKick, EventPriority::Normal);
         ctx.register_event(CHAT, EventType::PlayerChat, EventPriority::High);
         // Signals only watch, so they see the final events.
         ctx.register_event(COMMAND, EventType::PlayerCommand, EventPriority::Monitor);
@@ -232,6 +262,7 @@ impl Guest for Hallow {
             Event::PlayerPreLogin(pre) => Event::PlayerPreLogin(state.on_pre_login(pre)),
             Event::PlayerLogin(login) => Event::PlayerLogin(state.on_login(login)),
             Event::ServerConnect(connect) => Event::ServerConnect(state.on_connect(connect)),
+            Event::ServerKick(kick) => Event::ServerKick(state.on_server_kick(kick)),
             Event::PlayerChat(chat) => Event::PlayerChat(state.on_chat(chat)),
             Event::PlayerCommand(command) => {
                 state.on_command(&command);
@@ -305,23 +336,19 @@ impl State {
         pre
     }
 
+    /// Asks the control plane where the player goes. Only a malformed
+    /// login or a refused duplicate (`HALLOW_DUPLICATE_LOGIN=deny`) is
+    /// refused; when the control plane can't answer, the player waits in
+    /// limbo, unverified, and is asked about again.
     fn on_login(&mut self, mut login: PlayerLoginEvent) -> PlayerLoginEvent {
         if login.cancelled {
             return login;
         }
-        let refuse = |login: &mut PlayerLoginEvent, reason: &str| {
-            login.cancelled = true;
-            login.cancel_reason = Some(reason.to_owned());
-        };
         let Ok(uuid) = Uuid::parse_str(&login.uuid) else {
-            refuse(&mut login, UNAVAILABLE);
+            login.cancelled = true;
+            login.cancel_reason = Some(UNAVAILABLE.to_owned());
             return login;
         };
-        if !self.registered {
-            // Not linked to the network yet; a login now could be a duplicate.
-            refuse(&mut login, UNAVAILABLE);
-            return login;
-        }
         let request = LoginRequest {
             uuid,
             username: login.username.clone(),
@@ -329,30 +356,74 @@ impl State {
             protocol: self.protocols.remove(&login.username).map(|(p, _)| p),
             ip: address(&login.client_ip),
         };
-        match self.client.post(routes::PRESENCE_LOGIN, &request) {
-            Ok(LoginDecision::Allow {
+        let answer = if self.registered {
+            match self.client.post(routes::PRESENCE_LOGIN, &request) {
+                Ok(decision) => Some(decision),
+                Err(err) => {
+                    if err.is_not_found() {
+                        self.registered = false;
+                    }
+                    log(
+                        Level::Warn,
+                        &format!("login check for {} failed: {err}", login.username),
+                    );
+                    None
+                }
+            }
+        } else {
+            // Not linked to the network yet: limbo until it is.
+            None
+        };
+        let limbo = self.limbo();
+        let target = match answer {
+            Some(LoginDecision::Deny { reason }) => {
+                login.cancelled = true;
+                login.cancel_reason = Some(reason);
+                return login;
+            }
+            Some(LoginDecision::Allow {
                 server,
+                permissions,
+                mute,
+                ban,
+            }) => {
+                self.permissions.insert(login.uuid.clone(), permissions);
+                self.set_mute(&login.uuid, mute);
+                if let Some(ban) = ban {
+                    self.restricted.insert(login.uuid.clone(), ban);
+                }
+                self.admitted.insert(login.uuid.clone(), Instant::now());
+                server
+            }
+            Some(LoginDecision::Wait {
+                reason,
+                position,
                 permissions,
                 mute,
             }) => {
                 self.permissions.insert(login.uuid.clone(), permissions);
                 self.set_mute(&login.uuid, mute);
-                self.hubs.insert(login.uuid.clone(), server);
-                self.admitted.insert(login.uuid.clone(), Instant::now());
-                self.signals.joined(uuid, request.protocol, now_ms());
-            }
-            Ok(LoginDecision::Deny { reason }) => refuse(&mut login, &reason),
-            Err(err) => {
-                if err.is_not_found() {
-                    self.registered = false;
-                }
-                log(
-                    Level::Warn,
-                    &format!("login check for {} failed: {err}", login.username),
+                let place = position.map_or_else(String::new, |p| format!(" You're #{p} in line."));
+                self.waiting.insert(
+                    login.uuid.clone(),
+                    limbo::Waiting::Place(format!("{reason}{place}")),
                 );
-                refuse(&mut login, UNAVAILABLE);
+                self.admitted.insert(login.uuid.clone(), Instant::now());
+                limbo.clone()
             }
-        }
+            None => {
+                self.unverified.insert(
+                    login.uuid.clone(),
+                    limbo::Unverified {
+                        request: request.clone(),
+                        asked: Some(Instant::now()),
+                    },
+                );
+                limbo.clone()
+            }
+        };
+        self.hubs.insert(login.uuid.clone(), target);
+        self.signals.joined(uuid, request.protocol, now_ms());
         login
     }
 
@@ -367,6 +438,11 @@ impl State {
         {
             chat.cancelled = true;
             proxy::send_message(&chat.uuid, &notice);
+        }
+        // Banned players talk to nobody, wherever they are.
+        if !chat.cancelled && self.restricted.contains_key(&chat.uuid) {
+            chat.cancelled = true;
+            proxy::send_message(&chat.uuid, "§cChat is off while you're banned.");
         }
         chat
     }
@@ -419,13 +495,28 @@ impl State {
         })
     }
 
-    /// Sends a player's first connect to the hub the control plane picked.
+    /// Sends a player's first connect where the control plane said (Vine
+    /// falls back to limbo if that can't be reached). Banned and unverified
+    /// players only go where the control plane or a fallback sends them.
     fn on_connect(&mut self, mut connect: ServerConnectEvent) -> ServerConnectEvent {
-        if connect.current_server.is_none()
-            && let Some(hub) = self.hubs.remove(&connect.uuid)
-            && self.mirrored.contains_key(&hub)
+        let limbo = self.limbo();
+        if connect.current_server.is_none() {
+            if let Some(target) = self.hubs.remove(&connect.uuid) {
+                connect.target_server = target;
+            }
+            return connect;
+        }
+        let sent = self.sending.remove(&connect.uuid);
+        if self.locked(&connect.uuid)
+            && connect.target_server != limbo
+            && sent.as_deref() != Some(connect.target_server.as_str())
         {
-            connect.target_server = hub;
+            connect.cancelled = true;
+            connect.cancel_reason = Some(if self.restricted.contains_key(&connect.uuid) {
+                "You can't leave while you're banned.".into()
+            } else {
+                "Hold on: the network is having trouble. You'll be moved on by yourself.".into()
+            });
         }
         connect
     }
@@ -435,6 +526,15 @@ impl State {
             return;
         };
         self.signals.connected(uuid, now_ms());
+        self.arrived(&connected.uuid, &connected.server_name);
+        if connected.server_name != self.limbo() {
+            self.waiting.remove(&connected.uuid);
+        }
+        if self.unverified.contains_key(&connected.uuid) {
+            // The control plane doesn't know them yet; the retried login
+            // reports where they are.
+            return;
+        }
         let switched = PlayerSwitched {
             uuid,
             server: connected.server_name.clone(),
@@ -446,11 +546,19 @@ impl State {
 
     fn on_disconnect(&mut self, gone: &PlayerDisconnectEvent) {
         self.hubs.remove(&gone.uuid);
+        self.restricted.remove(&gone.uuid);
+        self.waiting.remove(&gone.uuid);
+        self.sending.remove(&gone.uuid);
+        self.untransferable.remove(&gone.uuid);
         self.permissions.remove(&gone.uuid);
         self.mutes.remove(&gone.uuid);
         self.last_from.remove(&gone.uuid);
         if let Ok(uuid) = Uuid::parse_str(&gone.uuid) {
             self.signals.left(uuid, now_ms());
+        }
+        if self.unverified.remove(&gone.uuid).is_some() {
+            // The control plane never counted them.
+            return;
         }
         if self.leave(&gone.uuid) {
             self.admitted.remove(&gone.uuid);
@@ -476,6 +584,9 @@ impl State {
     // The repeating task
 
     fn tick(&mut self) {
+        // Limbo's action bars and draining run even while the control plane
+        // is away.
+        self.tend_players();
         if !self.registered && !self.register() {
             return;
         }
@@ -489,6 +600,7 @@ impl State {
         }
         self.poll_servers();
         self.poll_commands();
+        self.retry_unverified();
         if self.last_count.is_none_or(|at| now - at >= COUNT_EVERY) {
             self.refresh_count();
         }
@@ -570,25 +682,27 @@ impl State {
                 .client
                 .post::<_, LoginDecision>(routes::PRESENCE_LOGIN, &request)
             {
-                Ok(LoginDecision::Allow {
-                    permissions, mute, ..
-                }) => {
-                    self.permissions.insert(player.uuid.clone(), permissions);
-                    self.set_mute(&player.uuid, mute);
-                    self.admitted.insert(player.uuid.clone(), Instant::now());
-                    self.signals.joined(uuid, request.protocol, now_ms());
-                    let switched = PlayerSwitched {
-                        uuid,
-                        server: player.current_server.clone(),
-                    };
-                    let _ = self.client.post_empty(routes::PRESENCE_SWITCH, &switched);
-                }
                 // Online elsewhere since: the newer session wins.
                 Ok(LoginDecision::Deny { .. }) => {
                     proxy::disconnect_player(
                         &player.uuid,
                         "§cYou logged in from another location.",
                     );
+                }
+                Ok(decision) => {
+                    let was_unverified = self.unverified.remove(&player.uuid).is_some();
+                    if !was_unverified {
+                        self.signals.joined(uuid, request.protocol, now_ms());
+                    }
+                    self.admitted.insert(player.uuid.clone(), Instant::now());
+                    let switched = PlayerSwitched {
+                        uuid,
+                        server: player.current_server.clone(),
+                    };
+                    let _ = self.client.post_empty(routes::PRESENCE_SWITCH, &switched);
+                    // Players in limbo go where the control plane says now;
+                    // anyone else stays put.
+                    self.apply_decision(&player.uuid, decision, Some(&player.current_server));
                 }
                 Err(err) => log(
                     Level::Warn,
@@ -646,9 +760,15 @@ impl State {
     /// Makes Vine's registry match the control plane's list. Draining servers
     /// are left out so nobody new is sent there; players already on them stay.
     fn mirror(&mut self, servers: Vec<ServerInfo>) {
+        let limbo = self.limbo();
+        self.servers = servers
+            .iter()
+            .map(|s| (s.name.clone(), s.clone()))
+            .collect();
         let wanted: BTreeMap<String, String> = servers
             .into_iter()
-            .filter(|s| s.state != ServerState::Draining)
+            // Vine's own limbo can't be replaced.
+            .filter(|s| s.state != ServerState::Draining && s.name != limbo)
             .map(|s| (s.name, s.address))
             .collect();
         let gone: Vec<String> = self
@@ -754,7 +874,28 @@ impl State {
     fn run(&mut self, command: ProxyCommand) {
         match command {
             ProxyCommand::Send { player, server } => {
-                proxy::connect_player(&player.to_string(), &server);
+                let player = player.to_string();
+                self.sending.insert(player.clone(), server.clone());
+                proxy::connect_player(&player, &server);
+            }
+            ProxyCommand::Title {
+                player,
+                title,
+                subtitle,
+            } => {
+                // Half a second in, five seconds up, a second out.
+                proxy::send_title(&player.to_string(), &title, &subtitle, 10, 100, 20);
+            }
+            ProxyCommand::Restrict { player, ban } => {
+                let player = player.to_string();
+                match ban {
+                    Some(ban) => {
+                        self.restricted.insert(player, ban);
+                    }
+                    None => {
+                        self.restricted.remove(&player);
+                    }
+                }
             }
             ProxyCommand::Message { player, text, from } => {
                 let player = player.to_string();
@@ -778,6 +919,7 @@ impl State {
                     }
                 }
             }
+            // Only for a login that replaced this session elsewhere.
             ProxyCommand::Kick { player, reason } => {
                 proxy::disconnect_player(&player.to_string(), &reason);
             }
