@@ -40,6 +40,10 @@ The first build compiles Pumpkin and Vine for Linux and takes a while; later bui
 
 Image tags default to `dev`; set `HALLOW_IMAGE_TAG` to build and run your own set side by side with someone else's (`hallow-proxy:$HALLOW_IMAGE_TAG`, and so on).
 
+## The banned lobby
+
+[`compose.hallow.yaml`](compose.hallow.yaml) also runs `banned`, a static instance of [`servers/banned`](../../servers/banned) (kind `banned`), next to the hub. Banned players are sent there instead of being disconnected: a closed room above spawn where they see the ban's reason, who issued it, when it ends (with a live countdown), its id and how to appeal, and can't chat or use commands but `/help` and `/appeal`. The control plane keeps them there and moves them to the hub when the ban ends or is lifted. Its config is [`config/hallow/banned.toml`](config/hallow/banned.toml).
+
 ## Dynamic games
 
 [`compose.instances.yaml`](compose.instances.yaml), over [`compose.hallow.yaml`](compose.hallow.yaml) (two proxies, the control plane, Valkey and PostgreSQL), lets the control plane start and delete game instances itself through the local Docker Engine, the way it does through Wings on real nodes ([Instances](../../docs/INSTANCES.md)):

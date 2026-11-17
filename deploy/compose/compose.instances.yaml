@@ -26,6 +26,8 @@ x-proxy-deps: &proxy-deps
       condition: service_healthy
     lobby:
       condition: service_healthy
+    banned:
+      condition: service_healthy
 
 networks:
   default:

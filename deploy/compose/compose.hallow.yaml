@@ -20,6 +20,8 @@ x-hallow-proxy: &hallow-proxy
       condition: service_healthy
     lobby:
       condition: service_healthy
+    banned:
+      condition: service_healthy
     game-1:
       condition: service_healthy
 
@@ -77,6 +79,28 @@ services:
       - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro
       - ./config/hallow/control-plane.token:/server/plugins/data/hallow_server/token:ro
       - ./config/hallow/lobby.toml:/server/plugins/data/hallow_server/config.toml:ro
+    depends_on:
+      control-plane:
+        condition: service_healthy
+
+  # The banned lobby (servers/banned): banned players are sent here instead
+  # of being disconnected. Static like the hub; on real nodes it is a kind
+  # the control plane runs.
+  banned:
+    build:
+      context: ../../servers/banned
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-banned:${HALLOW_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    tty: true
+    environment:
+      HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
+      HALLOW_SERVER_NAME: banned
+    volumes:
+      - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro
+      - ./config/hallow/control-plane.token:/server/plugins/data/hallow_server/token:ro
+      - ./config/hallow/banned.toml:/server/plugins/data/hallow_server/config.toml:ro
     depends_on:
       control-plane:
         condition: service_healthy
