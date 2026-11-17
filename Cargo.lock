@@ -889,6 +889,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hallow-islands"
+version = "0.1.0"
+dependencies = [
+ "pumpkin-plugin-api",
+ "serde",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "hallow-manifest"
 version = "0.1.0"
 dependencies = [
