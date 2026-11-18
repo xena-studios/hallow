@@ -1,9 +1,11 @@
-//! Anticheat signals measured at the proxy (docs/ANTICHEAT.md, phase 1).
+//! Anticheat signals measured at the proxy (docs/ANTICHEAT.md).
 //!
-//! Vine's plugin API has no packet-level hook, so the packet timing metrics
-//! the proxy is meant to own (`packets_per_second_max`, `attacks`, `cps_max`,
-//! `rotation_snaps`, `swings`) can't be measured yet; docs/ANTICHEAT.md
-//! describes the Vine API they need. What the events do show is measured:
+//! Packet timing (`packets_per_second_max`, `attacks`, `cps_max`,
+//! `rotation_snaps`, `timer_balance_max_ms`, `hover_ms_max` and the rest)
+//! is measured natively by Vine (`packet-timing` in its WIT, with
+//! `[packet_timing] enabled = true`) and taken once per window, then merged
+//! into these samples by [`merge_timing`]. What the plugin events show is
+//! measured here:
 //!
 //! | Metric | |
 //! |---|---|
@@ -228,6 +230,40 @@ impl Recorder {
     }
 }
 
+/// Adds Vine's packet timing for the window to `samples`: its metrics go into
+/// the player's sample, or a new one when the plugin saw nothing of them.
+/// Vine knows the client's protocol for certain, so it wins.
+pub fn merge_timing(
+    samples: &mut Vec<PlayerSignals>,
+    timing: impl IntoIterator<Item = (Uuid, i32, Vec<(String, f64)>)>,
+    at_ms: u64,
+    window_ms: u32,
+) {
+    for (uuid, protocol, metrics) in timing {
+        let index = match samples.iter().position(|s| s.player == uuid) {
+            Some(index) => index,
+            None => {
+                samples.push(PlayerSignals {
+                    player: uuid,
+                    at_ms,
+                    window_ms,
+                    protocol: None,
+                    metrics: BTreeMap::new(),
+                });
+                samples.len() - 1
+            }
+        };
+        let sample = &mut samples[index];
+        if protocol > 0 {
+            sample.protocol = Some(protocol);
+        }
+        sample
+            .metrics
+            .extend(metrics.into_iter().filter(|(_, value)| value.is_finite()));
+    }
+    samples.sort_by_key(|sample| sample.player);
+}
+
 /// Milliseconds as seconds, to the tenth.
 fn seconds(ms: u64) -> f64 {
     (ms / 100) as f64 / 10.0
@@ -382,6 +418,35 @@ mod tests {
         let recorder = Recorder::new(1_000);
         assert!(!recorder.due(WINDOW, 30_999));
         assert!(recorder.due(WINDOW, 31_000));
+    }
+
+    #[test]
+    fn packet_timing_joins_the_samples() {
+        let mut recorder = Recorder::new(0);
+        recorder.joined(uuid(5), None, 0);
+        recorder.chat(uuid(5), 1_000);
+        let mut samples = recorder.flush(WINDOW);
+        merge_timing(
+            &mut samples,
+            [
+                (uuid(5), 47, vec![("cps_max".to_owned(), 14.0)]),
+                (
+                    uuid(2),
+                    777,
+                    vec![("swings".to_owned(), 3.0), ("ticks".to_owned(), f64::NAN)],
+                ),
+            ],
+            WINDOW,
+            30_000,
+        );
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].player, uuid(2));
+        assert_eq!(samples[0].protocol, Some(777));
+        assert_eq!(metric(&samples[0], "swings"), 3.0);
+        assert!(!samples[0].metrics.contains_key("ticks"));
+        assert_eq!(samples[1].protocol, Some(47));
+        assert_eq!(metric(&samples[1], "chat_messages"), 1.0);
+        assert_eq!(metric(&samples[1], "cps_max"), 14.0);
     }
 
     #[test]

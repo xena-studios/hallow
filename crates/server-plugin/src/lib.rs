@@ -15,7 +15,11 @@
 //!   (see [`stats`]). A failed batch goes with the next one.
 //! - **Signals.** Every 30 s, `POST /v1/signals` with each player's movement
 //!   and combat numbers for the window, for the anticheat to learn from
-//!   (see [`signals`]). Nothing acts on them yet.
+//!   (see [`signals`]).
+//! - **Anticheat checks.** The same windows go through the server's checks
+//!   (`speed`, `reach` in `hallow-anticheat`); what fails goes to
+//!   `POST /v1/violations` with its evidence. The verdict service decides;
+//!   nothing here acts on a player.
 //! - **Lobbies.** Gives the hub's plugin the game modes and sends players
 //!   to lobbies for it, and when a game ends (the state turns `draining`)
 //!   sends everyone to the lobby `hallow.toml` names (see [`lobbies`]).
@@ -58,6 +62,7 @@ use hallow_proto::{
     server::{RegisterServer, ServerHeartbeat, ServerPlayersChanged, ServerState},
     signal::SignalBatch,
     stats::{PlayerStatsDelta, StatsBatch},
+    violation::ViolationBatch,
 };
 use pumpkin_plugin_api::{
     Context, Plugin, PluginMetadata, Server, permissions, register_plugin, scheduler, wit,
@@ -105,6 +110,8 @@ struct Link {
     signals_in_flight: Option<http::Pending>,
     /// Log failed signal batches once, until one gets through.
     signals_down: bool,
+    /// The violation batch waiting for an answer.
+    violations_in_flight: Option<http::Pending>,
     /// The stats batch waiting for an answer, kept to put back if it fails.
     stats_in_flight: Option<(http::Pending, Vec<PlayerStatsDelta>)>,
     /// When the last stats batch was taken.
@@ -402,12 +409,52 @@ fn send_signals(server: &Server) {
     else {
         return;
     };
+    send_violations(&client, &source, &samples);
     let batch = SignalBatch { source, samples };
     match client.start_post(routes::SIGNALS, &batch) {
         Ok(pending) => {
             with_link(|link| link.signals_in_flight = Some(pending));
         }
         Err(err) => signals_answered(Err(err)),
+    }
+}
+
+/// Runs the server's checks on the window's samples and sends what fails.
+/// A batch still in flight is checked first; a failed one is logged and
+/// dropped.
+fn send_violations(
+    client: &http::Client,
+    source: &str,
+    samples: &[hallow_proto::signal::PlayerSignals],
+) {
+    if let Some(Some(pending)) = with_link(|link| link.violations_in_flight.take()) {
+        match pending.poll() {
+            None => {
+                tracing::warn!("hallow-server: the last violation batch is still in flight");
+                with_link(|link| link.violations_in_flight = Some(pending));
+                return;
+            }
+            Some(Err(err)) => tracing::warn!("hallow-server: couldn't send violations: {err}"),
+            Some(Ok(())) => {}
+        }
+    }
+    let limits = hallow_anticheat::Limits::default();
+    let violations: Vec<_> = samples
+        .iter()
+        .flat_map(|sample| hallow_anticheat::server_checks(sample, &limits))
+        .collect();
+    if violations.is_empty() {
+        return;
+    }
+    let batch = ViolationBatch {
+        source: source.to_owned(),
+        violations,
+    };
+    match client.start_post(routes::VIOLATIONS, &batch) {
+        Ok(pending) => {
+            with_link(|link| link.violations_in_flight = Some(pending));
+        }
+        Err(err) => tracing::warn!("hallow-server: couldn't send violations: {err}"),
     }
 }
 
@@ -492,6 +539,7 @@ impl Plugin for HallowServer {
             in_flight: None,
             signals_in_flight: None,
             signals_down: false,
+            violations_in_flight: None,
             stats_in_flight: None,
             last_stats: Instant::now(),
             stats_failures: 0,

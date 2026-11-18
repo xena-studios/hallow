@@ -188,7 +188,11 @@ pub fn server_may(method: &Method, route: &str, path_name: Option<&str>, own: &s
     if route == routes::server_players("{name}") {
         return (method == Method::POST || method == Method::GET) && own_path;
     }
-    if route == routes::STATS || route == routes::SIGNALS || route == routes::LOBBIES_SEND {
+    if route == routes::STATS
+        || route == routes::SIGNALS
+        || route == routes::VIOLATIONS
+        || route == routes::LOBBIES_SEND
+    {
         return method == Method::POST;
     }
     if route == routes::LOBBIES {
@@ -283,6 +287,8 @@ mod tests {
         assert!(may(Method::POST, routes::STATS, None));
         assert!(may(Method::POST, routes::SIGNALS, None));
         assert!(!may(Method::GET, routes::SIGNALS, None));
+        assert!(may(Method::POST, routes::VIOLATIONS, None));
+        assert!(!may(Method::GET, routes::VIOLATIONS, None));
         assert!(may(Method::GET, routes::LOBBIES, None));
         assert!(!may(Method::POST, routes::LOBBIES, None));
         assert!(may(Method::POST, routes::LOBBIES_SEND, None));

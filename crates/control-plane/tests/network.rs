@@ -32,6 +32,7 @@ use hallow_proto::{
     },
     signal::{PlayerSignals, SignalBatch, SignalRecord},
     stats::{PlayerStats, PlayerStatsDelta, StatsBatch},
+    violation::{PlayerViolations, VerdictAction, VerdictMode, Violation, ViolationBatch},
 };
 use reqwest::StatusCode;
 use serde::{Serialize, de::DeserializeOwned};
@@ -1746,6 +1747,91 @@ async fn signals_roundtrip() {
     assert_eq!(records[0].source, "proxy-a");
     assert_eq!(records[0].at_ms, 1_800_000_000_000);
     assert_eq!(records[0].metrics["cps_max"], 15.5);
+
+    admin
+        .execute(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db_name} WITH (FORCE)"
+        )))
+        .await
+        .unwrap();
+}
+
+/// Violations: stored with their evidence, scored per check, and a verdict
+/// recorded once per step up, never enforced in observe-only mode.
+#[tokio::test]
+async fn violations_become_observed_verdicts() {
+    use hallow_db::sqlx::{self, Executor};
+    let Some(redis) = redis_url() else { return };
+    let Some((db_url, db_name, admin)) = test_database().await else {
+        return;
+    };
+    let mut config = config(&redis, &format!("test-{}", Uuid::new_v4()));
+    config.database_url = Some(db_url);
+    let one = Instance::start(config).await;
+    one.register_proxy("proxy-a").await;
+    one.register_hub("hub-1").await;
+    let player = Uuid::new_v4();
+    login_as(&one, player, "Flyer", "proxy-a").await;
+
+    let violation = |check: &str, severity: f64| Violation {
+        player,
+        at_ms: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap(),
+        check: check.into(),
+        severity,
+        protocol: Some(777),
+        summary: format!("{check} test"),
+        evidence: [("limit".to_owned(), 2000.0)].into(),
+    };
+    let batch = ViolationBatch {
+        source: "proxy-a".into(),
+        violations: vec![
+            violation("fly", 2.0),
+            violation("fly", 2.0),
+            violation("timer", 0.5),
+        ],
+    };
+    let res = one.post(routes::VIOLATIONS, &batch).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let standing: PlayerViolations = one.get_json(&routes::violations_of("flyer")).await;
+    assert_eq!(standing.player, player);
+    assert_eq!(standing.mode, VerdictMode::Observe);
+    assert_eq!(standing.violations.len(), 3);
+    assert_eq!(standing.violations[0].evidence["limit"], 2000.0);
+    let fly = standing.scores.iter().find(|s| s.check == "fly").unwrap();
+    assert!((fly.level - 4.0).abs() < 0.01, "{}", fly.level);
+    assert_eq!(fly.action, VerdictAction::Setback);
+    let timer = standing.scores.iter().find(|s| s.check == "timer").unwrap();
+    assert_eq!(timer.action, VerdictAction::None);
+    // Review at 2, setback at 4; nothing for the timer's 0.5.
+    let actions: Vec<_> = standing
+        .verdicts
+        .iter()
+        .map(|v| (v.check.as_str(), v.action))
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            ("fly", VerdictAction::Setback),
+            ("fly", VerdictAction::Review)
+        ]
+    );
+    assert!(standing.verdicts.iter().all(|v| !v.enforced));
+    assert!(standing.verdicts[0].reason.starts_with("proxy-a: fly test"));
+
+    // A bad check name is refused; an unknown player is a 404.
+    let bad = ViolationBatch {
+        source: "proxy-a".into(),
+        violations: vec![violation("Fly!", 1.0)],
+    };
+    assert_eq!(
+        one.post(routes::VIOLATIONS, &bad).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        one.get(&routes::violations_of("nobody")).await.status(),
+        StatusCode::NOT_FOUND
+    );
 
     admin
         .execute(sqlx::AssertSqlSafe(format!(

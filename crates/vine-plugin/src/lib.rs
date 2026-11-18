@@ -46,6 +46,7 @@ use hallow_proto::{
     routes,
     server::{ServerInfo, ServerState},
     signal::{self, SignalBatch},
+    violation::ViolationBatch,
 };
 use uuid::Uuid;
 use vine::plugin::{
@@ -55,7 +56,7 @@ use vine::plugin::{
         ServerConnectedEvent,
     },
     logging::{self, Level},
-    proxy, scheduler,
+    packet_timing, proxy, scheduler,
     types::{EventPriority, ForwardingMode},
 };
 
@@ -508,7 +509,37 @@ impl State {
         let now = now_ms();
         let grace = u64::try_from(SWEEP_AFTER.as_millis()).unwrap_or(u64::MAX);
         self.signals.prune(&live, grace, now);
-        let samples = self.signals.flush(now);
+        let mut samples = self.signals.flush(now);
+        let window = u32::try_from(SIGNAL_WINDOW_MS).unwrap_or(u32::MAX);
+        signals::merge_timing(
+            &mut samples,
+            packet_timing::take_packet_timing()
+                .into_iter()
+                .filter_map(|timing| {
+                    let uuid = Uuid::parse_str(&timing.uuid).ok()?;
+                    let protocol = i32::try_from(timing.protocol_version).unwrap_or(0);
+                    Some((uuid, protocol, timing.metrics))
+                }),
+            now,
+            window,
+        );
+        // Checks on Vine's packet timing: violations with evidence for the
+        // verdict service, which only records them for now.
+        let limits = hallow_anticheat::Limits::default();
+        let violations: Vec<_> = samples
+            .iter()
+            .flat_map(|sample| hallow_anticheat::proxy_checks(sample, &limits))
+            .collect();
+        for chunk in violations.chunks(SIGNAL_BATCH) {
+            let batch = ViolationBatch {
+                source: self.config.proxy_id.clone(),
+                violations: chunk.to_vec(),
+            };
+            if let Err(err) = self.client.post_empty(routes::VIOLATIONS, &batch) {
+                log(Level::Warn, &format!("violation batch dropped: {err}"));
+                break;
+            }
+        }
         for chunk in samples.chunks(SIGNAL_BATCH) {
             let batch = SignalBatch {
                 source: self.config.proxy_id.clone(),
