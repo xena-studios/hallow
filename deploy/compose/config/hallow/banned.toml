@@ -1,0 +1,7 @@
+# hallow_server plugin config for the banned lobby (dev only). Kind, role and
+# max players come from servers/banned/hallow.toml (kind "banned", so the
+# control plane sends banned players here).
+control_plane = "control-plane:8080"
+token_file = "token"
+name = "banned"
+address = "banned:25565"

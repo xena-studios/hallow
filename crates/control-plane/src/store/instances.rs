@@ -214,7 +214,7 @@ impl Store {
     }
 
     /// Names of instances the matchmaker must not send players to.
-    pub(super) async fn closed_instances(&self) -> Result<Vec<String>> {
+    pub(crate) async fn closed_instances(&self) -> Result<Vec<String>> {
         Ok(self
             .instances()
             .await?

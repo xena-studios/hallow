@@ -16,10 +16,18 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `GET /v1/servers/{name}/players` lists them by username, for the panel.
 - **Proxies** register on start and heartbeat. Re-registering after a restart drops the players the proxy had.
 - **Expiry.** Anything that misses three heartbeats (15 s) is removed. A removed proxy takes its players and queued commands with it.
-- **Login.**
-  - A proxy asks before a player reaches a server. The answer is either a hub (the emptiest ready lobby of `HALLOW_HUB_KIND`) or a refusal.
-  - Refusals cover a full network, no free hub, or a duplicate login. With `HALLOW_DUPLICATE_LOGIN=kick_old`, a duplicate login kicks the old session instead.
-  - Two proxies racing the same login can't both win.
+- **Login.** A proxy asks before a player reaches a server, and the answer is always somewhere to go ([Never dropped](../../docs/ARCHITECTURE.md#never-dropped)):
+  - a hub: the emptiest ready lobby of `HALLOW_HUB_KIND`;
+  - for a banned player, the emptiest banned lobby (`HALLOW_BANNED_KIND`, default `banned`), or limbo while none is up, with the ban (`ban`);
+  - with the network full (`HALLOW_MAX_PLAYERS`) or no hub free, `wait`: limbo, with the reason and their place in line.
+  - A duplicate login replaces the old session, whose proxy disconnects it. `HALLOW_DUPLICATE_LOGIN=deny` refuses the new one instead; a login from a draining proxy always replaces.
+  - Two proxies racing the same login can't both win; the loser is the only other refusal.
+- **Limbo** ([`src/limbo.rs`](src/limbo.rs)): limbo is each proxy's built-in server (`HALLOW_LIMBO_SERVER`, default `limbo`).
+  - Players waiting there are kept oldest first. Every matchmaker pass (half a second, one instance at a time) sends each one on as soon as there's room: a hub, or a banned lobby for a banned player. Those still waiting are told their place every 30 s.
+  - The instance planner counts waiting players towards the kind they wait for, so a hub or banned lobby starts for them.
+  - `POST /v1/presence/fallback`: a proxy whose server kicked a player, crashed or stopped asks where they go. The answer is the game's lobby, another lobby of the same kind, a hub, or limbo (banned players: a banned lobby or limbo), with a message.
+  - An ending instance with nowhere to send its players sends them to limbo.
+  - `GET /metrics` shows `hallow_limbo_waiting` and `hallow_players_banned_online`.
 - **Leaving.** A leave only counts from the proxy the player is on, so a late leave from an old session can't remove a newer login.
 - **Draining.**
   - `POST /v1/proxies/{id}/drain` stops (or resumes) new players for a proxy.
@@ -30,16 +38,19 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - HAProxy sends a proxy id; the agent replies `up ready`, `drain` (weight 0: no new players, existing ones stay) or `down`.
   - The port carries no token and changes nothing. Keep it on the private network.
 - **Accounts, bans, ranks and sessions** (PostgreSQL through [`hallow-db`](../db/README.md), when `HALLOW_DATABASE_URL` is set):
-  - a login upserts the account and is refused while the account has an active ban, with the reason and time left;
+  - a login upserts the account; an active ban sends the player to the banned lobby with no permissions (see Punishments);
   - an allowed login gets the player's permission nodes and an open session, which records the servers they visit and closes at logout (or when their proxy dies);
   - `HALLOW_ADMINS` gives the listed usernames the `admin` rank (`*`) at login, to bootstrap a network.
 
-  With a database configured, logins fail closed when it's down. Without one, these are all off and nobody has staff permissions.
+  With a database configured, logins fail closed when it's down: the proxy holds the player in limbo and asks again. Without one, these are all off and nobody has staff permissions.
 - **Friends** (with the database):
   - `POST /v1/friends` takes one action (add, accept, deny, remove, list or requests), with notices to the other player on their proxy;
   - friends are told when each other join or leave the network.
 - **Punishments** (with the database):
-  - `POST /v1/punishments` issues a ban, mute, kick or warning by username (online or not; a kick only while online) and enforces it on the player's proxy. The issuer is an in-game staff player (`issuer`), a panel staff member (`staff: {name, panel_user}`) or the console; all three take the same path, so a ban from the panel kicks the player and refuses their next login on every proxy just like `/ban`;
+  - `POST /v1/punishments` issues a ban, mute, kick or warning by username (online or not; a kick only while online) and enforces it on the player's proxy. The issuer is an in-game staff player (`issuer`), a panel staff member (`staff: {name, panel_user}`) or the console; all three take the same path, so a ban from the panel acts on every proxy just like `/ban`;
+  - a ban locks an online player in (`restricted` in Redis, `Restrict` to their proxy) and moves them to a banned lobby or limbo; `/lobby`, `/hub`, queues, party actions and sends are refused for them (`409`). When it ends (checked every matchmaker pass) or is lifted, they're unlocked and sent to a hub;
+  - a kick never disconnects: the player waits in limbo for `HALLOW_KICK_HOLD_SECS` (10) with the reason as a title, then goes to a hub. `POST /v1/commands` with a `kick` does the same;
+  - `GET /v1/bans/{uuid}` returns a player's active ban as the banned lobby shows it: the issuer as the panel names them, the end, the id and the appeal (`HALLOW_APPEAL_TEXT`, `HALLOW_APPEAL_URL`). A server's scoped token may ask only about its own players;
   - `POST /v1/punishments/revoke` lifts a ban or mute, with an optional reason;
   - `GET /v1/punishments?name=` lists a player's last 10;
   - `GET /v1/punishments/search?player=&kind=&active=&limit=&offset=` pages through every punishment, newest first, with the target, issuer and revocation (for the panel);
@@ -113,7 +124,8 @@ The tests in `tests/network.rs` start two instances against one Redis and drive 
 
 - both proxies see the same server list and player count;
 - changes reach a waiting long poll on the other instance;
-- duplicate logins, kicks, expiry and auth behave as described.
+- duplicate logins, kicks, expiry and auth behave as described;
+- nobody is turned away: players wait in limbo with no hub or a full network and are sent on when there's room; fallbacks pick a lobby, a hub or limbo; kicks hold players in limbo before a hub; bans move players to the banned lobby, lock them in, and release them when lifted or over.
 
 ```sh
 HALLOW_TEST_REDIS_URL=redis://127.0.0.1:6379 cargo test -p hallow-control-plane

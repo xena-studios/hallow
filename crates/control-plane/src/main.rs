@@ -9,8 +9,13 @@
 //! | `HALLOW_AGENT_LISTEN` | `0.0.0.0:8081` | HAProxy agent checks (plain TCP, no token); `off` disables |
 //! | `HALLOW_KEY_PREFIX` | `hallow` | Prefix for Redis keys, to share one Redis between networks |
 //! | `HALLOW_HUB_KIND` | `hub` | Server kind players land on after login |
-//! | `HALLOW_MAX_PLAYERS` | `1000` | Network player limit |
-//! | `HALLOW_DUPLICATE_LOGIN` | `deny` | `deny` refuses a second login; `kick_old` kicks the first session |
+//! | `HALLOW_MAX_PLAYERS` | `1000` | Network player limit; past it, players wait in limbo |
+//! | `HALLOW_BANNED_KIND` | `banned` | Server kind banned players are sent to |
+//! | `HALLOW_LIMBO_SERVER` | `limbo` | The proxies' built-in limbo (Vine's `[limbo] name`) |
+//! | `HALLOW_KICK_HOLD_SECS` | `10` | How long a kicked player waits in limbo before a hub |
+//! | `HALLOW_APPEAL_TEXT` | none | How to appeal a ban, shown in the banned lobby (legacy `§` text) |
+//! | `HALLOW_APPEAL_URL` | none | Where to appeal a ban, shown in the banned lobby |
+//! | `HALLOW_DUPLICATE_LOGIN` | `kick_old` | `kick_old` (or `replace`): the new login replaces the old session; `deny` refuses the new one |
 //! | `HALLOW_DATABASE_URL` | none | PostgreSQL for accounts, bans, ranks and sessions; without it they're off |
 //! | `HALLOW_ADMINS` | none | Comma-separated usernames given the `admin` rank (`*`) at login |
 //! | `HALLOW_SIGNAL_RETENTION_DAYS` | `14` | How long anticheat signal samples are kept |
@@ -114,6 +119,22 @@ fn config() -> Result<Config, String> {
     if let Ok(kind) = env::var("HALLOW_HUB_KIND") {
         config.hub_kind = kind;
     }
+    if let Ok(kind) = env::var("HALLOW_BANNED_KIND") {
+        config.banned_kind = kind;
+    }
+    if let Ok(limbo) = env::var("HALLOW_LIMBO_SERVER") {
+        config.limbo = limbo;
+    }
+    if let Ok(secs) = env::var("HALLOW_KICK_HOLD_SECS") {
+        config.kick_hold = std::time::Duration::from_secs(
+            secs.parse()
+                .map_err(|err| format!("HALLOW_KICK_HOLD_SECS: {err}"))?,
+        );
+    }
+    config.appeal_text = env::var("HALLOW_APPEAL_TEXT")
+        .ok()
+        .filter(|t| !t.is_empty());
+    config.appeal_url = env::var("HALLOW_APPEAL_URL").ok().filter(|t| !t.is_empty());
     if let Ok(max) = env::var("HALLOW_MAX_PLAYERS") {
         config.max_players = max
             .parse()
@@ -148,10 +169,10 @@ fn config() -> Result<Config, String> {
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
         config.duplicate_login = match mode.as_str() {
             "deny" => DuplicateLogin::Deny,
-            "kick_old" => DuplicateLogin::KickOld,
+            "kick_old" | "replace" => DuplicateLogin::KickOld,
             other => {
                 return Err(format!(
-                    "HALLOW_DUPLICATE_LOGIN must be deny or kick_old, not {other}"
+                    "HALLOW_DUPLICATE_LOGIN must be kick_old, replace or deny, not {other}"
                 ));
             }
         };

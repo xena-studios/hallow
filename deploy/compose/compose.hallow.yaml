@@ -20,6 +20,8 @@ x-hallow-proxy: &hallow-proxy
       condition: service_healthy
     lobby:
       condition: service_healthy
+    banned:
+      condition: service_healthy
     game-1:
       condition: service_healthy
 
@@ -57,6 +59,10 @@ services:
       HALLOW_DATABASE_URL: postgres://postgres:hallow-dev@postgres:5432/hallow
       # Dev only: the netcheck bot used for the staff command test.
       HALLOW_ADMINS: netstaff
+      # Shown in the banned lobby.
+      HALLOW_APPEAL_TEXT: "Think this is a mistake? Appeal on the dev network's forum."
+      HALLOW_APPEAL_URL: https://example.net/appeal
+      HALLOW_KICK_HOLD_SECS: ${HALLOW_KICK_HOLD_SECS:-10}
     volumes:
       - ./config/hallow/control-plane.token:/run/hallow/token:ro
     ports:
@@ -77,6 +83,28 @@ services:
       - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro
       - ./config/hallow/control-plane.token:/server/plugins/data/hallow_server/token:ro
       - ./config/hallow/lobby.toml:/server/plugins/data/hallow_server/config.toml:ro
+    depends_on:
+      control-plane:
+        condition: service_healthy
+
+  # The banned lobby (servers/banned): banned players are sent here instead
+  # of being disconnected. Static like the hub; on real nodes it is a kind
+  # the control plane runs.
+  banned:
+    build:
+      context: ../../servers/banned
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-banned:${HALLOW_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    tty: true
+    environment:
+      HALLOW_VINE_SECRET: ${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production}
+      HALLOW_SERVER_NAME: banned
+    volumes:
+      - ../../target/wasm32-wasip2/release/hallow_server.wasm:/opt/hallow/plugins/hallow_server.wasm:ro
+      - ./config/hallow/control-plane.token:/server/plugins/data/hallow_server/token:ro
+      - ./config/hallow/banned.toml:/server/plugins/data/hallow_server/config.toml:ro
     depends_on:
       control-plane:
         condition: service_healthy

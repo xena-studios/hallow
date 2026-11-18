@@ -11,6 +11,7 @@ COPY crates crates
 COPY upstream/Pumpkin upstream/Pumpkin
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin
+COPY servers/banned/plugin servers/banned/plugin
 COPY servers/test-game/plugin servers/test-game/plugin
 # The target cache is shared by every build on this machine, worktrees and
 # other checkouts included, and cargo trusts an artifact newer than its

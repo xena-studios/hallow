@@ -70,6 +70,13 @@ impl Store {
         let Some(me) = self.player(&player).await? else {
             return Ok(refuse("You aren't online."));
         };
+        // A banned player talks to nobody and goes nowhere: they may only
+        // see and leave their party.
+        if !matches!(action, PartyAction::Leave { .. } | PartyAction::List { .. })
+            && self.restriction(&player).await?.is_some()
+        {
+            return Ok(refuse("You can't use parties while you're banned."));
+        }
         let uuid = player.to_string();
         let party = self.party_id_of(&uuid).await?;
         match action {
@@ -299,7 +306,9 @@ impl Store {
             let Some(location) = self.player(&member_uuid).await? else {
                 continue;
             };
-            if location.server.as_deref() == Some(server.as_str()) {
+            if location.server.as_deref() == Some(server.as_str())
+                || self.restriction(&member_uuid).await?.is_some()
+            {
                 continue;
             }
             self.push_command(

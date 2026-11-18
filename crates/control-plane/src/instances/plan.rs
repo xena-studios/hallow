@@ -72,6 +72,10 @@ pub struct World<'a> {
     pub servers: &'a [ServerInfo],
     /// Each kind's queue entries' sizes (players still online), oldest first.
     pub queued: &'a BTreeMap<String, Vec<u32>>,
+    /// Players waiting in limbo for a hub or lobby kind (no hub had room, a
+    /// banned player with no banned lobby up). They count as that kind's
+    /// players, so an instance starts for them.
+    pub waiting: &'a BTreeMap<String, u32>,
     pub players_online: u32,
     pub nodes: &'a [NodeSlot],
     pub settings: &'a Settings,
@@ -141,7 +145,7 @@ pub fn plan(world: &World<'_>) -> Vec<Action> {
         let queued = world.queued.get(kind).unwrap_or(&none);
         let (wanted, surplus) = match spec.role {
             KindRole::Game => game_demand(world, kind, spec, &live, &servers, &ended, queued),
-            KindRole::Hub | KindRole::Lobby => lobby_demand(world, spec, &live, &servers),
+            KindRole::Hub | KindRole::Lobby => lobby_demand(world, kind, spec, &live, &servers),
         };
         for name in surplus {
             actions.push(Action::End {
@@ -361,6 +365,7 @@ fn game_demand(
 /// ended after the idle time.
 fn lobby_demand(
     world: &World<'_>,
+    kind: &str,
     spec: &KindSpec,
     live: &[&InstanceInfo],
     servers: &BTreeMap<&str, &ServerInfo>,
@@ -369,7 +374,8 @@ fn lobby_demand(
         .iter()
         .filter_map(|i| servers.get(i.name.as_str()))
         .map(|s| s.players)
-        .sum();
+        .sum::<u32>()
+        + world.waiting.get(kind).copied().unwrap_or(0);
     let fill = (spec.players.max.max(1) * LOBBY_FILL_PERCENT / 100).max(1);
     let target = spec.scaling.warm.max(players.div_ceil(fill));
     let count = live.len() as u32;
@@ -497,6 +503,7 @@ mod tests {
         instances: Vec<InstanceInfo>,
         servers: Vec<ServerInfo>,
         queued: BTreeMap<String, Vec<u32>>,
+        waiting: BTreeMap<String, u32>,
         online: u32,
         nodes: Vec<NodeSlot>,
         settings: Settings,
@@ -509,6 +516,7 @@ mod tests {
                 instances: Vec::new(),
                 servers: Vec::new(),
                 queued: BTreeMap::new(),
+                waiting: BTreeMap::new(),
                 online: 1,
                 nodes: nodes(&["n1"]),
                 settings: Settings::default(),
@@ -527,6 +535,7 @@ mod tests {
                 instances: &self.instances,
                 servers: &self.servers,
                 queued: &self.queued,
+                waiting: &self.waiting,
                 players_online: self.online,
                 nodes: &self.nodes,
                 settings: &self.settings,
@@ -823,6 +832,18 @@ mod tests {
         case.instances[1].had_players = true;
         case.servers.truncate(2);
         assert_eq!(case.plan(), []);
+    }
+
+    #[test]
+    fn players_waiting_in_limbo_start_a_lobby() {
+        // A banned lobby kind kept at no warm instances: a banned player
+        // waiting in limbo starts one.
+        let mut spec = game(0, 500, None);
+        spec.role = KindRole::Lobby;
+        let mut case = Case::new(spec);
+        assert_eq!(creates(&case.plan()), 0);
+        case.waiting.insert("tg".into(), 1);
+        assert_eq!(creates(&case.plan()), 1);
     }
 
     #[test]

@@ -19,6 +19,8 @@
 //! - **Lobbies.** Gives the hub's plugin the game modes and sends players
 //!   to lobbies for it, and when a game ends (the state turns `draining`)
 //!   sends everyone to the lobby `hallow.toml` names (see [`lobbies`]).
+//! - **Bans.** Gives the banned lobby's plugin each player's ban, to show
+//!   them why they're there and when it ends (see [`bans`]).
 //! - **Unregister.** `DELETE /v1/servers/{name}` when the plugin unloads,
 //!   which Pumpkin does on shutdown after kicking players.
 //!
@@ -40,6 +42,7 @@
 //! It needs `http.outbound`, `fs.read.data` and a `sys.env.<NAME>`
 //! permission for each variable it reads; settings are in [`config`].
 
+pub mod bans;
 mod collect;
 mod config;
 mod http;
@@ -142,6 +145,7 @@ fn tick(server: &Server) {
             link.config.return_lobby.clone(),
         )
     }) {
+        bans::tick(server, &client);
         lobbies::tick(
             server,
             &client,
@@ -541,6 +545,9 @@ impl Plugin for HallowServer {
         if let Ok(text) = std::str::from_utf8(&message) {
             let text = text.trim();
             let client = with_link(|link| link.client.clone());
+            if let Some(reply) = bans::handle_ipc(text, client.clone()) {
+                return reply;
+            }
             if let Some(reply) = lobbies::handle_ipc(text, client) {
                 return reply;
             }

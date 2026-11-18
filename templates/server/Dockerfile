@@ -30,6 +30,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin
+COPY servers/banned/plugin servers/banned/plugin
 COPY servers/test-game/plugin servers/test-game/plugin
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-server-plugin-target,target=/src/target,sharing=locked \

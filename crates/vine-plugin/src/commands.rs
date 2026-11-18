@@ -6,7 +6,7 @@
 //! | `/r <message>` (`/reply`) | | Reply to the last private message |
 //! | `/find <player>` | `hallow.staff.find` | Which server and proxy a player is on |
 //! | `/alert <message>` | `hallow.staff.alert` | Message every player on the network |
-//! | `/gkick <player> [reason]` | `hallow.staff.kick` | Disconnect a player from the network |
+//! | `/gkick <player> [reason]` | `hallow.staff.kick` | Kick a player: they wait in limbo with the reason for a few seconds, then go to a hub. Nobody is disconnected |
 //! | `/party <invite\|accept\|leave\|kick\|disband\|warp\|list\|chat>` (`/p`; `/party <player>` invites) | | Parties |
 //! | `/pc <message>` | | Party chat |
 //! | `/friend [add\|accept\|deny\|remove\|list\|requests] [player]` (`/f`; `/friend <player>` adds) | | Friends (needs the database) |
@@ -122,7 +122,7 @@ pub fn register(ctx: &Context) {
     ctx.register_command(
         GKICK,
         "gkick",
-        "Disconnect a player from the network",
+        "Kick a player to limbo, then a hub",
         &[],
         None,
     );
@@ -190,6 +190,13 @@ impl State {
         args: &[String],
     ) -> Result<i32, String> {
         let usage = |text: &str| Err(format!("§cUsage: {text}"));
+        // Banned players talk to nobody and go nowhere; staff can't act
+        // while banned either.
+        if let Some(uuid) = sender.player_uuid.as_deref()
+            && self.restricted.contains_key(uuid)
+        {
+            return Err("§cYou can't use that while you're banned.".into());
+        }
         // Muted players can't talk to anyone, through any command.
         let talking = matches!(id, MSG | REPLY | PARTY_CHAT)
             || (id == PARTY && args.first().is_some_and(|a| a.eq_ignore_ascii_case("chat")));

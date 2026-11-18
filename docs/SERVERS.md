@@ -13,6 +13,7 @@ Each kind of server lives in its own git repo, for example:
 | `skywars` | game | One SkyWars match per instance |
 | `bedwars-lobby` | lobby | BedWars queueing and cosmetics |
 | `bedwars` | game | One BedWars match per instance |
+| `banned` | lobby | Where banned players wait: the ban, a countdown and how to appeal. Not a game mode ([Never dropped](ARCHITECTURE.md#never-dropped)) |
 
 A server repo holds everything that kind of server needs:
 
@@ -114,7 +115,8 @@ Players land in the **hub** (`role = "hub"`), pick a **game mode**, and go to th
 | Anywhere | `/hub`, or `/lobby` with no mode: back to a hub |
 | The hub | The **Game Menu** compass in the hotbar: right-click for a chest listing every mode with how many are playing, click one to go. The welcome message lists the modes as clickable text that runs `/lobby <mode>` |
 | A finished game | Its server goes `draining`; Hallow's server plugin sends everyone to `HALLOW_RETURN_LOBBY` (`hallow.toml`'s `lobby`), or to a hub if none of those is up. The control plane ends the instance once it is empty |
-| An instance ending early | Staff ended it, or it timed out: the control plane sends anyone still on it to its kind's `lobby` (or a hub), waits up to 5 s, then stops it |
+| An instance ending early | Staff ended it, or it timed out: the control plane sends anyone still on it to its kind's `lobby` (or a hub, or limbo if nothing has room), waits up to 5 s, then stops it |
+| A server that crashed, stopped or kicked them | Their proxy asks the control plane for a fallback: the game's `lobby`, another lobby of the same kind, a hub, or Vine's limbo, where they wait until there's room |
 
 `GET /v1/lobbies` lists the modes with their players (in the mode's lobbies and its games) and ready lobby instances, plus the network's player count. The modes are the lobby kinds of registered servers and of the kinds registry, so a mode shows while its first instance starts.
 

@@ -47,17 +47,24 @@ pub struct Catalog {
 }
 
 impl Catalog {
+    /// `banned` is the banned lobby's kind: not a game mode, and no name
+    /// resolves to it.
     #[must_use]
-    pub fn new(hub: &str, servers: &[ServerInfo], kinds: &[(String, KindSpec)]) -> Self {
+    pub fn new(
+        hub: &str,
+        banned: &str,
+        servers: &[ServerInfo],
+        kinds: &[(String, KindSpec)],
+    ) -> Self {
         let mut lobbies: BTreeSet<String> = servers
             .iter()
-            .filter(|s| s.role == ServerRole::Lobby && s.kind != hub)
+            .filter(|s| s.role == ServerRole::Lobby && s.kind != hub && s.kind != banned)
             .map(|s| s.kind.clone())
             .collect();
         let mut game_lobby = BTreeMap::new();
         for (name, spec) in kinds {
             match spec.role {
-                KindRole::Lobby if name != hub => {
+                KindRole::Lobby if name != hub && name != banned => {
                     lobbies.insert(name.clone());
                 }
                 KindRole::Game => {
@@ -139,7 +146,7 @@ impl Catalog {
 }
 
 /// Registered kinds, if there's a database to keep them.
-async fn kinds(state: &AppState) -> Result<Vec<(String, KindSpec)>, Failure> {
+pub(crate) async fn kinds(state: &AppState) -> Result<Vec<(String, KindSpec)>, Failure> {
     let Some(db) = &state.db else {
         return Ok(Vec::new());
     };
@@ -154,7 +161,12 @@ async fn catalog(state: &AppState) -> Result<(Catalog, Vec<ServerInfo>), Failure
     let (_, servers) = state.store.read_servers().await?;
     let kinds = kinds(state).await?;
     Ok((
-        Catalog::new(&state.config.hub_kind, &servers, &kinds),
+        Catalog::new(
+            &state.config.hub_kind,
+            &state.config.banned_kind,
+            &servers,
+            &kinds,
+        ),
         servers,
     ))
 }
@@ -200,6 +212,28 @@ pub async fn send(
         }
     }
     let (catalog, servers) = catalog(&state).await?;
+    // Banned players only go where the control plane sends them, and a
+    // banned lobby only sends its players to another banned lobby.
+    if state.store.restriction(&req.player).await?.is_some() {
+        let banned = &state.config.banned_kind;
+        let asked_banned = req.lobby.as_deref() == Some(banned.as_str());
+        let Some(server) = asked_banned
+            .then(|| crate::store::lobby::least_full(&servers, banned, &[]))
+            .flatten()
+            .filter(|s| location.server.as_deref() != Some(s.name.as_str()))
+        else {
+            return Err(Failure::new(ErrorCode::Conflict, crate::limbo::LOCKED));
+        };
+        let server = server.clone();
+        state
+            .store
+            .move_player(&location.proxy, req.player, &server.name)
+            .await?;
+        return Ok(axum::Json(LobbySent {
+            server: server.name,
+            kind: server.kind,
+        }));
+    }
     let kind = match &req.lobby {
         None => catalog.hub.clone(),
         Some(name) => match catalog.resolve(name) {
@@ -254,34 +288,68 @@ pub async fn send(
 /// instance is stopped, so nobody is dropped by the stop.
 pub async fn evacuate(
     store: &Store,
+    config: &crate::Config,
     server: &str,
     lobby: Option<&str>,
-    hub: &str,
     wait: Duration,
 ) -> Result<usize, StoreError> {
     let Some(players) = store.server_players(server).await? else {
         return Ok(0);
     };
+    let pick = |kind: &str| {
+        let kind = kind.to_owned();
+        async move {
+            Ok::<_, StoreError>(
+                store
+                    .pick_lobby(&kind)
+                    .await?
+                    .filter(|t| t.name != server)
+                    .map(|t| t.name),
+            )
+        }
+    };
     let mut target = None;
     if let Some(lobby) = lobby {
-        target = store.pick_lobby(lobby).await?;
+        target = pick(lobby).await?;
     }
     if target.is_none() {
-        target = store.pick_lobby(hub).await?;
+        target = pick(&config.hub_kind).await?;
     }
-    let Some(target) = target.filter(|t| t.name != server) else {
-        return Ok(0);
-    };
+    let banned_target = pick(&config.banned_kind).await?;
     let mut sent = 0;
     for player in &players {
-        if let Some(location) = store.player(&player.uuid).await?
-            && location.server.as_deref() == Some(server)
-        {
-            store
-                .move_player(&location.proxy, player.uuid, &target.name)
-                .await?;
-            sent += 1;
+        let Some(location) = store.player(&player.uuid).await? else {
+            continue;
+        };
+        if location.server.as_deref() != Some(server) {
+            continue;
         }
+        // A banned player never leaves for a hub; anyone with nowhere to go
+        // waits in limbo.
+        let restricted = store.restriction(&player.uuid).await?.is_some();
+        let to = if restricted {
+            banned_target.clone()
+        } else {
+            target.clone()
+        };
+        match to {
+            Some(to) => store.move_player(&location.proxy, player.uuid, &to).await?,
+            None => {
+                store
+                    .start_waiting(&player.uuid, crate::store::now_millis())
+                    .await?;
+                store
+                    .send_to_proxy(
+                        &location.proxy,
+                        &hallow_proto::command::ProxyCommand::Send {
+                            player: player.uuid,
+                            server: config.limbo.clone(),
+                        },
+                    )
+                    .await?;
+            }
+        }
+        sent += 1;
     }
     if sent > 0 {
         let deadline = tokio::time::Instant::now() + wait;
@@ -292,7 +360,7 @@ pub async fn evacuate(
                 break;
             }
         }
-        tracing::info!(%server, to = %target.name, sent, "sent players off an ending instance");
+        tracing::info!(%server, to = ?target, sent, "sent players off an ending instance");
     }
     Ok(sent)
 }
@@ -346,7 +414,7 @@ mod tests {
             ),
             ("duels".to_owned(), kind(KindRole::Game, Some("hub"))),
         ];
-        (Catalog::new("hub", &servers, &kinds), servers)
+        (Catalog::new("hub", "banned", &servers, &kinds), servers)
     }
 
     #[test]
@@ -398,7 +466,7 @@ mod tests {
             server("tg-lobby", "test-game-lobby", ServerRole::Lobby, 1),
             server("test-game-1", "test-game", ServerRole::Game, 2),
         ];
-        let catalog = Catalog::new("hub", &servers, &[]);
+        let catalog = Catalog::new("hub", "banned", &servers, &[]);
         assert_eq!(catalog.modes(&servers, &[])[0].players, 3);
         assert_eq!(
             catalog.resolve("test-game").as_deref(),

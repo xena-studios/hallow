@@ -20,6 +20,7 @@ mod fleet;
 mod friends;
 pub mod instances;
 mod kinds;
+pub mod limbo;
 pub mod lobbies;
 mod metrics;
 mod nodes;
@@ -37,12 +38,17 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, sync::Arc, time
 use hallow_proto::routes::{HEARTBEAT_SECONDS, LONG_POLL_SECONDS};
 use tokio::net::TcpListener;
 
-/// What happens when a player logs in while already online on another live proxy.
+/// What happens when a player logs in while already online on another live
+/// proxy. One account can only be in one place, so one of the two sessions
+/// has to end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DuplicateLogin {
     /// Refuse the new login; the player stays where they are.
     Deny,
-    /// Kick the old session and let the new one in.
+    /// The new login replaces the old session, which is disconnected (the
+    /// default): the player is the one who connected again, and a stale
+    /// session (a client that crashed, a lost connection) never locks them
+    /// out.
     KickOld,
 }
 
@@ -97,8 +103,20 @@ pub struct Config {
     pub key_prefix: String,
     /// The server kind players land on after login, such as `hub`.
     pub hub_kind: String,
-    /// The network's player limit, shown in the server list.
+    /// The network's player limit, shown in the server list. Past it,
+    /// players wait in limbo.
     pub max_players: u32,
+    /// The server kind banned players are sent to (`HALLOW_BANNED_KIND`).
+    /// It isn't a game mode, and nobody else is sent there.
+    pub banned_kind: String,
+    /// The proxies' built-in limbo server (`HALLOW_LIMBO_SERVER`).
+    pub limbo: String,
+    /// How long a kicked player waits in limbo before going to a hub.
+    pub kick_hold: Duration,
+    /// How to appeal a ban, shown in the banned lobby (legacy `§` text).
+    pub appeal_text: Option<String>,
+    /// Where to appeal a ban.
+    pub appeal_url: Option<String>,
     pub duplicate_login: DuplicateLogin,
     /// PostgreSQL for accounts, bans, ranks and sessions. Without it the
     /// control plane keeps only live state and nobody has permissions.
@@ -133,7 +151,12 @@ impl Config {
             key_prefix: "hallow".into(),
             hub_kind: "hub".into(),
             max_players: 1000,
-            duplicate_login: DuplicateLogin::Deny,
+            banned_kind: "banned".into(),
+            limbo: hallow_proto::presence::LIMBO.into(),
+            kick_hold: Duration::from_secs(10),
+            appeal_text: None,
+            appeal_url: None,
+            duplicate_login: DuplicateLogin::KickOld,
             database_url: None,
             admins: Vec::new(),
             signal_retention_days: 14,
@@ -348,8 +371,13 @@ async fn matchmaker(state: Arc<AppState>) {
                 continue;
             }
         }
+        // Bans that ran out and players waiting in limbo, before the plan,
+        // which starts hubs and banned lobbies for whoever still waits.
+        if let Err(err) = limbo::tend(&state).await {
+            tracing::warn!(%err, "couldn't tend to limbo");
+        }
         let work = match &state.instances {
-            Some(manager) => match manager.plan(&state.store).await {
+            Some(manager) => match manager.plan(&state.store, &state.config).await {
                 Ok(work) => work,
                 Err(err) => {
                     tracing::warn!(%err, "couldn't plan instances");

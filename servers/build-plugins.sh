@@ -7,8 +7,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 cargo build --release --locked --target wasm32-wasip2 \
-  -p hallow-vine -p hallow-server -p hallow-hub -p hallow-test-game
+  -p hallow-vine -p hallow-server -p hallow-hub -p hallow-test-game -p hallow-banned
 out=target/wasm32-wasip2/release
 cp "$out/hallow_hub.wasm" servers/hub/plugins/
 cp "$out/hallow_test_game.wasm" servers/test-game/plugins/
-echo "Built the plugins into $out, servers/hub/plugins and servers/test-game/plugins."
+cp "$out/hallow_banned.wasm" servers/banned/plugins/
+echo "Built the plugins into $out, servers/hub/plugins, servers/test-game/plugins and servers/banned/plugins."
