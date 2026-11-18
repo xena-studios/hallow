@@ -1,0 +1,86 @@
+# Saltmarsh: four wide sandy islands for teams of two, joined to the middle
+# by sunken sandstone causeways that stop just short.
+name = "Saltmarsh"
+description = "Wide sandy islands for pairs, and causeways that stop short."
+modes = ["teams"]
+seed = 3307
+void_y = 30
+border = 70
+copies = 4
+team_size = 2
+spectate = [0.5, 92, 0.5]
+
+[team]
+spawn = [-1.5, 69, -35.5]
+extra_spawns = [[2.5, 69, -35.5]]
+cage = true
+
+[[team.chest]]
+at = [-4, 65, -38]
+
+[[team.chest]]
+at = [4, 65, -38]
+
+[[team.chest]]
+at = [0, 65, -40]
+
+[[shape]]
+kind = "island"
+at = [0, 64, -36]
+radius = 7
+depth = 8
+top = "sand"
+soil = "sandstone"
+core = "smooth_sandstone"
+ore = "gold_ore"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [-1, 63, -29]
+to = [1, 63, -21]
+block = "cut_sandstone"
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [0, 64, 0]
+radius = 12
+depth = 14
+top = "sand"
+soil = "sandstone"
+core = "smooth_sandstone"
+ore = "gold_ore"
+
+[[shape]]
+kind = "box"
+from = [-2, 65, -2]
+to = [2, 65, 2]
+block = "chiseled_sandstone"
+
+[[shape]]
+kind = "tree"
+at = [7, 64, 7]
+log = "acacia_log"
+leaves = "acacia_leaves"
+height = 4
+
+[[chest]]
+at = [3, 65, 0]
+loot = "middle"
+
+[[chest]]
+at = [-4, 65, 0]
+loot = "middle"
+
+[[chest]]
+at = [0, 65, 3]
+loot = "middle"
+
+[[chest]]
+at = [0, 65, -4]
+loot = "middle"
+
+[[chest]]
+at = [-7, 65, -7]
+loot = "middle"

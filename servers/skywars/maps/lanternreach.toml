@@ -1,0 +1,116 @@
+# Lanternreach: dark-wood rafts on blackstone, lit by lantern posts, round
+# a shrine. Islands sit a little further out; the middle sits lower.
+name = "Lanternreach"
+description = "Dark-wood rafts and lantern posts round a sunken shrine."
+modes = ["solo"]
+seed = 5150
+void_y = 28
+border = 70
+copies = 4
+mirror = true
+team_size = 1
+spectate = [0.5, 90, 0.5]
+
+[team]
+spawn = [13.5, 70, -33.5]
+cage = true
+
+[[team.chest]]
+at = [11, 66, -35]
+
+[[team.chest]]
+at = [16, 66, -31]
+
+[[team.chest]]
+at = [15, 66, -36]
+
+[[shape]]
+kind = "island"
+at = [13, 65, -33]
+radius = 5.5
+depth = 8
+top = "dark_oak_planks"
+soil = "blackstone"
+core = "blackstone"
+ore = "gilded_blackstone"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [10, 66, -30]
+to = [10, 68, -30]
+block = "dark_oak_fence"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [10, 69, -30]
+to = [10, 69, -30]
+block = "glowstone"
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [0, 60, 0]
+radius = 11
+depth = 10
+top = "polished_blackstone_bricks"
+soil = "blackstone"
+core = "blackstone"
+ore = "gilded_blackstone"
+
+[[shape]]
+kind = "box"
+from = [-3, 61, -3]
+to = [3, 61, 3]
+block = "dark_oak_planks"
+
+[[shape]]
+kind = "box"
+from = [-3, 62, -3]
+to = [-3, 64, -3]
+block = "dark_oak_log"
+
+[[shape]]
+kind = "box"
+from = [3, 62, 3]
+to = [3, 64, 3]
+block = "dark_oak_log"
+
+[[shape]]
+kind = "box"
+from = [-3, 62, 3]
+to = [-3, 64, 3]
+block = "dark_oak_log"
+
+[[shape]]
+kind = "box"
+from = [3, 62, -3]
+to = [3, 64, -3]
+block = "dark_oak_log"
+
+[[shape]]
+kind = "box"
+from = [-3, 65, -3]
+to = [3, 65, 3]
+block = "dark_oak_slab"
+
+[[chest]]
+at = [1, 62, 0]
+loot = "middle"
+
+[[chest]]
+at = [-1, 62, 0]
+loot = "middle"
+
+[[chest]]
+at = [6, 61, 6]
+loot = "middle"
+
+[[chest]]
+at = [-7, 61, -7]
+loot = "middle"
+
+[[chest]]
+at = [7, 61, -7]
+loot = "middle"

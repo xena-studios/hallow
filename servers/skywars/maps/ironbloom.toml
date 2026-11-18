@@ -1,0 +1,90 @@
+# Ironbloom: copper-and-granite islands for teams of two, set off the axis
+# so each pair is closer to one neighbour than the other.
+name = "Ironbloom"
+description = "Copper and granite islands with a flowering middle."
+modes = ["teams"]
+seed = 6640
+void_y = 30
+border = 72
+copies = 4
+team_size = 2
+spectate = [0.5, 94, 0.5]
+
+[team]
+spawn = [6.5, 69, -36.5]
+extra_spawns = [[10.5, 69, -36.5]]
+cage = true
+
+[[team.chest]]
+at = [5, 65, -40]
+
+[[team.chest]]
+at = [12, 65, -39]
+
+[[team.chest]]
+at = [8, 65, -32]
+
+[[shape]]
+kind = "island"
+at = [8, 64, -37]
+radius = 6.5
+depth = 8
+top = "granite"
+soil = "polished_granite"
+core = "stone"
+ore = "copper_ore"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [3, 65, -35]
+to = [3, 66, -35]
+block = "cut_copper"
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [0, 64, 0]
+radius = 12
+depth = 15
+ore = "copper_ore"
+
+[[shape]]
+kind = "box"
+from = [-3, 64, -3]
+to = [3, 64, 3]
+block = "waxed_copper_block"
+
+[[shape]]
+kind = "tree"
+at = [-6, 64, 5]
+log = "cherry_log"
+leaves = "cherry_leaves"
+height = 5
+
+[[shape]]
+kind = "tree"
+at = [6, 64, -5]
+log = "cherry_log"
+leaves = "cherry_leaves"
+height = 5
+
+[[chest]]
+at = [2, 65, 0]
+loot = "middle"
+
+[[chest]]
+at = [-2, 65, 0]
+loot = "middle"
+
+[[chest]]
+at = [0, 65, 2]
+loot = "middle"
+
+[[chest]]
+at = [0, 65, -2]
+loot = "middle"
+
+[[chest]]
+at = [8, 65, 8]
+loot = "middle"

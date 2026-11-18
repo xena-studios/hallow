@@ -1,0 +1,44 @@
+# Sky Wars, teams of two: four islands with a cage each for two players.
+# Built from the same folder as solo (hallow.toml), with the same plugin
+# and maps; SKYWARS_MODE picks the teams maps. Players return to
+# skywars-lobby when it ends. Rules and tuning: docs/games/SKYWARS.md.
+name = "skywars-teams"
+role = "game"
+lobby = "skywars-lobby"
+base = "^0.2"
+
+[players]
+min = 2
+max = 8                      # four islands of two
+
+[scaling]
+warm = 1
+max_instances = 50
+
+[maps]
+dir = "maps"                 # also copied into the plugin's data folder
+pick = "random"              # HALLOW_GAME_MAP picks one by file name
+
+[[plugins]]
+file = "plugins/hallow_skywars.wasm"
+permissions = [
+  "fs.read.data",
+  "sys.env.HALLOW_GAME_TEST_HOOKS",
+  "sys.env.HALLOW_GAME_MAP",
+  "sys.env.SKYWARS_MODE",
+  "sys.env.SKYWARS_MIN_PLAYERS",
+  "sys.env.HALLOW_COMBAT",
+]
+
+[pumpkin]
+default_gamemode = "Adventure"
+default_difficulty = "Normal"
+allow_nether = false
+allow_end = false
+
+[pumpkin.pvp]
+enabled = true
+
+[env]
+SKYWARS_MODE = "teams"       # picks maps with modes = ["teams"]
+SKYWARS_MIN_PLAYERS = "2"

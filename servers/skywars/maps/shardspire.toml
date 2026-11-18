@@ -1,0 +1,110 @@
+# Shardspire: eight pale stone shards round a tall calcite spire. A ring
+# of stepping stones halfway in rewards the brave.
+name = "Shardspire"
+description = "Eight stone shards round a calcite spire."
+modes = ["solo"]
+seed = 2203
+void_y = 30
+border = 64
+copies = 4
+mirror = true
+team_size = 1
+spectate = [0.5, 92, 0.5]
+
+# One island, drawn north-north-east; turned and mirrored into eight.
+[team]
+spawn = [12.5, 69, -29.5]
+cage = true
+
+[[team.chest]]
+at = [10, 65, -32]
+
+[[team.chest]]
+at = [15, 65, -28]
+
+[[team.chest]]
+at = [13, 65, -33]
+
+[[shape]]
+kind = "island"
+at = [12, 64, -30]
+radius = 5.5
+depth = 7
+top = "calcite"
+soil = "andesite"
+core = "stone"
+ore = "iron_ore"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [9, 65, -27]
+to = [9, 66, -27]
+block = "andesite_wall"
+repeat = true
+
+# Stepping stones.
+[[shape]]
+kind = "island"
+at = [6, 61, -18]
+radius = 2.2
+depth = 3
+top = "andesite"
+soil = "andesite"
+core = "stone"
+repeat = true
+
+# The middle and its spire.
+[[shape]]
+kind = "island"
+at = [0, 64, 0]
+radius = 10
+depth = 13
+top = "calcite"
+soil = "andesite"
+core = "stone"
+ore = "diamond_ore"
+
+[[shape]]
+kind = "cylinder"
+at = [0, 65, 0]
+radius = 2
+height = 3
+block = "polished_andesite"
+
+[[shape]]
+kind = "cylinder"
+at = [0, 68, 0]
+radius = 1
+height = 6
+block = "calcite"
+
+[[shape]]
+kind = "box"
+from = [0, 74, 0]
+to = [0, 75, 0]
+block = "amethyst_block"
+
+[[chest]]
+at = [4, 65, 0]
+loot = "middle"
+
+[[chest]]
+at = [-5, 65, 0]
+loot = "middle"
+
+[[chest]]
+at = [0, 65, 4]
+loot = "middle"
+
+[[chest]]
+at = [0, 65, -5]
+loot = "middle"
+
+[[chest]]
+at = [5, 65, 5]
+loot = "middle"
+
+[[chest]]
+at = [-6, 65, -6]
+loot = "middle"
