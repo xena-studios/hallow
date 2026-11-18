@@ -58,7 +58,7 @@ flowchart TB
 | Hallow Panel | One panel for nodes, servers, players, staff, bans, games and stats | Calagopus Panel fork + extensions | `panel/` |
 | Redis | Live state: presence, queues, server list, pub/sub between proxies | | |
 | PostgreSQL | Accounts, ranks, stats, punishments, panel data | | |
-| Player website | Stats, leaderboards, store | Ours, TypeScript | `web/` |
+| Player website | Profiles and leaderboards (a store later), from the control plane's public API | Ours, Rust (server-rendered) | `web/` |
 | Monitoring | Metrics, logs, alerts | Prometheus, Grafana, Loki | `deploy/` |
 
 ## A player's path
@@ -69,7 +69,7 @@ flowchart TB
 4. For any client older than 26.3, Vine translates every packet both ways, so the lobby sees a 26.3 client. Switching servers on a client before 1.20.2 is a new join packet and a respawn instead of the configuration phase.
 5. The player moves to a gamemode lobby such as `skywars-lobby` and queues. The queue plugin hands the entry to the control plane.
 6. The matchmaker fills a game: it uses a warm instance or asks Wings to start one from the game's image, registers it with every Vine, then tells the player's proxy to move them.
-7. When the game ends the instance reports results, players go back to the lobby named in its `hallow.toml`, and the instance is deleted. The next match gets a fresh one.
+7. When the game ends the instance reports its result (wins, placements and stats, counted into each player's totals and recent games), players go back to the lobby named in its `hallow.toml`, and the instance is deleted. The next match gets a fresh one.
 
 ## Bedrock
 

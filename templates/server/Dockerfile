@@ -28,6 +28,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # builds don't wait on each other's lock.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# The player website is a workspace member too.
+COPY web web
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin
 COPY servers/test-game/plugin servers/test-game/plugin

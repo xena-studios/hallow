@@ -126,6 +126,19 @@ Players land in the **hub** (`role = "hub"`), pick a **game mode**, and go to th
 
 Pumpkin's plugin API (WIT v0.1) has what this needs: GUIs (`gui` with `generic-9x3` chests), item stacks with names and lore, inventory click and close events, interact events, titles, tab list header and footer, clickable text, and cancellable damage, hunger, drop and swap-hand events. One gap: there is no call to close a player's open chest, so the menu stays open until the proxy moves the player.
 
+## Stats and game results
+
+Every server counts play time and joins for its kind. A game adds its own numbers in one of two ways, both over IPC to Hallow's server plugin, so a game plugin needs no network access or token ([server plugin](../crates/server-plugin/README.md#game-results)):
+
+| Message | When | Counts |
+|---|---|---|
+| `stat <uuid> <name> [amount]` | Any time | Adds to the player's total for this kind |
+| `game_result <json>` | Once, when a game ends, before `draining` | `games` +1 for everyone, `wins` +1 for winners, and each player's stats; kept for players' recent games |
+
+Count a stat one way or the other, not both. `hallow-sdk` will wrap these. The types are in `hallow_proto::stats` (`GameReport`, `GamePlayer`).
+
+Players see the numbers with `/stats` and `/leaderboard` on any server (all time, this week and this month), and on the [player website](../web/README.md). Rank prefixes from the panel show in chat and the tab list on every server.
+
 ## From repo to running server
 
 1. A push to a server repo's main branch, or a tag, runs its CI: Hallow's reusable [image workflow](../.github/workflows/server-image.yml). It builds the plugin to WASM (the repo's `prepare` step), checks `hallow.toml` with the base image's `hallow-manifest`, bakes the plugin, worlds and `hallow.toml` onto Hallow's server base image, then publishes the image to GHCR as `ghcr.io/xena-studios/<name>:<version>`.
@@ -146,7 +159,7 @@ Every server kind is versioned by its own repo, independently of the others and 
 
 ## The base image
 
-Hallow's server base image, `ghcr.io/xena-studios/hallow-server-base`, carries Pumpkin, Hallow's own server plugin (presence, stats, the link to the control plane) and `hallow-manifest`, so a server repo only holds what's specific to it. Its Dockerfile is [`templates/server`](../templates/server), and its version is in [`templates/server/VERSION`](../templates/server/VERSION):
+Hallow's server base image, `ghcr.io/xena-studios/hallow-server-base`, carries Pumpkin, Hallow's own server plugin (presence, stats, game results, rank prefixes, the link to the control plane) and `hallow-manifest`, so a server repo only holds what's specific to it. Its Dockerfile is [`templates/server`](../templates/server), and its version is in [`templates/server/VERSION`](../templates/server/VERSION):
 
 - a `server-base-vX.Y.Z` tag on the monorepo publishes `X.Y.Z` and `X.Y` ([workflow](../.github/workflows/server-base.yml));
 - pushes to main that touch it publish `dev` and `sha-<commit>`.

@@ -25,6 +25,7 @@ mod metrics;
 mod nodes;
 pub mod orchestrator;
 pub mod panel;
+pub mod public;
 mod punish;
 mod ranks;
 mod remote;
@@ -119,6 +120,8 @@ pub struct Config {
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
     pub long_poll: Duration,
+    /// The read-only public API for the player website.
+    pub public: public::PublicConfig,
 }
 
 impl Config {
@@ -143,6 +146,7 @@ impl Config {
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
+            public: public::PublicConfig::default(),
         }
     }
 }
@@ -242,12 +246,18 @@ pub async fn serve_with(
     }
     tokio::spawn(signals::retention(state.clone()));
     tokio::spawn(nodes::retention(state.clone()));
+    tokio::spawn(stats::retention(state.clone()));
     if let Some(agent) = agent {
         tracing::info!(address = %agent.local_addr()?, "answering load balancer agent checks");
         tokio::spawn(agent::serve(agent, state.clone()));
     }
     tracing::info!(address = %listener.local_addr()?, "control plane listening");
-    axum::serve(listener, api::router(state)).await?;
+    // The peer address is for the public API's rate limit.
+    axum::serve(
+        listener,
+        api::router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

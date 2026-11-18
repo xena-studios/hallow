@@ -13,6 +13,12 @@
 //! - **Stats.** Every 30 s, `POST /v1/stats` with each player's increases
 //!   for this server's kind: play time, joins and whatever a game counts
 //!   (see [`stats`]). A failed batch goes with the next one.
+//! - **Games.** A game plugin reports each finished game over IPC
+//!   (`game_result <json>`), sent on as `POST /v1/games` and retried until
+//!   it lands; the control plane counts games and wins and keeps it for
+//!   players' recent games (see [`games`]).
+//! - **Ranks.** Every 30 s and after joins, `POST /v1/display` for everyone's
+//!   rank prefix, shown in chat and the tab list (see [`display`]).
 //! - **Signals.** Every 30 s, `POST /v1/signals` with each player's movement
 //!   and combat numbers for the window, for the anticheat to learn from
 //!   (see [`signals`]). Nothing acts on them yet.
@@ -42,6 +48,8 @@
 
 mod collect;
 mod config;
+mod display;
+mod games;
 mod http;
 pub mod lobbies;
 mod players;
@@ -153,6 +161,10 @@ fn tick(server: &Server) {
     }
     send_signals(server);
     send_stats();
+    if let Some(client) = with_link(|link| link.client.clone()) {
+        games::tick(&client);
+        display::tick(server, &client);
+    }
 }
 
 /// Checks the register, heartbeat or presence report in flight, then starts
@@ -450,7 +462,7 @@ impl Plugin for HallowServer {
             name: NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             authors: vec!["Xena Studios".into()],
-            description: "Links this server to Hallow's control plane: registers and heartbeats it, reports its players, and sends stats and anticheat signals."
+            description: "Links this server to Hallow's control plane: registers and heartbeats it, reports its players, sends stats, game results and anticheat signals, and shows rank prefixes."
                 .into(),
             dependencies: vec![],
             permissions: permissions(),
@@ -498,6 +510,7 @@ impl Plugin for HallowServer {
         });
         collect::register(&context);
         players::register(&context);
+        display::register(&context);
         Ok(())
     }
 
@@ -520,6 +533,7 @@ impl Plugin for HallowServer {
                 tracing::warn!("hallow-server: couldn't send the last stats: {err}");
             }
         }
+        games::flush(&link.client);
         if link.registered {
             match link.client.delete(&routes::server(&link.config.name)) {
                 Ok(()) => tracing::info!("hallow-server: unregistered {}", link.config.name),
@@ -546,6 +560,13 @@ impl Plugin for HallowServer {
             }
             if let Some(reply) = players::handle_ipc(text) {
                 return reply;
+            }
+            let link = with_link(|link| (link.config.name.clone(), link.config.kind.clone()));
+            if let Some(reply) = games::handle_ipc(text, link) {
+                return reply;
+            }
+            if text == "in_game" {
+                games::started();
             }
         }
         state::handle_ipc(&message)

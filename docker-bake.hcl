@@ -5,6 +5,8 @@
 # plugins first: servers/build-plugins.sh.
 # `docker buildx bake control-plane` builds the control plane, which the
 # two-proxy override (deploy/compose/compose.hallow.yaml) uses.
+# `docker buildx bake web` builds the player website (web/), which the same
+# override runs next to the control plane.
 
 group "default" {
   targets = ["proxy", "server", "hub", "test-game", "test-game-lobby"]
@@ -53,4 +55,10 @@ target "control-plane" {
   context    = "."
   dockerfile = "deploy/control-plane/Dockerfile"
   tags       = ["hallow-control-plane:dev"]
+}
+
+target "web" {
+  context    = "."
+  dockerfile = "web/Dockerfile"
+  tags       = ["hallow-web:dev"]
 }
