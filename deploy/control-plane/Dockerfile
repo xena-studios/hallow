@@ -8,6 +8,8 @@ WORKDIR /src
 # needs it to resolve the workspace even though the control plane doesn't use it.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# The server base image version this control plane is released with.
+COPY templates/server/VERSION templates/server/VERSION
 COPY upstream/Pumpkin upstream/Pumpkin
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin

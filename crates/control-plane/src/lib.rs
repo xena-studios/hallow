@@ -31,6 +31,7 @@ mod remote;
 mod signals;
 mod stats;
 pub mod store;
+pub mod versions;
 
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -119,6 +120,8 @@ pub struct Config {
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
     pub long_poll: Duration,
+    /// Which versions may go live (docs/SERVERS.md#versions).
+    pub versions: versions::VersionsConfig,
 }
 
 impl Config {
@@ -143,6 +146,7 @@ impl Config {
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
+            versions: versions::VersionsConfig::default(),
         }
     }
 }
@@ -288,7 +292,7 @@ async fn start_instances(
     };
     if let Some(path) = &setup.kinds_file {
         for (name, spec) in instances::read_kinds_file(path)? {
-            hallow_db::put_kind(db, &name, &spec).await?;
+            hallow_db::register_kind(db, &name, &spec).await?;
             tracing::info!(kind = %name, image = %spec.image, "kind registered from the kinds file");
         }
     }

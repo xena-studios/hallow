@@ -135,6 +135,10 @@ pub struct InstanceInfo {
     /// Wings' server UUID; Docker's containers are named by `name`.
     pub uuid: Uuid,
     pub image: String,
+    /// The kind's version it runs (docs/SERVERS.md#versions); `None` for an
+    /// image that isn't a recorded version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// The node it runs on.
     pub node: String,
     pub state: InstanceState,

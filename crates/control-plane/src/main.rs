@@ -33,6 +33,8 @@
 //! | `HALLOW_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker orchestrator: the Engine API (`unix://` or `tcp://`) |
 //! | `HALLOW_DOCKER_NETWORK` | required with Docker | Docker orchestrator: the network instances join, such as `gatetest_default` |
 //! | `HALLOW_DOCKER_OWNER` | the network | Docker orchestrator: label value marking this network's containers |
+//! | `HALLOW_BASE_VERSION` | `templates/server/VERSION` at build time | The server base image version the network runs; kind versions go canary or live only if their `base` range takes it |
+//! | `HALLOW_DEV_VERSIONS` | `false` | `true` lets dev builds (`sha-…`, `dev`) go canary or live; for dev and staging networks |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
@@ -110,6 +112,17 @@ fn config() -> Result<Config, String> {
     }
     if let Ok(prefix) = env::var("HALLOW_KEY_PREFIX") {
         config.key_prefix = prefix;
+    }
+    if let Ok(version) = env::var("HALLOW_BASE_VERSION") {
+        config.versions.base_version = semver::Version::parse(version.trim())
+            .map_err(|err| format!("HALLOW_BASE_VERSION {version}: {err}"))?;
+    }
+    if let Ok(dev) = env::var("HALLOW_DEV_VERSIONS") {
+        config.versions.dev_versions = match dev.trim() {
+            "true" | "1" | "yes" => true,
+            "false" | "0" | "no" | "" => false,
+            other => return Err(format!("HALLOW_DEV_VERSIONS {other}: use true or false")),
+        };
     }
     if let Ok(kind) = env::var("HALLOW_HUB_KIND") {
         config.hub_kind = kind;

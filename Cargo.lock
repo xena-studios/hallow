@@ -836,6 +836,7 @@ dependencies = [
  "hyper-util",
  "redis",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.11.1",

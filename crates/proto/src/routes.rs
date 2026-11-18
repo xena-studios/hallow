@@ -59,6 +59,13 @@
 //! | `DELETE` | [`kind`] | | `204`; running instances finish, no new ones start |
 //! | `GET` | [`INSTANCES`] | | `Vec<`[`InstanceInfo`](crate::instance::InstanceInfo)`>` by name |
 //! | `DELETE` | [`instance`] | | `202`: the instance ends (its players are sent back by their proxy) |
+//! | `GET` | [`kind_versions`] | | [`KindVersions`](crate::version::KindVersions) or `404` |
+//! | `POST` | [`kind_versions`] | [`AddVersion`](crate::version::AddVersion) | [`KindVersions`](crate::version::KindVersions); `409` if the version exists with another image |
+//! | `POST` | [`kind_canary`] | [`SetCanary`](crate::version::SetCanary) | [`KindVersions`](crate::version::KindVersions); `409` with a message if it may not go canary |
+//! | `POST` | [`kind_canary_stop`] | [`Actor`](crate::version::Actor) | [`KindVersions`](crate::version::KindVersions); `409` if there is no canary |
+//! | `POST` | [`kind_promote`] | [`Promote`](crate::version::Promote) | [`KindVersions`](crate::version::KindVersions); `409` with a message if it may not go live |
+//! | `POST` | [`kind_rollback`] | [`Rollback`](crate::version::Rollback) | [`KindVersions`](crate::version::KindVersions); `409` with a message if there is nothing to roll back to |
+//! | `GET` | [`VERSION_AUDIT`] | | `Vec<`[`VersionAuditEntry`](crate::version::VersionAuditEntry)`>`, newest first; `?kind=` and `?limit=` |
 //!
 //! The control plane also answers HAProxy agent checks on a separate TCP
 //! port (not HTTP); see the control plane's README.
@@ -116,6 +123,38 @@ pub const NODE_JOIN_TOKENS: &str = "/v1/nodes/join-tokens";
 pub const NODE_JOIN: &str = "/v1/nodes/join";
 pub const KINDS: &str = "/v1/kinds";
 pub const INSTANCES: &str = "/v1/instances";
+/// Every kind's version actions, newest first.
+pub const VERSION_AUDIT: &str = "/v1/version-audit";
+
+/// How many entries [`VERSION_AUDIT`] returns when `limit` is left out, and
+/// the most it returns.
+pub const VERSION_AUDIT_DEFAULT: u32 = 50;
+pub const VERSION_AUDIT_MAX: u32 = 500;
+
+#[must_use]
+pub fn kind_versions(name: &str) -> String {
+    format!("{KINDS}/{name}/versions")
+}
+
+#[must_use]
+pub fn kind_canary(name: &str) -> String {
+    format!("{KINDS}/{name}/canary")
+}
+
+#[must_use]
+pub fn kind_canary_stop(name: &str) -> String {
+    format!("{KINDS}/{name}/canary/stop")
+}
+
+#[must_use]
+pub fn kind_promote(name: &str) -> String {
+    format!("{KINDS}/{name}/promote")
+}
+
+#[must_use]
+pub fn kind_rollback(name: &str) -> String {
+    format!("{KINDS}/{name}/rollback")
+}
 
 #[must_use]
 pub fn kind(name: &str) -> String {

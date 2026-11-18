@@ -23,3 +23,8 @@ jobs:
     #   prepare: |
     #     cargo build --release --target wasm32-wasip2
     #     cp target/wasm32-wasip2/release/example.wasm plugins/
+    # To record each tag build as a version staff can canary and promote,
+    # add (with the CONTROL_PLANE_TOKEN repository secret):
+    #   control-plane: https://cp.example.net
+    # secrets:
+    #   control-plane-token: ${{ secrets.CONTROL_PLANE_TOKEN }}

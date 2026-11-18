@@ -100,7 +100,7 @@ The base image's entrypoint runs `hallow-manifest apply` on every start. It:
    - `HALLOW_RETURN_LOBBY`: from `lobby`;
    - then `[env]`.
 
-Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The server plugin sends players to `HALLOW_RETURN_LOBBY` when a game ends ([Hubs and lobbies](#hubs-and-lobbies)). `queues`, `players.min` and `maps` are for the matchmaker and `hallow-sdk`, which don't read them yet.
+Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` at build time: its image tag (`1.4.0` from the git tag `v1.4.0`, or `sha-<commit>`). The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The server plugin sends players to `HALLOW_RETURN_LOBBY` when a game ends ([Hubs and lobbies](#hubs-and-lobbies)). `queues`, `players.min` and `maps` are for the matchmaker and `hallow-sdk`, which don't read them yet.
 
 ## Hubs and lobbies
 
@@ -128,10 +128,31 @@ Pumpkin's plugin API (WIT v0.1) has what this needs: GUIs (`gui` with `generic-9
 
 ## From repo to running server
 
-1. A push to a server repo's main branch, or a tag, runs its CI: Hallow's reusable [image workflow](../.github/workflows/server-image.yml). It builds the plugin to WASM (the repo's `prepare` step), checks `hallow.toml` with the base image's `hallow-manifest`, bakes the plugin, worlds and `hallow.toml` onto Hallow's server base image, then publishes the image to GHCR as `ghcr.io/xena-studios/<name>:<version>`.
-2. The panel lists every server kind and its versions. Staff choose which version is live; that's the deploy. See [Versions](#versions).
+1. A push to a server repo's main branch, or a tag, runs its CI: Hallow's reusable [image workflow](../.github/workflows/server-image.yml). It builds the plugin to WASM (the repo's `prepare` step), checks `hallow.toml` with the base image's `hallow-manifest`, bakes the plugin, worlds and `hallow.toml` onto Hallow's server base image, then publishes the image to GHCR as `ghcr.io/xena-studios/<name>:<version>`. With `control-plane` set, a tag build also records the version in the control plane.
+2. The panel lists every server kind and its versions. Staff canary a version, then make it live; that's the deploy. See [Versions](#versions).
 3. New instances start on the live version. Running games finish on the version they started on, and old lobby instances drain once new ones are up. No restarts and no kicked players.
 4. Rolling back means making the previous version live again.
+
+### The image workflow
+
+A server repo's workflow calls [`server-image.yml`](../.github/workflows/server-image.yml) (`workflow_call`), as [the template's](../templates/server-repo/.github/workflows/image.yml) does:
+
+| Event | Image tags | |
+|---|---|---|
+| A `vX.Y.Z` tag | `X.Y.Z` | A version staff can canary and make live |
+| A push to `main` | `sha-<commit>`, `dev` | Dev builds, for staging only |
+| A pull request | `pr-<n>`, not published | Checks `hallow.toml` and builds |
+
+| Input | Default | |
+|---|---|---|
+| `image` | `ghcr.io/<owner>/<name in hallow.toml>` | The image, without a tag |
+| `context` | `.` | The folder with `hallow.toml` and the Dockerfile |
+| `rust` | `false` | Install Rust with `wasm32-wasip2` before `prepare` |
+| `prepare` | none | Shell commands before the build, such as building the plugin into `plugins/` |
+| `push` | `true` | Publish the image |
+| `control-plane` | none | The control plane's URL: a tag build records its version there (`POST /v1/kinds/<name>/versions`), with the `control-plane-token` secret. Nothing goes live from CI |
+
+Every build checks `hallow.toml` with the `hallow-manifest` of the base image its Dockerfile names, against that image's version. Images are labelled with the kind (`io.xena-studios.hallow.kind`) and base version (`io.xena-studios.hallow.base-version`).
 
 ## Versions
 
@@ -139,8 +160,9 @@ Every server kind is versioned by its own repo, independently of the others and 
 
 - **A version is a git tag** on the server repo, `v1.4.0` style. CI turns the tag into the image `ghcr.io/xena-studios/skywars:1.4.0`, labelled with the commit, the base image version and the `hallow-sdk` version it was built with.
 - **Pushes to `main` are dev builds**, tagged with the commit (`skywars:sha-3f2a9c1`). They can be started on a staging network but never go live on production.
-- **Channels per server kind:** `live` is what new instances start on, `canary` optionally takes a share of new instances (say 10 %) before it becomes `live`. Promoting, canarying and rolling back are panel actions, each in the audit log with who did it.
-- **Compatibility is declared, not guessed:** `hallow.toml` names the base image range it supports (`base = "^0.3"`). The panel refuses to make a version live on a network whose base image is outside that range, so a Pumpkin or protocol upgrade can't silently break an old game.
+- **Channels per server kind:** `live` is what new instances start on, `canary` optionally takes a share of new instances (say 10 %) before it becomes `live`. Promoting, canarying and rolling back are control plane actions the panel calls, each in the audit log with who did it. See [Instances](INSTANCES.md#versions) for the routes.
+- **Compatibility is declared, not guessed:** `hallow.toml` names the base image range it supports (`base = "^0.3"`). The control plane refuses to make a version live or canary on a network whose base image is outside that range, so a Pumpkin or protocol upgrade can't silently break an old game. The network's base image version is the one released with its control plane (`templates/server/VERSION`), or `HALLOW_BASE_VERSION`.
+- **Rolling back** makes the version that was live before live again. New instances start on it; running instances finish on theirs.
 - **Mixed versions are normal.** During a rollout, old and new instances of the same kind run side by side: running matches finish on their version, new matches start on the new one, and lobbies drain old instances once new ones are up. The panel shows which version every instance runs.
 - **Hallow itself** (base image, SDK, control plane, Vine fork) is versioned the same way from tags on the monorepo; a base image release says which Pumpkin commit and protocol version it carries.
 

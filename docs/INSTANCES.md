@@ -56,7 +56,7 @@ Staff reach Wings through the panel; no browser needs to reach a node:
 
 A **kind** is a server repo the control plane may start: its live image and the parts of its `hallow.toml` that decide how it scales (role, `lobby`, `players`, `scaling`), plus optional extra environment and a memory limit. Kinds are kept in PostgreSQL (`hallow.server_kinds`), so the control plane needs its database to run instances. They can be registered two ways:
 
-- **The API**, used by staff, the panel and deploys. Making a new image live is a `PUT` with the new `image`:
+- **The API**, used by staff, the panel and deploys. A `PUT` with a new `image` makes it live directly; normally a new image goes live through [versions](#versions) instead:
   - `PUT /v1/kinds/{name}` with a `KindSpec` (`hallow_proto::instance`), answered with `KindInfo`. An invalid spec gets a `400` whose `fields` names each problem.
   - `GET /v1/kinds` lists them; `GET` and `DELETE /v1/kinds/{name}` act on one.
 - **A kinds file**, registered at every start (`HALLOW_KINDS_FILE`). The dev network uses one. Each `[[kind]]` names an image and the kind's `hallow.toml`, which the control plane reads with `hallow-manifest`, so the file can't drift from the repo:
@@ -68,7 +68,45 @@ A **kind** is a server repo the control plane may start: its live image and the 
   memory_mb = 1024
   ```
 
-Running instances keep the image they started with. Deleting a kind starts no new instances of it and ends its unused ones; games already running finish.
+Running instances keep the image they started with. Deleting a kind starts no new instances of it and ends its unused ones; games already running finish. It also deletes the kind's versions and channels; their audit log stays.
+
+## Versions
+
+Each kind has recorded **versions** (an image built from a tag on its repo, [Servers](SERVERS.md#versions)) and two channels: **`live`**, what new instances start on, and an optional **`canary`**, which takes a share of new instances. The kind's `image` is always the live version's image. Versions, channels and the audit log are in PostgreSQL (`kind_versions`, `kind_channels`, `kind_version_audit`).
+
+| Action | What happens |
+|---|---|
+| Add | CI records a version: its name (the image tag, `1.4.0`), image, `hallow.toml`'s `base` range, the base image version and commit it was built from. Adding it again is a no-op; the same name with another image is refused |
+| Canary | A version takes `percent` (1 to 100) of new instances. Running instances keep their version |
+| Stop canary | No more new instances on the canary. Its running ones finish |
+| Promote | A version (default: the canary) becomes live. The old live version becomes `previous` |
+| Roll back | `previous` (or a version named) becomes live again, and any canary stops. New instances start on it; running ones finish on theirs. Rolling back again needs a version named |
+
+**Who may go live.** Canary, promote and roll back refuse (`409`) a version whose `base` range doesn't take the network's base image version (`HALLOW_BASE_VERSION`, default the one released with the control plane), and dev builds (`sha-…`, `dev`) unless `HALLOW_DEV_VERSIONS` is on.
+
+**The canary's share** is counted over the kind's creating, starting and ready instances: a new instance goes on the canary while that keeps the canary at or under `percent`, counting the new one. At 10 % the 10th instance is the first canary, at 50 % the 2nd. A kind that only ever runs one or two instances needs a high share to see a canary at all.
+
+**Old versions drain.** An instance on neither the live nor the canary image is outdated. It keeps its players and its game, but it doesn't count as warm, so a current one starts in its place. An unused outdated game is then an extra, ended after `HALLOW_INSTANCE_IDLE_SECS`. An empty outdated lobby or hub is ended once enough current ones are ready, so a lobby is never left without an instance.
+
+**`PUT /v1/kinds` stays a direct deploy.** When its `image` changes, `live` becomes the recorded version with that image (or none), the old live version becomes `previous`, and a `register` entry goes in the audit log, with `updated_by` as who did it. The kinds file does the same at every start, so on the dev network a restart makes the file's image live again.
+
+Every version is in `GET /v1/instances` too: each instance has a `version`.
+
+### Routes for the panel
+
+Each action takes `by` (who did it, 1 to 64 characters) and, from the panel, `panel_user` (the panel user's id); both go in the audit log. Every action answers with the kind's `KindVersions` (`hallow_proto::version`): live, previous and canary, the network's base version, and every version with whether it may go live (`compatible`, `dev`) and how many instances run it.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET /v1/kinds/{name}/versions` | | `KindVersions`, or `404` |
+| `POST /v1/kinds/{name}/versions` | `AddVersion`: `version`, `image`, `base`, `base_version`, `commit`, `by` | `201` (added) or `200` (already there) with `KindVersions`; `400` with `fields`; `409` for the same name with another image |
+| `POST /v1/kinds/{name}/canary` | `SetCanary`: `version`, `percent`, `by` | `KindVersions`; `404` for an unknown version; `409` with a message if it may not run, or is live |
+| `POST /v1/kinds/{name}/canary/stop` | `by` | `KindVersions`; `409` if there is no canary |
+| `POST /v1/kinds/{name}/promote` | `Promote`: `version` (default the canary), `by` | `KindVersions`; `409` with a message if it may not run, is live, or there is nothing to promote |
+| `POST /v1/kinds/{name}/rollback` | `Rollback`: `version` (default `previous`), `by` | `KindVersions`; `409` with a message if it may not run, is live, or there is nothing to roll back to |
+| `GET /v1/version-audit?kind=&limit=` | | `Vec<VersionAuditEntry>`, newest first (default 50, at most 500) |
+
+They take the shared token; an instance's scoped token gets `403`. `tests/versions.rs` runs a canary, a promote and a rollback end to end.
 
 ## Lifecycle
 
@@ -164,6 +202,8 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 | `HALLOW_INSTANCE_START_TIMEOUT_SECS` | `120` | |
 | `HALLOW_INSTANCE_EMPTY_SECS` | `30` | |
 | `HALLOW_INSTANCE_IDLE_SECS` | `300` | |
+| `HALLOW_BASE_VERSION` | `templates/server/VERSION` at build time | The base image version versions are checked against ([Versions](#versions)) |
+| `HALLOW_DEV_VERSIONS` | `false` | Let dev builds (`sha-…`, `dev`) go canary or live |
 | `HALLOW_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker only |
 | `HALLOW_DOCKER_NETWORK` | required | Docker only |
 | `HALLOW_DOCKER_OWNER` | the network | Docker only |
@@ -175,4 +215,5 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 - Run the Wings orchestrator on a real (cloud or dedicated) node; it has run end to end locally (`tools/wings-e2e`).
 - Draining nodes: no new instances there (the fleet manager).
 - `players.min` and match start, with `hallow-sdk`.
-- Canary channels: a share of new instances on a second image.
+- The panel's versions page ([routes](#routes-for-the-panel)).
+- A token for CI that may only add versions; the image workflow takes the shared token for now.
