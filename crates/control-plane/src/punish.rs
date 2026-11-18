@@ -76,7 +76,7 @@ pub fn mute_info(mute: &Punishment) -> MuteInfo {
 }
 
 /// Panel staff win over an issuer UUID; neither is the console.
-fn actor(issuer: Option<Uuid>, staff: Option<&StaffMember>) -> Result<Actor, String> {
+pub(crate) fn actor(issuer: Option<Uuid>, staff: Option<&StaffMember>) -> Result<Actor, String> {
     let Some(staff) = staff else {
         return Ok(issuer.map_or(Actor::Console, Actor::Account));
     };

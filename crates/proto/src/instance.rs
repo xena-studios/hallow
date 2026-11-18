@@ -75,6 +75,16 @@ pub struct KindSpec {
     /// Who registered it, for the audit trail.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_by: Option<String>,
+    /// Whether players can play it. A disabled kind starts no new
+    /// instances, takes no new queue entries and isn't offered in the hub's
+    /// game menu; instances already running finish their games. Default
+    /// true, so specs written before it existed stay enabled.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// One entry in `GET /v1/kinds`.
@@ -179,6 +189,7 @@ mod tests {
         .unwrap();
         assert_eq!(spec.players.min, 1);
         assert_eq!(spec.scaling, KindScaling::default());
+        assert!(spec.enabled, "kinds are enabled unless they say otherwise");
         let info = KindInfo {
             name: "test-game".into(),
             spec,

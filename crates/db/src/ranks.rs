@@ -138,6 +138,63 @@ pub async fn account_permissions(
     Ok(AccountPermissions { ranks, nodes })
 }
 
+/// Which of `accounts` hold `node` now, as [`AccountPermissions::has`]
+/// decides, in the order given. Only accounts with an unexpired grant of a
+/// rank that could grant the node are checked one by one, so a long list
+/// of mostly ordinary players (everyone online) costs two queries; unless
+/// the default rank grants it, when every account is checked.
+pub async fn accounts_with_permission(
+    pool: &PgPool,
+    accounts: &[Uuid],
+    node: &str,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    if accounts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ranks: Vec<Rank> = sqlx::query_as(
+        "SELECT name, display_prefix, weight, permissions, is_default FROM hallow.ranks",
+    )
+    .fetch_all(pool)
+    .await?;
+    let granting: Vec<&Rank> = ranks
+        .iter()
+        .filter(|r| {
+            r.permissions
+                .iter()
+                .any(|n| !n.starts_with('-') && hallow_proto::permission::matches_node(n, node))
+        })
+        .collect();
+    if granting.is_empty() {
+        return Ok(Vec::new());
+    }
+    let candidates: Vec<Uuid> = if granting.iter().any(|r| r.is_default) {
+        accounts.to_vec()
+    } else {
+        let names: Vec<&str> = granting.iter().map(|r| r.name.as_str()).collect();
+        let holders: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT account_uuid FROM hallow.account_ranks
+             WHERE account_uuid = ANY($1) AND rank_name = ANY($2)
+               AND (expires_at IS NULL OR expires_at > now())",
+        )
+        .bind(accounts)
+        .bind(&names)
+        .fetch_all(pool)
+        .await?;
+        accounts
+            .iter()
+            .copied()
+            .filter(|a| holders.contains(a))
+            .collect()
+    };
+    let mut found = Vec::new();
+    for account in candidates {
+        if account_permissions(pool, account).await?.has(node) {
+            found.push(account);
+        }
+    }
+    Ok(found)
+}
+
 /// A rank with how many accounts hold an unexpired grant of it.
 #[derive(Clone, Debug, PartialEq, Eq, FromRow)]
 pub struct RankWithMembers {

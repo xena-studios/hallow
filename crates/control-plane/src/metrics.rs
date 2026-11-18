@@ -134,6 +134,55 @@ pub async fn render(app: &AppState) -> store::Result<String> {
             label(&kind)
         );
     }
+
+    family(
+        &mut out,
+        "hallow_games_started_total",
+        "counter",
+        "Games started per kind: the matchmaker put the first players onto an empty ready game server.",
+    );
+    for (kind, games) in app.store.games_started().await? {
+        let _ = writeln!(
+            out,
+            "hallow_games_started_total{{kind=\"{}\"}} {games}",
+            label(&kind)
+        );
+    }
+    family(
+        &mut out,
+        "hallow_queue_wait_seconds",
+        "histogram",
+        "How long queue entries (a player or a whole party) waited before the matchmaker placed them.",
+    );
+    for (kind, wait) in app.store.queue_waits().await? {
+        let kind = label(&kind);
+        for (le, count) in wait.cumulative() {
+            let _ = writeln!(
+                out,
+                "hallow_queue_wait_seconds_bucket{{kind=\"{kind}\",le=\"{le}\"}} {count}"
+            );
+        }
+        let _ = writeln!(
+            out,
+            "hallow_queue_wait_seconds_sum{{kind=\"{kind}\"}} {}",
+            wait.sum_seconds
+        );
+        let _ = writeln!(
+            out,
+            "hallow_queue_wait_seconds_count{{kind=\"{kind}\"}} {}",
+            wait.count
+        );
+    }
+
+    if let Some(open) = crate::reports::active_count(app).await {
+        family(
+            &mut out,
+            "hallow_reports_open",
+            "gauge",
+            "Player reports waiting for staff: open or claimed, not yet resolved or dismissed.",
+        );
+        let _ = writeln!(out, "hallow_reports_open {open}");
+    }
     Ok(out)
 }
 

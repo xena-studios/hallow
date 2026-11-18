@@ -24,6 +24,11 @@
 //! least `warm` instances, and more when their players fill them past
 //! [`LOBBY_FILL_PERCENT`] on average. Nothing goes past `max_instances`.
 //!
+//! A disabled kind (`enabled = false`) gets no new instances and keeps no
+//! warm ones: its unused (game) or empty (lobby) instances are ended after
+//! [`Settings::idle_ms`] like any surplus, while instances with players on
+//! them play out and end the usual way.
+//!
 //! New instances go on the node with the fewest instances (then by name),
 //! on its lowest free game port if it has a port range.
 
@@ -317,8 +322,12 @@ fn game_demand(
         }
         new_bins.push(size);
     }
+    if !spec.enabled {
+        // Nothing new for a disabled kind; its games play out.
+        new_bins.clear();
+    }
 
-    let warm = if world.players_online > 0 {
+    let warm = if world.players_online > 0 && spec.enabled {
         spec.scaling.warm
     } else {
         0
@@ -371,7 +380,11 @@ fn lobby_demand(
         .map(|s| s.players)
         .sum();
     let fill = (spec.players.max.max(1) * LOBBY_FILL_PERCENT / 100).max(1);
-    let target = spec.scaling.warm.max(players.div_ceil(fill));
+    let target = if spec.enabled {
+        spec.scaling.warm.max(players.div_ceil(fill))
+    } else {
+        0
+    };
     let count = live.len() as u32;
     if count < target {
         return (target - count, Vec::new());
@@ -445,6 +458,7 @@ mod tests {
             env: BTreeMap::new(),
             memory_mb: None,
             updated_by: None,
+            enabled: true,
         }
     }
 
@@ -823,6 +837,54 @@ mod tests {
         case.instances[1].had_players = true;
         case.servers.truncate(2);
         assert_eq!(case.plan(), []);
+    }
+
+    #[test]
+    fn a_disabled_game_starts_nothing_and_lets_games_finish() {
+        let mut spec = game(2, 4, None);
+        spec.enabled = false;
+        // Neither warm instances nor ones for its queue.
+        let mut case = Case::new(spec).queue(&[1, 3]);
+        assert_eq!(case.plan(), []);
+        // A game in progress plays on; an unused one ends once idle, unless
+        // entries queued before the kind was disabled can still go there.
+        case.queued.clear();
+        case.instances = vec![
+            instance("tg-a", InstanceState::Ready, 0),
+            instance("tg-b", InstanceState::Ready, 0),
+        ];
+        case.instances[0].had_players = true;
+        case.servers = vec![
+            server("tg-a", 3, ServerState::InGame),
+            server("tg-b", 0, ServerState::Ready),
+        ];
+        assert_eq!(ends(&case.plan()), [("tg-b", "not needed")]);
+        assert_eq!(creates(&case.plan()), 0);
+        // ...and the game ends the usual way when it's over.
+        case.servers[0] = server("tg-a", 0, ServerState::Draining);
+        assert!(ends(&case.plan()).contains(&("tg-a", "its game ended")));
+        // Enabled again, it is warmed and served as before.
+        let mut case = Case::new(game(2, 4, None)).queue(&[1]);
+        case.kinds.get_mut("tg").unwrap().enabled = true;
+        assert_eq!(creates(&case.plan()), 3);
+    }
+
+    #[test]
+    fn a_disabled_lobby_keeps_only_occupied_instances() {
+        let mut spec = game(2, 50, None);
+        spec.role = KindRole::Lobby;
+        spec.enabled = false;
+        let mut case = Case::new(spec);
+        assert_eq!(creates(&case.plan()), 0);
+        case.instances = vec![
+            instance("tg-a", InstanceState::Ready, 0),
+            instance("tg-b", InstanceState::Ready, 0),
+        ];
+        case.servers = vec![
+            server("tg-a", 3, ServerState::Ready),
+            server("tg-b", 0, ServerState::Ready),
+        ];
+        assert_eq!(ends(&case.plan()), [("tg-b", "not needed")]);
     }
 
     #[test]

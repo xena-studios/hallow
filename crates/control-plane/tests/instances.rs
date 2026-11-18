@@ -256,6 +256,7 @@ fn game_kind(warm: u32, max: u32, max_instances: u32) -> KindSpec {
         env: [("GAME_MODE".to_owned(), "solo".to_owned())].into(),
         memory_mb: Some(512),
         updated_by: Some("test".into()),
+        enabled: true,
     }
 }
 

@@ -26,6 +26,7 @@ impl Failure {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict => StatusCode::CONFLICT,
             ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
         };
         Self {
             status,

@@ -44,6 +44,10 @@ pub struct Catalog {
     pub lobbies: BTreeSet<String>,
     /// Game kind → the lobby kind its players return to.
     pub game_lobby: BTreeMap<String, String>,
+    /// Lobby kinds that are switched off: the lobby kind itself is
+    /// disabled, or every registered game kind that returns to it is. They
+    /// aren't offered in the game menu, and players aren't sent there.
+    pub disabled: BTreeSet<String>,
 }
 
 impl Catalog {
@@ -55,7 +59,18 @@ impl Catalog {
             .map(|s| s.kind.clone())
             .collect();
         let mut game_lobby = BTreeMap::new();
+        let mut disabled = BTreeSet::new();
+        // Lobby kind → whether any of its game kinds is enabled.
+        let mut games_on: BTreeMap<&str, bool> = BTreeMap::new();
         for (name, spec) in kinds {
+            if !spec.enabled && spec.role == KindRole::Lobby {
+                disabled.insert(name.clone());
+            }
+            if spec.role == KindRole::Game
+                && let Some(lobby) = &spec.lobby
+            {
+                *games_on.entry(lobby).or_default() |= spec.enabled;
+            }
             match spec.role {
                 KindRole::Lobby if name != hub => {
                     lobbies.insert(name.clone());
@@ -68,10 +83,17 @@ impl Catalog {
                 _ => {}
             }
         }
+        disabled.extend(
+            games_on
+                .into_iter()
+                .filter(|(lobby, on)| !on && *lobby != hub)
+                .map(|(lobby, _)| lobby.to_owned()),
+        );
         Self {
             hub: hub.to_owned(),
             lobbies,
             game_lobby,
+            disabled,
         }
     }
 
@@ -103,10 +125,12 @@ impl Catalog {
     }
 
     /// Every mode with its players (lobbies and games) and ready lobbies.
+    /// Disabled modes are left out.
     #[must_use]
     pub fn modes(&self, servers: &[ServerInfo], closed: &[String]) -> Vec<GameMode> {
         self.lobbies
             .iter()
+            .filter(|lobby| !self.disabled.contains(*lobby))
             .map(|lobby| {
                 let name = mode_name(lobby);
                 let players = servers
@@ -211,6 +235,17 @@ pub async fn send(
                 )));
             }
         },
+    };
+    let kind = if catalog.disabled.contains(&kind) {
+        if !req.fallback_hub {
+            return Err(Failure::new(
+                ErrorCode::Conflict,
+                format!("{} is disabled right now.", catalog.label(&kind)),
+            ));
+        }
+        catalog.hub.clone()
+    } else {
+        kind
     };
     let here = location
         .server
@@ -326,6 +361,7 @@ mod tests {
             env: BTreeMap::new(),
             memory_mb: None,
             updated_by: None,
+            enabled: true,
         }
     }
 
@@ -390,6 +426,40 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn disabled_modes_are_left_out() {
+        let servers = vec![
+            server("sw-lobby-1", "skywars-lobby", ServerRole::Lobby, 4),
+            server("bw-lobby-1", "bedwars-lobby", ServerRole::Lobby, 2),
+        ];
+        let mut skywars = kind(KindRole::Game, Some("skywars-lobby"));
+        skywars.enabled = false;
+        let mut bedwars_lobby = kind(KindRole::Lobby, None);
+        bedwars_lobby.enabled = false;
+        let mut duels = kind(KindRole::Game, Some("hub"));
+        duels.enabled = false;
+        let mut kinds = vec![
+            ("skywars".to_owned(), skywars),
+            ("bedwars-lobby".to_owned(), bedwars_lobby),
+            ("duels".to_owned(), duels),
+        ];
+        let catalog = Catalog::new("hub", &servers, &kinds);
+        assert_eq!(
+            catalog.disabled,
+            BTreeSet::from(["bedwars-lobby".to_owned(), "skywars-lobby".to_owned()])
+        );
+        assert_eq!(catalog.modes(&servers, &[]), []);
+        // One enabled game keeps its lobby's mode on.
+        kinds.push((
+            "skywars-duos".to_owned(),
+            kind(KindRole::Game, Some("skywars-lobby")),
+        ));
+        let catalog = Catalog::new("hub", &servers, &kinds);
+        let modes = catalog.modes(&servers, &[]);
+        assert_eq!(modes.len(), 1);
+        assert_eq!(modes[0].lobby, "skywars-lobby");
     }
 
     #[test]
