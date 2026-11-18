@@ -29,8 +29,10 @@ Every layer scales on its own signal, down to its minimum:
 |---|---|---|
 | Game servers, per kind | Players queued, `warm` in its `hallow.toml` | 0 |
 | Lobby servers, per kind | Players per instance (`players.max`) | 1 for `hub`, 0 for gamemode lobbies |
-| Proxies | Players and CPU per proxy | 1 |
+| Proxies | Players per proxy (`players_per_proxy`); CPU to come | `min_proxies`, 1 |
 | Nodes | Free slots left after the layers above | 1, the floor node |
+
+Game instances and lobbies are scaled by the instance lifecycle ([Instances](INSTANCES.md)); nodes and proxies by the fleet manager ([below](#the-fleet-manager)). Proxies are drained when the players don't need them and given back as players arrive. Starting a new proxy isn't automatic yet: when the players need more proxies than run, the fleet manager alerts staff.
 
 When the last player leaves, games end, warm pools shrink to zero after an idle timeout, extra lobbies and proxies stop, and burst nodes drain and are cancelled. The floor node never stops, so the first player always gets in straight away. The first game after a quiet spell is a cold start on the floor node; Phase 0 measures how long that takes, and a warm pool of one for the most popular game can be kept when the budget allows.
 
@@ -43,7 +45,7 @@ Budgets stop growth; they never cut a node that has players on it.
 - **Limits:** a monthly budget and a daily cap for the whole network, and a maximum node count; per-region caps may follow. All are [settings](#settings) set in the panel; every change is in the settings history.
 - **Days and months** start at midnight in the network's time zone setting, so the daily cap and the monthly budget line up with the bills.
 - **Forecast:** the fleet manager knows the running cost of every node and forecasts month-end spend. As the forecast nears the budget it keeps less spare capacity, then stops buying.
-- **At the cap:** no new nodes. The matchmaker packs games tighter, queues get longer, players in a queue see that the network is busy, and staff are alerted. Staff can raise the cap from the panel.
+- **At the cap:** no new nodes. The matchmaker packs games tighter (it always fills the fullest game first, and no node takes more instances than its slots), queues get longer, players in a queue are told the network is busy, and staff are alerted. Staff can raise the cap from the panel. See [At the cap](#at-the-cap).
 - **The floor node** always counts against the budget and is never cut.
 
 ## Two kinds of capacity
@@ -103,10 +105,152 @@ The types are `hallow_proto::fleet::FleetSettings`; `hallow_fleet` turns them in
 | `billing_step_margin_secs` | `300` | An empty hourly node is kept until this long before its next billing step; under an hour. |
 | `base_drain_needs_approval` | `true` | Cancelling a draining base node waits for a staff member's approval. |
 | `prefer_burst_on_scale_down` | `true` | Drain burst nodes before base nodes. |
-| `floor_nodes` | `1` | How many nodes (the oldest base nodes) are never drained or cancelled; at least 1. |
+| `floor_nodes` | `1` | How many nodes (the oldest base nodes) are never drained or cancelled; at least 1. The fleet file's floor nodes are never drained either. |
+| `players_per_proxy` | `400` | Players one Vine proxy should carry. Idle proxies are drained down to `min_proxies` and given back as players arrive. `0` leaves proxies alone. |
+| `min_proxies` | `1` | Proxies never drained for being idle; at least 1. |
 | `providers` | `hetzner-cloud`, enabled, any region and type | Providers to buy from, each `{name, enabled, regions, machine_types}`; an empty list allows any region or type, and an unlisted provider is never used. |
 
 Durations are in seconds, from 0 to 30 days. Provider credentials are never settings; they stay in the secrets store.
+
+## The fleet manager
+
+The fleet manager runs in the control plane when `HALLOW_FLEET_FILE` names a [fleet file](#fleet-file). It needs the database. With several control planes, one at a time runs it (the `fleet-lock` in Redis). Every tick (30 s by default) it:
+
+1. reads the [settings](#settings) and its nodes (`hallow.fleet_nodes`), and marks a bought node ready once it has joined (in dry run, once `dry_run_setup_secs` have passed);
+2. reads live load: the slots and players on each node from the instances on it, the longest wait in each queue, and the players on each proxy;
+3. works out spend today and this month from each node's price and how long it ran, and runs the planner (`hallow_fleet::plan`, rules in [crates/fleet](../crates/fleet/README.md#planner-rules));
+4. carries out the decisions: buys and cancels through the provider, or through dry run; drains and reinstates nodes; ends idle instances on draining nodes; moves players off a node before it is cancelled;
+5. drains or gives back proxies;
+6. notices when a budget or the node limit stops a buy ([At the cap](#at-the-cap));
+7. writes the [audit log](#audit-log), its status and the node view the instance lifecycle places instances by.
+
+Nothing runs without the fleet file, and the default settings keep dry run on.
+
+### Fleet file
+
+What the fleet manager runs on. Everything it decides by is in the settings instead.
+
+```toml
+tick_secs = 30            # seconds between ticks
+provider = "hetzner-cloud"
+image = "debian-13"       # OS image for new nodes
+dry_run_setup_secs = 180  # a dry-run node counts as set up after this
+
+[[floor]]                 # one per floor node
+name = "docker"           # the orchestrator's name for it
+region = "fsn1"
+slots = 200               # player slots its instances may take
+price = "40.00"
+billing = "month"         # or "hour"
+
+[[machine]]               # what may be bought
+type = "cpx41"
+region = "fsn1"
+slots = 100
+per_hour = "0.0500"       # the price dry run budgets with
+monthly_cap = "30.00"     # the most it costs in a month
+
+[bootstrap]               # only with dry run off: the node's cloud-init
+control_plane_url = "https://cp.example.net"
+```
+
+`[bootstrap]` takes the fields of `hallow_fleet::NodeBootstrap` that are the same for every node (WireGuard, firewall allow lists, game ports, Wings build, SSH keys). The join token, role and region are filled in per node.
+
+| Variable | What it does |
+|---|---|
+| `HALLOW_FLEET_FILE` | The fleet file. Without it the fleet manager is off. |
+| `HALLOW_HETZNER_TOKEN` or `HALLOW_HETZNER_TOKEN_FILE` | Hetzner Cloud API token. Without it every real provider call fails, so only dry run works. |
+| `HALLOW_HETZNER_API_URL` | Hetzner API base URL, for a mock. |
+
+### Nodes and slots
+
+A **slot** is one player's place in an instance. An instance takes its kind's `players.max` slots, warm or not. A node's slots come from the fleet file.
+
+| Phase | Takes new instances | Next |
+|---|---|---|
+| `setting_up` | No; its slots count as free, so the planner doesn't buy twice | `ready` once the machine joins (or after `dry_run_setup_secs` in dry run) |
+| `ready` | Yes, while its slots last | `draining` when the planner or staff drain it |
+| `draining` | No. Its idle instances end at once; games end on their own | `cancelled` once empty (an hourly node just before its next billing hour), or at `drain_deadline_secs` after its players are sent to a lobby |
+| `cancelled` | No | The row stays, for this month's spend |
+
+- The instance lifecycle reads the fleet's node view each pass. It leaves out nodes that are setting up or draining, and fills each ready node up to its slots. When no node has room, players wait in the queue. That wait is what makes the fleet manager buy.
+- Floor nodes come from the fleet file. Their `name` must match the orchestrator's: `docker` for the Docker orchestrator, the panel's node name with Wings. They are never drained or cancelled.
+- Nodes the fleet manager doesn't know, such as one added by hand, take instances as before, without a slot limit.
+- Cancelling a base node waits for a staff member's approval while `base_drain_needs_approval` is on.
+
+### Dry run
+
+Dry run is on by default. Buys and cancels go to `hallow_fleet::DryRun` and never reach the provider. A node bought in dry run is marked `dry_run`: no machine exists, and it is always cancelled through dry run, even after dry run is turned off.
+
+A dry-run node counts as set up after `dry_run_setup_secs`, and its price counts against the budgets, so a dry run shows what the network would spend. With the Docker orchestrator (the dev network) or the mock, ready dry-run nodes also take instances: everything runs on the one Docker engine, so a dry run plays out on one machine. With Wings they take none.
+
+Turning dry run off calls the provider for real. Hetzner Cloud is the only provider so far, and a live run against it is deferred ([#42](https://github.com/xena-studios/hallow/issues/42)).
+
+### At the cap
+
+When the daily cap, the monthly budget or `max_nodes` stops a buy the planner wanted, the fleet is **capped**:
+
+- staff are alerted: a warning in the log, an `alert` entry in the audit log, and `hallow_fleet_capped{reason}` set to 1;
+- every queued player is told the network is busy, and so is each player who queues while it lasts (`QueueStatus.busy` says so too);
+- players wait in the queue until a game has room;
+- nothing is drained or cancelled because of the cap.
+
+The fleet is no longer capped when nothing wants buying, or the buy fits again; that is logged too.
+
+### Audit log
+
+Every decision, provider call, staff action and alert is a row in `hallow.fleet_events`, newest first in `GET /v1/fleet/events`. A hold (something the planner wanted to do but didn't) is logged once when it starts, not every tick.
+
+| Kind | Actions |
+|---|---|
+| `decision` | `buy`, `reinstate`, `drain`, `cancel`, `hold` |
+| `provider` | `create`, `cancel`, `prices` (dry run marked, `ok` false on failure) |
+| `node` | `ready`, `clear` (idle instances ended on a draining node) |
+| `proxy` | `drain`, `undrain` |
+| `staff` | `dry_run`, `drain`, `reinstate`, `approve_cancel`, with `by` |
+| `alert` | `capped`, `uncapped`, `awaiting_approval`, `create_failed`, `cancel_failed`, `proxies_short` |
+
+### API
+
+For the panel's Fleet page. Every route takes the control plane's token; the types are in `hallow_proto::fleet_state`.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| `GET` | `/v1/fleet` | | `FleetState`: dry run, paused, spend today and this month, forecast, budgets, `capped`, holds, queue waits, proxies, and every node with its phase, slots, players and cost this month. `enabled` is false without the fleet file. |
+| `GET` | `/v1/fleet/events?limit=&before=&kind=` | | `Vec<FleetEvent>`, newest first. `before` is an event id, for the next page; `limit` is 100 by default, at most 1000. |
+| `PUT` | `/v1/fleet/dry-run` | `{dry_run, updated_by}` | `FleetSettingsRecord`. Saved like any settings change, with its history, and logged. |
+| `POST` | `/v1/fleet/nodes/{name}/drain` | `{by}` | `FleetNode`; `404`, or `409` for a floor node or one not ready or setting up |
+| `POST` | `/v1/fleet/nodes/{name}/reinstate` | `{by}` | `FleetNode`; `409` unless draining |
+| `POST` | `/v1/fleet/nodes/{name}/approve-cancel` | `{by}` | `FleetNode`; `409` unless it is waiting for approval |
+
+The settings themselves are `GET` and `PUT /v1/fleet/settings` ([Settings](#settings)). `GET /v1/fleet` shows each node's phase as it is now and its load as of the last tick.
+
+### Metrics
+
+On `/metrics`, from the last tick:
+
+| Metric | What |
+|---|---|
+| `hallow_fleet_nodes{kind,phase}` | Nodes |
+| `hallow_fleet_free_slots`, `hallow_fleet_headroom_target` | Free slots, and the headroom kept after budget tightening |
+| `hallow_fleet_spend{period}` | Spend `today` and this `month` |
+| `hallow_fleet_forecast` | Month-end forecast |
+| `hallow_fleet_budget{limit}` | The `daily_cap` and `monthly_budget` |
+| `hallow_fleet_capped{reason}` | 1 while capped by `daily_cap`, `monthly_budget` or `max_nodes` |
+| `hallow_fleet_proxies{state}` | Proxies `registered`, `active` and `wanted` |
+| `hallow_fleet_dry_run` | 1 while dry run is on |
+
+### Tests
+
+```sh
+cargo test -p hallow-control-plane --test fleet -- --nocapture  # prints the simulated days' audit logs
+```
+
+They need `HALLOW_TEST_REDIS_URL` and `HALLOW_TEST_DATABASE_URL`. The provider in them counts every call and fails it; in dry run the count must stay zero.
+
+- **A simulated peak:** a day of load, one tick per simulated minute through the real fleet manager. The audit log has three buys at the evening rise and none for a two-minute spike at noon, nobody queues at the peak, then one drain per cooldown and each node cancelled empty just before its next billing hour.
+- **Past the daily cap, past the monthly budget:** the same day with a budget too small for the peak. Buying stops at the cap, the fleet is capped and alerted, players queue and are told the network is busy, nothing is cut while it lasts, and the cap is kept.
+- **Scale to one:** a live control plane with the mock orchestrator. Twelve players fill the floor node and a dry-run node is bought for the third game. Once the players leave it is drained and cancelled, the network is back on the floor node alone, and a new player still gets a game on it.
 
 ## Setting up a new node
 
@@ -155,7 +299,7 @@ Details, every setting, and what isn't done yet (the WireGuard hub learning new 
 - **Cooldowns** between scale actions so a short spike can't loop buy and cancel.
 - **Dry run:** log what the fleet manager would do without calling providers. The default until each provider is trusted.
 - **Credentials** for provider APIs live in the secrets store, never in config or the panel database. Each provider gets an API key limited to what the fleet manager needs.
-- **Audit log:** every order, setup, drain and cancellation shows in the panel with its reason and cost.
+- **Audit log:** every decision, provider call, drain, cancellation and staff action is kept in `hallow.fleet_events` with its reason ([Audit log](#audit-log)).
 
 ## Providers
 
@@ -172,4 +316,4 @@ More providers can follow the same trait.
 
 ## In the panel
 
-A Fleet page shows every node with its provider, region, kind, cost so far this month, players and state (setting up, ready, draining, cancelled). Staff can add, drain or cancel a node, approve orders, and edit every [setting](#settings): scaling targets, budgets and caps, the time zone, providers, and dry run.
+A Fleet page shows every node with its provider, region, kind, cost so far this month, players and state (setting up, ready, draining, cancelled). Staff can add, drain or cancel a node, approve orders, and edit every [setting](#settings): scaling targets, budgets and caps, the time zone, providers, and dry run. It reads and acts through the [fleet API](#api).

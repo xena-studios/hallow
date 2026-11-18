@@ -50,6 +50,12 @@
 //! | `GET` | [`FLEET_SETTINGS`] | | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord); the defaults if never changed |
 //! | `PUT` | [`FLEET_SETTINGS`] | [`UpdateFleetSettings`](crate::fleet::UpdateFleetSettings) | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord), or `400` with [`ApiError::fields`](crate::ApiError::fields) |
 //! | `GET` | [`fleet_settings_history`] | | `Vec<`[`FleetSettingsChange`](crate::fleet::FleetSettingsChange)`>`, newest first |
+//! | `GET` | [`FLEET`] | | [`FleetState`](crate::fleet_state::FleetState); `enabled: false` without the fleet manager |
+//! | `GET` | [`fleet_events`]`?limit=&before=&kind=` | | `Vec<`[`FleetEvent`](crate::fleet_state::FleetEvent)`>`, newest first |
+//! | `PUT` | [`FLEET_DRY_RUN`] | [`SetDryRun`](crate::fleet_state::SetDryRun) | [`FleetSettingsRecord`](crate::fleet::FleetSettingsRecord) |
+//! | `POST` | [`fleet_node_drain`] | [`FleetNodeAction`](crate::fleet_state::FleetNodeAction) | [`FleetNode`](crate::fleet_state::FleetNode); `404`, or `409` for a floor or cancelled node |
+//! | `POST` | [`fleet_node_reinstate`] | [`FleetNodeAction`](crate::fleet_state::FleetNodeAction) | [`FleetNode`](crate::fleet_state::FleetNode); `404`, or `409` unless draining |
+//! | `POST` | [`fleet_node_approve_cancel`] | [`FleetNodeAction`](crate::fleet_state::FleetNodeAction) | [`FleetNode`](crate::fleet_state::FleetNode); `404`, or `409` unless awaiting approval |
 //! | `POST` | [`NODE_JOIN_TOKENS`] | [`IssueJoinToken`](crate::node::IssueJoinToken) | [`JoinToken`](crate::node::JoinToken) |
 //! | `POST` | [`NODE_JOIN`] | [`JoinRequest`](crate::node::JoinRequest), bearer is the join token | [`JoinReply`](crate::node::JoinReply) |
 //! | `GET` | [`NODES`] | | `Vec<`[`NodeInfo`](crate::node::NodeInfo)`>` |
@@ -110,6 +116,15 @@ pub const FLEET_SETTINGS_HISTORY: &str = "/v1/fleet/settings/history";
 /// left out, and the most it returns.
 pub const FLEET_SETTINGS_HISTORY_DEFAULT: u32 = 50;
 pub const FLEET_SETTINGS_HISTORY_MAX: u32 = 500;
+pub const FLEET: &str = "/v1/fleet";
+pub const FLEET_EVENTS: &str = "/v1/fleet/events";
+pub const FLEET_DRY_RUN: &str = "/v1/fleet/dry-run";
+pub const FLEET_NODES: &str = "/v1/fleet/nodes";
+
+/// How many events [`fleet_events`] returns when `limit` is left out, and
+/// the most it returns.
+pub const FLEET_EVENTS_DEFAULT: u32 = 100;
+pub const FLEET_EVENTS_MAX: u32 = 1000;
 pub const NODES: &str = "/v1/nodes";
 pub const NODE_JOIN_TOKENS: &str = "/v1/nodes/join-tokens";
 /// The one route that takes a join token instead of the control plane's.
@@ -246,6 +261,29 @@ pub fn queue_entry(uuid: &uuid::Uuid) -> String {
 #[must_use]
 pub fn fleet_settings_history(limit: u32) -> String {
     format!("{FLEET_SETTINGS_HISTORY}?limit={limit}")
+}
+
+/// `/v1/fleet/events?limit=<limit>`: the latest fleet audit log entries,
+/// newest first. Add `&before=<id>` for the page before an entry and
+/// `&kind=<kind>` for one kind.
+#[must_use]
+pub fn fleet_events(limit: u32) -> String {
+    format!("{FLEET_EVENTS}?limit={limit}")
+}
+
+#[must_use]
+pub fn fleet_node_drain(name: &str) -> String {
+    format!("{FLEET_NODES}/{name}/drain")
+}
+
+#[must_use]
+pub fn fleet_node_reinstate(name: &str) -> String {
+    format!("{FLEET_NODES}/{name}/reinstate")
+}
+
+#[must_use]
+pub fn fleet_node_approve_cancel(name: &str) -> String {
+    format!("{FLEET_NODES}/{name}/approve-cancel")
 }
 
 /// Appends `?since=<revision>` for a long poll.

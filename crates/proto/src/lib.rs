@@ -14,6 +14,7 @@
 
 pub mod command;
 pub mod fleet;
+pub mod fleet_state;
 pub mod friend;
 pub mod instance;
 pub mod lobby;

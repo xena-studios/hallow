@@ -71,6 +71,12 @@ pub struct FleetSettings {
     /// Nodes that are never drained or cancelled: the oldest base nodes.
     /// At least 1; default `1`.
     pub floor_nodes: u32,
+    /// Players one Vine proxy should carry. The fleet manager drains proxies
+    /// it doesn't need down to `min_proxies`, and gives them back as players
+    /// arrive. `0` leaves proxies alone. Default `400`.
+    pub players_per_proxy: u32,
+    /// Proxies never drained for being idle. At least 1; default `1`.
+    pub min_proxies: u32,
     /// Providers the fleet manager may buy from. A provider not listed is
     /// never used. Default: `hetzner-cloud`, enabled, any region and type.
     pub providers: Vec<ProviderSettings>,
@@ -123,6 +129,8 @@ impl Default for FleetSettings {
             base_drain_needs_approval: true,
             prefer_burst_on_scale_down: true,
             floor_nodes: 1,
+            players_per_proxy: 400,
+            min_proxies: 1,
             providers: vec![ProviderSettings {
                 name: "hetzner-cloud".into(),
                 enabled: true,
@@ -209,6 +217,9 @@ impl FleetSettings {
         }
         if self.max_nodes < self.floor_nodes {
             fail("max_nodes", "must be at least floor_nodes");
+        }
+        if self.min_proxies < 1 {
+            fail("min_proxies", "must be at least 1");
         }
 
         let mut names: Vec<&str> = Vec::new();
@@ -357,6 +368,8 @@ mod tests {
             "billing_step_margin_secs",
             "base_drain_needs_approval",
             "floor_nodes",
+            "players_per_proxy",
+            "min_proxies",
             "providers",
         ] {
             assert!(value.get(key).is_some(), "{key}");

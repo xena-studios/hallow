@@ -91,7 +91,7 @@ The control plane decides every half second, under the matchmaker's Redis lock, 
 - **Limits.** Nothing goes past `scaling.max_instances`.
 - **A game is over** when its server reports `draining` with nobody on it, when it has been empty for `HALLOW_INSTANCE_EMPTY_SECS` after having had players, or when its server unregistered.
 - **Clean-up.** An instance whose server hasn't registered within `HALLOW_INSTANCE_START_TIMEOUT_SECS` is ended. So is one stuck in a task-owned state, because the control plane running the task died.
-- **Placement.** A new instance goes on the node with the fewest instances, on its lowest free game port. Its name is `<kind>-<6 hex>`. Draining nodes come with the fleet manager.
+- **Placement.** A new instance goes on the node with the fewest instances, on its lowest free game port. Its name is `<kind>-<6 hex>`. With the fleet manager on, nodes it is setting up or draining get no new instances, and a node takes instances only while their `players.max` fit in its slots; when none has room, players wait in the queue ([Fleet](FLEET.md#nodes-and-slots)).
 
 The quick decisions are written to Redis under the lock: new records, `ready`, bookkeeping, `ending`. Because the matchmaker pass that follows skips instances that are `ending`, nobody is sent to an instance that's going away, and a placement it makes is counted by the next plan. Before an instance is stopped, anyone still on it is sent to its kind's `lobby` (or a hub), and the stop waits up to 5 s for them to leave; a game that ends normally has already sent its players on (the server plugin does that when the server turns `draining`). The slow calls (create, stop, delete) run on their own tasks outside the lock and move the records on with a compare-and-set on the state. A sweep every 30 s deletes containers the orchestrator runs for this network that have no record, such as ones left behind when Redis was reset.
 
@@ -173,6 +173,5 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 ## Still to do
 
 - Run the Wings orchestrator on a real (cloud or dedicated) node; it has run end to end locally (`tools/wings-e2e`).
-- Draining nodes: no new instances there (the fleet manager).
 - `players.min` and match start, with `hallow-sdk`.
 - Canary channels: a share of new instances on a second image.

@@ -25,7 +25,10 @@
 //! [`LOBBY_FILL_PERCENT`] on average. Nothing goes past `max_instances`.
 //!
 //! New instances go on the node with the fewest instances (then by name),
-//! on its lowest free game port if it has a port range.
+//! on its lowest free game port if it has a port range. A node with a slot
+//! count (from the fleet manager) takes instances only while their players
+//! (`players.max` each) fit; when no node has room, players wait in the
+//! queue until the fleet manager adds one.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -122,9 +125,13 @@ pub fn plan(world: &World<'_>) -> Vec<Action> {
 
     let mut load: BTreeMap<&str, u32> = world.nodes.iter().map(|n| (n.name.as_str(), 0)).collect();
     let mut ports: BTreeMap<&str, BTreeSet<u16>> = BTreeMap::new();
+    let mut used: BTreeMap<&str, u32> = BTreeMap::new();
     for instance in &instances {
         if let Some(count) = load.get_mut(instance.node.as_str()) {
             *count += 1;
+        }
+        if instance.state.is_live() && !ended.contains(instance.name.as_str()) {
+            *used.entry(&instance.node).or_default() += slots_of(world.kinds, &instance.kind);
         }
         if let Some(port) = instance.port {
             ports.entry(&instance.node).or_default().insert(port);
@@ -159,11 +166,13 @@ pub fn plan(world: &World<'_>) -> Vec<Action> {
                 .max_instances
                 .map_or(u32::MAX, |max| max.saturating_sub(live.len() as u32))
         };
+        let need = slots_of(world.kinds, kind);
         for _ in 0..wanted.min(room) {
-            let Some((node, port)) = pick_node(world.nodes, &load, &ports) else {
+            let Some((node, port)) = pick_node(world.nodes, &load, &used, &ports, need) else {
                 break;
             };
             *load.entry(node).or_default() += 1;
+            *used.entry(node).or_default() += need;
             if let Some(port) = port {
                 ports.entry(node).or_default().insert(port);
             }
@@ -398,14 +407,26 @@ fn lobby_demand(
 /// starts.
 pub const LOBBY_FILL_PERCENT: u32 = 80;
 
-/// The least loaded node with a free port (if it has a range).
+/// The slots one instance of `kind` takes: its `players.max`.
+fn slots_of(kinds: &BTreeMap<String, KindSpec>, kind: &str) -> u32 {
+    kinds.get(kind).map_or(0, |k| k.players.max)
+}
+
+/// The least loaded node with a free port (if it has a range) and room for
+/// `need` more slots (if it has a slot count).
 fn pick_node<'a>(
     nodes: &'a [NodeSlot],
     load: &BTreeMap<&str, u32>,
+    used: &BTreeMap<&str, u32>,
     ports: &BTreeMap<&str, BTreeSet<u16>>,
+    need: u32,
 ) -> Option<(&'a str, Option<u16>)> {
     let mut best: Option<(u32, &'a str, Option<u16>)> = None;
     for node in nodes {
+        let taken = used.get(node.name.as_str()).copied().unwrap_or(0);
+        if node.slots.is_some_and(|cap| taken + need > cap) {
+            continue;
+        }
         let port = match node.ports {
             None => None,
             Some((lo, hi)) => {
@@ -488,6 +509,7 @@ mod tests {
             .map(|n| NodeSlot {
                 name: (*n).into(),
                 ports: None,
+                slots: None,
             })
             .collect()
     }
@@ -857,10 +879,12 @@ mod tests {
             NodeSlot {
                 name: "n1".into(),
                 ports: Some((30000, 30001)),
+                slots: None,
             },
             NodeSlot {
                 name: "n2".into(),
                 ports: Some((30000, 30000)),
+                slots: None,
             },
         ];
         let mut busy = instance("tg-a", InstanceState::Ready, 0);
@@ -885,5 +909,37 @@ mod tests {
                 ("n1".to_owned(), Some(30001))
             ]
         );
+    }
+
+    #[test]
+    fn nodes_take_instances_only_while_their_slots_last() {
+        // Four players a game; n1 holds 10 slots and already runs one game.
+        let mut case = Case::new(game(0, 4, None)).queue(&[4, 4, 4, 4]);
+        case.nodes = vec![
+            NodeSlot {
+                name: "n1".into(),
+                ports: None,
+                slots: Some(10),
+            },
+            NodeSlot {
+                name: "n2".into(),
+                ports: None,
+                slots: Some(4),
+            },
+        ];
+        let mut busy = instance("tg-a", InstanceState::Ready, 0);
+        busy.had_players = true;
+        case.instances = vec![busy];
+        case.servers = vec![server("tg-a", 4, ServerState::InGame)];
+        let placed: Vec<String> = case
+            .plan()
+            .into_iter()
+            .filter_map(|a| match a {
+                Action::Create { node, .. } => Some(node),
+                _ => None,
+            })
+            .collect();
+        // n2 takes one (4 of 4), n1 one more (8 of 10); the other two wait.
+        assert_eq!(placed, ["n2", "n1"]);
     }
 }

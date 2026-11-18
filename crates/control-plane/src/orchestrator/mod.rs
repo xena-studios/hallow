@@ -27,6 +27,10 @@ pub struct NodeSlot {
     /// The game ports instances bind on the node, inclusive; `None` when
     /// instances don't bind host ports (Docker on one network).
     pub ports: Option<(u16, u16)>,
+    /// Player slots its instances may take in all (each instance takes its
+    /// kind's `players.max`); `None` for no limit. Set from the fleet
+    /// manager's node sizes (`crate::fleet_manager`).
+    pub slots: Option<u32>,
 }
 
 /// What to create.
@@ -100,6 +104,14 @@ pub type OrchestratorFuture<'a, T> =
 pub trait Orchestrator: Send + Sync {
     /// For logs and the API: `wings`, `docker`, `mock`.
     fn name(&self) -> &'static str;
+    /// Whether instances can go on any node name, not only those
+    /// [`Orchestrator::nodes`] lists: Docker runs everything on one engine
+    /// whatever the node, and the mock keeps it in memory. The fleet
+    /// manager's dry-run nodes take instances only with such an
+    /// orchestrator, so the dev network can play a fleet out.
+    fn places_anywhere(&self) -> bool {
+        false
+    }
     /// The nodes instances can go on now (ready, not draining).
     fn nodes(&self) -> OrchestratorFuture<'_, Vec<NodeSlot>>;
     /// Creates an instance on `node`, starting it if `start`.

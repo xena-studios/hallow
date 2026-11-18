@@ -361,7 +361,7 @@ fn buy_cost(cost: &Cost, hours_left_today: f64) -> Money {
 
 /// When `date` starts in `tz`. Where a clock change skips midnight, the
 /// first moment of the day that exists.
-fn start_of_day(tz: Tz, date: NaiveDate) -> DateTime<Utc> {
+pub(crate) fn start_of_day(tz: Tz, date: NaiveDate) -> DateTime<Utc> {
     let midnight = date.and_time(NaiveTime::MIN);
     (0..=3)
         .find_map(|h| {

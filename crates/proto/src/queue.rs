@@ -24,4 +24,9 @@ pub struct QueueStatus {
     pub queued: u32,
     /// Rough wait, if the matchmaker can tell.
     pub estimated_wait_seconds: Option<u32>,
+    /// Set while the fleet manager can't add capacity (a budget or the node
+    /// limit): the network is busy and the wait may be long. The player has
+    /// been told already.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<String>,
 }

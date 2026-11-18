@@ -83,3 +83,17 @@ docker compose -p gatetest $files stop control-plane
 docker rm -f $(docker ps -aq --filter label=hallow.owner=$HALLOW_DOCKER_NETWORK)
 docker compose -p gatetest $files down -v
 ```
+
+## Fleet manager in dry run
+
+[`compose.fleet.yaml`](compose.fleet.yaml), over the three files above, turns the fleet manager on with [`config/hallow/fleet.toml`](config/hallow/fleet.toml) ([Fleet](../../docs/FLEET.md#the-fleet-manager)). The floor is the local Docker Engine with 32 slots. Queue past that and the fleet manager "buys" a dry-run node; with the Docker orchestrator its instances run on the same engine. Once the games end it is drained and cancelled. No provider is ever called: dry run is on by default and no token is set.
+
+```sh
+files="$files -f deploy/compose/compose.fleet.yaml"
+docker compose $files up --build -d
+curl -s -H "Authorization: Bearer $(cat deploy/compose/config/hallow/control-plane.token)" localhost:18090/v1/fleet
+curl -s -H "Authorization: Bearer $(cat deploy/compose/config/hallow/control-plane.token)" "localhost:18090/v1/fleet/events?limit=20"
+```
+
+Idle proxies are drained too: after ten quiet minutes the second proxy stops taking new players. Set `players_per_proxy` to `0` in the fleet settings to leave them alone.
+
