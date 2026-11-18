@@ -1,3 +1,5 @@
+![Hallow by Xena Studios. The title "Hallow" over the Ion Blue planet horizon, with "A full minigame network on Pumpkin, in Rust."](.github/assets/banner.png)
+
 # Hallow
 
 **A full minigame network, built on [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin).** Lobbies, matchmaking, parties, multiple proxies, machines bought and returned on demand from Hetzner and OVHcloud, one panel for every node, server, player and ban. Java 1.7 to 26.3 and Bedrock, written in Rust.
