@@ -923,6 +923,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hallow-sdk"
+version = "0.1.0"
+dependencies = [
+ "hallow-proto",
+ "pumpkin-plugin-api",
+ "serde",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "hallow-server"
 version = "0.1.0"
 dependencies = [
@@ -938,10 +950,12 @@ dependencies = [
 
 [[package]]
 name = "hallow-test-game"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "hallow-sdk",
  "pumpkin-plugin-api",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

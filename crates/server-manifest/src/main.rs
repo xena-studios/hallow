@@ -9,7 +9,8 @@
 //! `check` validates the manifest and the files it names; PATH is the file
 //! or the repo folder (default `.`). `apply` is what the base image's
 //! entrypoint runs: it merges the manifest into the rendered `pumpkin.toml`
-//! in place, copies the repo's plugins into Pumpkin's plugin folder and
+//! in place, copies the repo's plugins into Pumpkin's plugin folder (and its
+//! `maps.dir` into the first plugin's data folder, for `hallow-sdk`) and
 //! prints `export` lines for the server's environment, skipping variables the
 //! container already sets. Both exit 1 on an invalid manifest and 2 on bad
 //! arguments.
@@ -155,9 +156,50 @@ fn apply(
             .map_err(|err| format!("can't copy {} to {}: {err}", from.display(), to.display()))?;
     }
 
+    if let (Some(maps), Some(plugin)) = (
+        manifest.maps.as_ref().and_then(|maps| maps.dir.as_ref()),
+        manifest.plugins.first(),
+    ) {
+        let to = plugins.join("data").join(&plugin.name).join("maps");
+        copy_maps(&dir.join(maps), &to)?;
+    }
+
     Ok(exports(&manifest.env(), |name| {
         std::env::var_os(name).is_some_and(|value| !value.is_empty())
     }))
+}
+
+/// Replaces `to` with a copy of the map folder `from`. Runs on every start,
+/// so the maps are always the image's: a match never starts from a map an
+/// earlier run of the container changed.
+fn copy_maps(from: &Path, to: &Path) -> Result<(), String> {
+    if to.exists() {
+        std::fs::remove_dir_all(to)
+            .map_err(|err| format!("can't remove {}: {err}", to.display()))?;
+    }
+    copy_dir(from, to)
+}
+
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|err| format!("can't create {}: {err}", to.display()))?;
+    let entries =
+        std::fs::read_dir(from).map_err(|err| format!("can't read {}: {err}", from.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("can't read {}: {err}", from.display()))?;
+        let (source, target) = (entry.path(), to.join(entry.file_name()));
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            copy_dir(&source, &target)?;
+        } else {
+            std::fs::copy(&source, &target).map_err(|err| {
+                format!(
+                    "can't copy {} to {}: {err}",
+                    source.display(),
+                    target.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -246,6 +288,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("repo/build")).unwrap();
         std::fs::write(dir.join("repo/build/game.wasm"), b"\0asm").unwrap();
+        std::fs::create_dir_all(dir.join("repo/maps/castle/region")).unwrap();
+        std::fs::write(dir.join("repo/maps/castle/map.toml"), "name = \"Castle\"\n").unwrap();
+        std::fs::write(dir.join("repo/maps/castle/region/r.0.0.mca"), b"chunks").unwrap();
+        // Left by an earlier start: replaced, not merged.
+        std::fs::create_dir_all(dir.join("plugins/data/game/maps/old")).unwrap();
         std::fs::write(
             dir.join("pumpkin.toml"),
             "[networking.java]\naddress = \"0.0.0.0:25565\"\n",
@@ -259,6 +306,8 @@ mod tests {
             base = "^0.1"
             [players]
             max = 8
+            [maps]
+            dir = "maps"
             [[plugins]]
             file = "build/game.wasm"
             permissions = ["fs.read.data"]
@@ -274,6 +323,12 @@ mod tests {
         .unwrap();
         assert!(out.contains("HALLOW_RETURN_LOBBY='hub'"), "{out}");
         assert!(dir.join("plugins/game.wasm").is_file());
+        assert!(out.contains("HALLOW_MIN_PLAYERS='1'"), "{out}");
+        assert!(out.contains("HALLOW_MAPS_PICK='random'"), "{out}");
+        let maps = dir.join("plugins/data/game/maps");
+        assert!(maps.join("castle/map.toml").is_file());
+        assert!(maps.join("castle/region/r.0.0.mca").is_file());
+        assert!(!maps.join("old").exists());
         let config: toml::Table =
             toml::from_str(&std::fs::read_to_string(dir.join("pumpkin.toml")).unwrap()).unwrap();
         assert_eq!(

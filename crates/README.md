@@ -11,7 +11,7 @@ Hallow's Cargo workspace.
 | `providers/hetzner-cloud/` | `hallow-provider-hetzner-cloud`: hourly burst nodes through the Hetzner Cloud API, limited to servers labelled `hallow=node`. See its [README](providers/hetzner-cloud/README.md) |
 | `providers/*` | One crate per machine provider behind `hallow-fleet`'s provider trait; Hetzner Robot and OVHcloud later |
 | `vine-plugin/` | `hallow-vine`: presence, global ping, duplicate-login check, server-list sync and cross-proxy commands, linking each proxy to the control plane (WASM); parties and queues later. See its [README](vine-plugin/README.md) |
-| `hallow-sdk/` | For server repos: minigame library (arenas, teams, kits, scoreboards, spectating, stats) and control-plane client (WASM) |
+| `hallow-sdk/` | For server repos: minigame library (arenas, match lifecycle, teams, kits, sidebars, spectating, stats) and control-plane client (WASM). See its [README](hallow-sdk/README.md) |
 | `server-plugin/` | `hallow-server`: Hallow's Pumpkin plugin in every server image. Registers the server with the control plane, heartbeats its state and players, reports joins and leaves, sends player stats and anticheat signals, and unregisters it on shutdown (WASM). See its [README](server-plugin/README.md) |
 | `server-manifest/` | `hallow-manifest`: parses and validates a server repo's `hallow.toml`, and the `hallow-manifest` CLI that checks it in CI and applies it in the server base image. See its [README](server-manifest/README.md) |
 | `netcheck/` | Smoke test and load test: joins through the proxy as a bot and switches servers; `--stay` keeps it connected; `--bots N` runs N wandering bots and reports join times |

@@ -13,9 +13,12 @@ ARG HALLOW_SERVER_VERSION=dev
 ENV HALLOW_SERVER_VERSION=${HALLOW_SERVER_VERSION}
 
 COPY --chown=hallow:hallow hallow.toml /server/hallow.toml
-# Pumpkin loads every .wasm in /server/plugins. Build the game's plugin into
-# plugins/ before building the image (CI does).
+# Pumpkin loads every .wasm in /server/plugins. Build the game's plugin
+# (plugin/) into plugins/ before building the image (CI does).
 COPY --chown=hallow:hallow plugins/ /server/plugins/
+# Uncomment with [maps] in hallow.toml. The base image copies them into the
+# game plugin's data folder on start, where hallow-sdk reads them.
+# COPY --chown=hallow:hallow maps/ /server/maps/
 # Uncomment with world = "world" in hallow.toml. Pumpkin writes to it, so it
 # belongs to the server's user.
 # COPY --chown=hallow:hallow world/ /server/world/

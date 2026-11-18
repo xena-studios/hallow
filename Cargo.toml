@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/netcheck", "crates/apiprobe", "crates/tickwatch", "crates/vineprobe", "crates/proto", "crates/control-plane", "crates/vine-plugin", "crates/db", "crates/server-plugin", "crates/fleet", "crates/server-manifest", "crates/providers/hetzner-cloud", "servers/hub/plugin", "servers/test-game/plugin"]
+members = ["crates/netcheck", "crates/apiprobe", "crates/tickwatch", "crates/vineprobe", "crates/proto", "crates/control-plane", "crates/vine-plugin", "crates/db", "crates/server-plugin", "crates/hallow-sdk", "crates/fleet", "crates/server-manifest", "crates/providers/hetzner-cloud", "servers/hub/plugin", "servers/test-game/plugin"]
 # Upstream projects and the panel build in their own workspaces.
 exclude = ["upstream", "panel"]
 

@@ -174,5 +174,5 @@ See [Dev network](../deploy/compose/README.md#dynamic-games). The Phase 1 gate r
 
 - Run the Wings orchestrator on a real (cloud or dedicated) node; it has run end to end locally (`tools/wings-e2e`).
 - Draining nodes: no new instances there (the fleet manager).
-- `players.min` and match start, with `hallow-sdk`.
+- `players.min` in the matchmaker: `hallow-sdk` waits for it on the instance, but the matchmaker sends a queue entry as soon as it fits.
 - Canary channels: a share of new instances on a second image.

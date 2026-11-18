@@ -77,7 +77,7 @@ A lobby's file has `role = "lobby"`, a `players.max` per instance, and the games
 | `players.min` | no | Games: players needed to start a match. Default 1 |
 | `scaling.warm` | no | Games: idle instances kept ready while players are online. Hubs and lobbies: the fewest instances kept up; more start as players fill them ([Hubs and lobbies](#hubs-and-lobbies)). Default 1 for a hub (the network's floor, Decisions 19), else 0 |
 | `scaling.max_instances` | no | The most instances of the kind at once |
-| `maps.dir`, `maps.pick` | no | Games: the folder of map worlds and how one is picked (`random` or `vote`), read by `hallow-sdk` |
+| `maps.dir`, `maps.pick` | no | Games: the folder of map worlds and how one is picked (`random` or `vote`), read by `hallow-sdk` ([maps](../crates/hallow-sdk/README.md#maps)). Needs a `[[plugins]]` entry, and `world` one folder deep |
 | `[[plugins]]` | no | The repo's WASM plugins: `file` (a `.wasm` path), `name` (Pumpkin's plugin name, default the file name without `.wasm`) and `permissions`, pre-approved so Pumpkin doesn't ask on the console. `hallow_server` and the multiversion plugin come with the base image |
 | `[pumpkin]` | no | Merged over the base image's [`pumpkin.toml`](../templates/server/pumpkin.toml). The keys that would cut the server off the network (`networking.proxy`, `networking.java.address`, `networking.java.online_mode`), telemetry and update checks (Decisions 24), and Hallow's plugin's overrides are fixed; `max_players` and `default_level_name` come from `players.max` and `world` |
 | `[env]` | no | Environment variables for the server, as strings. `HALLOW_*` names are reserved. The container's own environment wins |
@@ -92,15 +92,16 @@ The base image's entrypoint runs `hallow-manifest apply` on every start. It:
 
 1. checks `base` against the image's own version (`/etc/hallow/base-version`);
 2. merges `[pumpkin]`, `players.max`, `world` and the plugins' permissions into `pumpkin.toml`;
-3. copies the plugins into Pumpkin's `plugins/` folder;
+3. copies the plugins into Pumpkin's `plugins/` folder, and `maps.dir` into the first plugin's data folder (`plugins/data/<plugin>/maps`), replacing what an earlier start left;
 4. sets the environment Hallow's server plugin reads:
    - `HALLOW_SERVER_KIND`: from `name`;
    - `HALLOW_SERVER_ROLE`: `lobby` for a hub or lobby, `game` for a game;
    - `HALLOW_MAX_PLAYERS`: from `players.max`;
    - `HALLOW_RETURN_LOBBY`: from `lobby`;
+   - games: `HALLOW_MIN_PLAYERS` from `players.min`, and `HALLOW_MAPS_PICK` from `maps.pick`, for `hallow-sdk`;
    - then `[env]`.
 
-Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The server plugin sends players to `HALLOW_RETURN_LOBBY` when a game ends ([Hubs and lobbies](#hubs-and-lobbies)). `queues`, `players.min` and `maps` are for the matchmaker and `hallow-sdk`, which don't read them yet.
+Variables the container already sets win, so the control plane sets what differs per instance: `HALLOW_SERVER_NAME`, `HALLOW_SERVER_ADDRESS`, `HALLOW_CONTROL_PLANE` and its token, and on Wings `HALLOW_SERVER_PORT` and `HALLOW_SERVER_DIR` (see [Instances](INSTANCES.md)). A repo's image also sets `HALLOW_SERVER_VERSION` from its git tag at build time. The control plane reads `role`, `lobby`, `players` and `scaling` when the kind is registered ([Instances](INSTANCES.md#kinds)). The server plugin sends players to `HALLOW_RETURN_LOBBY` when a game ends ([Hubs and lobbies](#hubs-and-lobbies)). `hallow-sdk` reads `players.min` and `maps`. The matchmaker doesn't read `queues` or `players.min` yet.
 
 ## Hubs and lobbies
 
@@ -163,4 +164,4 @@ The control plane owns every proxy and server instance. It creates them through 
 
 ## The SDK
 
-The Hallow monorepo publishes `hallow-sdk`, a Rust crate that server repos depend on. It holds the minigame library (arenas, teams, kits, scoreboards, spectating, stats) and the client for the control plane. A template repo, `hallow-server-template` (the contents of [`templates/server-repo`](../templates/server-repo)), is the starting point for a new server kind.
+The Hallow monorepo publishes [`hallow-sdk`](../crates/hallow-sdk/README.md), a Rust crate that server repos depend on. It holds the minigame library (arenas, the match lifecycle, teams, kits, sidebars, spectating, stats) and the client for the control plane, which goes through Hallow's server plugin. A game implements `Minigame` with the rules it changes and calls `hallow_sdk::start` from its plugin; the SDK runs the match and turns the server `in_game` and `draining` at the right times. [`servers/test-game`](../servers/test-game) uses every part. A template repo, `hallow-server-template` (the contents of [`templates/server-repo`](../templates/server-repo)), is the starting point for a new server kind, with a game plugin on the SDK.
