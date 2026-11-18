@@ -63,16 +63,17 @@ HAProxy's stats page, with each proxy's state (`UP`, `DRAIN (agent)`), is at <ht
 
 - **Image:** `geyser/Dockerfile` pins Geyser 2.12.1 build 1302 and checks the jar's published SHA-256.
 - **Ports:** Bedrock clients connect to `localhost:19132`, over RakNet or NetherNet (signaling on 19132/tcp, WebRTC on 19133/udp).
-- **Path:** Geyser joins Vine as a Java player.
+- **Path:** Geyser joins Vine's Geyser-only listener (`proxy:25567`, not published) with Floodgate's encrypted handoff (`auth-type: floodgate`). Vine verifies it with the shared key and gives the player Floodgate's Java identity: `.` + gamertag (cut to 16), UUID `00000000-0000-0000-xxxx-xxxxxxxxxxxx` from the xuid, and the player's own IP, forwarded to the servers like any other player. A login on 25567 without a valid handoff is refused; on 25565 a forged one is refused and a Java player needs none.
+- **Key:** `compose/config/floodgate/key.pem`, 16 raw bytes (Floodgate's format, not actually PEM), mounted into Geyser and every proxy. Make a new one with `head -c 16 /dev/urandom > key.pem`.
 
 ```sh
 docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.geyser.yaml up --build -d
-docker run --rm --network compose_default hallow-bedrockbot geyser 19132   # tools/matrix bot
+docker run --rm --network compose_default hallow-bedrockbot geyser 19132 Steve 2535400000000001   # tools/matrix bot: gamertag, xuid
 ```
 
 Rules for now:
 
-- **Dev only:** the config (`compose/config/geyser/config.yml`) uses offline auth and doesn't validate Bedrock logins, so bots can join and Bedrock players get offline-mode identities. Floodgate (issue #72) gives them their real ones.
+- **Dev only:** the key is checked in, and Geyser's config (`compose/config/geyser/config.yml`) doesn't validate Bedrock logins, so a bot can claim any gamertag and xuid. A real network generates its own key, keeps it with the other secrets, and leaves `validate-bedrock-login` on, so the xuid is the one Xbox Live signed.
 - **No load balancer:** Geyser connects to the proxy directly, so don't combine it with `compose.lb.yaml` yet.
 
 ## Monitoring
