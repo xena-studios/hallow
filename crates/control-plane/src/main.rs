@@ -33,12 +33,16 @@
 //! | `HALLOW_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker orchestrator: the Engine API (`unix://` or `tcp://`) |
 //! | `HALLOW_DOCKER_NETWORK` | required with Docker | Docker orchestrator: the network instances join, such as `gatetest_default` |
 //! | `HALLOW_DOCKER_OWNER` | the network | Docker orchestrator: label value marking this network's containers |
+//! | `HALLOW_FLEET_FILE` | none | The fleet manager's fleet file (floor nodes, machines; docs/FLEET.md); without it the fleet manager is off. Needs the database |
+//! | `HALLOW_HETZNER_TOKEN` or `HALLOW_HETZNER_TOKEN_FILE` | none | Hetzner Cloud API token for the fleet manager; without it only dry run works |
+//! | `HALLOW_HETZNER_API_URL` | Hetzner's | Hetzner Cloud API base URL, for a mock |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
 
 use hallow_control_plane::{
     Config, DuplicateLogin, InstancesSetup, OrchestratorChoice,
+    fleet_manager::{FleetConfig, FleetSetup},
     orchestrator::docker::{DockerConfig, Endpoint},
     panel::PanelConfig,
     serve_all,
@@ -145,6 +149,7 @@ fn config() -> Result<Config, String> {
     }
     config.panel = panel_config()?;
     config.instances = instances_setup()?;
+    config.fleet = fleet_setup()?;
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
         config.duplicate_login = match mode.as_str() {
             "deny" => DuplicateLogin::Deny,
@@ -229,6 +234,31 @@ fn panel_config() -> Result<Option<PanelConfig>, String> {
         }
     }
     Ok(Some(panel))
+}
+
+fn fleet_setup() -> Result<Option<FleetSetup>, String> {
+    let Ok(path) = env::var("HALLOW_FLEET_FILE") else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path)
+        .map_err(|err| format!("can't read HALLOW_FLEET_FILE {path}: {err}"))?;
+    let mut setup =
+        FleetSetup::new(FleetConfig::parse(&text).map_err(|err| format!("{path}: {err}"))?);
+    setup.hetzner_token = match (
+        env::var("HALLOW_HETZNER_TOKEN"),
+        env::var("HALLOW_HETZNER_TOKEN_FILE"),
+    ) {
+        (Ok(token), _) => Some(token),
+        (_, Ok(path)) => Some(
+            std::fs::read_to_string(&path)
+                .map_err(|err| format!("can't read HALLOW_HETZNER_TOKEN_FILE {path}: {err}"))?
+                .trim()
+                .to_owned(),
+        ),
+        _ => None,
+    };
+    setup.hetzner_api_url = env::var("HALLOW_HETZNER_API_URL").ok();
+    Ok(Some(setup))
 }
 
 fn instances_setup() -> Result<Option<InstancesSetup>, String> {

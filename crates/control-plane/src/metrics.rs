@@ -134,6 +134,9 @@ pub async fn render(app: &AppState) -> store::Result<String> {
             label(&kind)
         );
     }
+    if app.config.fleet.is_some() {
+        crate::fleet_manager::metrics(&app.store, &mut out).await?;
+    }
     Ok(out)
 }
 

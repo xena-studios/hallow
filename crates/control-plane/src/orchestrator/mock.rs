@@ -48,6 +48,7 @@ impl MockOrchestrator {
                 .map(|name| NodeSlot {
                     name: (*name).to_owned(),
                     ports: None,
+                    slots: None,
                 })
                 .collect(),
             inner: Mutex::new(Inner::default()),
@@ -93,6 +94,10 @@ impl MockOrchestrator {
 impl Orchestrator for MockOrchestrator {
     fn name(&self) -> &'static str {
         "mock"
+    }
+
+    fn places_anywhere(&self) -> bool {
+        true
     }
 
     fn nodes(&self) -> OrchestratorFuture<'_, Vec<NodeSlot>> {

@@ -1,6 +1,6 @@
 //! Hallow's PostgreSQL schema and the typed queries the control plane runs
 //! against it: accounts, ranks, sessions, punishments and their templates,
-//! anticheat signals, fleet settings, node join tokens, player stats and
+//! anticheat signals, fleet settings, the fleet manager's nodes and audit log, node join tokens, player stats and
 //! server kinds.
 //!
 //! Every table lives in the `hallow` schema, so Hallow and the Calagopus
@@ -17,6 +17,7 @@
 
 mod accounts;
 mod fleet;
+mod fleet_nodes;
 mod friends;
 mod kinds;
 mod nodes;
@@ -33,6 +34,11 @@ pub use accounts::{
 pub use fleet::{
     FleetSettingsChange, StoredFleetSettings, fleet_settings, fleet_settings_history,
     save_fleet_settings,
+};
+pub use fleet_nodes::{
+    FleetEvent, FleetNode, NewFleetEvent, NewFleetNode, add_fleet_events, add_fleet_node,
+    approve_fleet_cancel, await_fleet_approval, fleet_events, fleet_node, fleet_nodes,
+    put_floor_node, set_fleet_node_phase,
 };
 pub use friends::{
     Friend, MAX_FRIENDS, RequestOutcome, accept_friend, are_friends, deny_friend, friends_of,

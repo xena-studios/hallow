@@ -1,0 +1,21 @@
+# The dev network's fleet file (docs/FLEET.md#fleet-file), for
+# compose.fleet.yaml. The floor is the local Docker Engine, small enough that
+# a few queued bots fill it; the fleet manager then "buys" a dry-run node,
+# and with the Docker orchestrator its instances run on the same engine.
+# Dry run is the default setting and nothing here can call a provider: no
+# Hetzner token is set.
+tick_secs = 10
+dry_run_setup_secs = 20
+
+[[floor]]
+name = "docker"
+region = "fsn1"
+slots = 32
+price = "40.00"
+
+[[machine]]
+type = "cpx41"
+region = "fsn1"
+slots = 64
+per_hour = "0.0500"
+monthly_cap = "30.00"

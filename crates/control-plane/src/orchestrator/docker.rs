@@ -248,11 +248,16 @@ impl Orchestrator for DockerOrchestrator {
         "docker"
     }
 
+    fn places_anywhere(&self) -> bool {
+        true
+    }
+
     fn nodes(&self) -> OrchestratorFuture<'_, Vec<NodeSlot>> {
         Box::pin(async move {
             Ok(vec![NodeSlot {
                 name: NODE.to_owned(),
                 ports: None,
+                slots: None,
             }])
         })
     }

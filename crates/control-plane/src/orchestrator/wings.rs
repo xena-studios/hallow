@@ -300,13 +300,14 @@ impl Orchestrator for WingsOrchestrator {
             let nodes = hallow_db::list_nodes(&self.db)
                 .await
                 .map_err(|e| OrchestratorError::Unavailable(format!("database: {e}")))?;
-            // Draining comes with the fleet manager; every joined node takes
-            // instances for now.
+            // The instance lifecycle leaves out nodes the fleet manager is
+            // draining or still setting up, and sizes the rest.
             Ok(nodes
                 .into_iter()
                 .map(|n| NodeSlot {
                     name: n.name,
                     ports: Some(self.config.game_ports),
+                    slots: None,
                 })
                 .collect())
         })

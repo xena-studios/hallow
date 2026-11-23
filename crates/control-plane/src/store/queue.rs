@@ -132,6 +132,7 @@ impl Store {
             queued: self.queued_players(&req.kind).await?,
             kind: req.kind,
             estimated_wait_seconds: None,
+            busy: None,
         }))
     }
 
@@ -191,6 +192,50 @@ impl Store {
             sizes.push((kind, players));
         }
         Ok(sizes)
+    }
+
+    /// Each kind with queued players: how many, and when the longest
+    /// waiting entry joined (Unix ms). For the fleet manager's queue-wait
+    /// signal.
+    pub async fn queue_waits(&self) -> Result<Vec<(String, u32, u64)>> {
+        let mut waits = Vec::new();
+        for (kind, raw) in self.raw_queues().await? {
+            let mut players = 0u32;
+            let mut oldest = u64::MAX;
+            for raw in raw {
+                let entry: Entry = serde_json::from_str(&raw)?;
+                players += u32::try_from(entry.members.len()).unwrap_or(u32::MAX);
+                oldest = oldest.min(entry.since_ms);
+            }
+            if players > 0 {
+                waits.push((kind, players, oldest));
+            }
+        }
+        Ok(waits)
+    }
+
+    /// Tells every queued player `text`. Returns how many were told.
+    pub async fn notify_queued(&self, text: &str) -> Result<u32> {
+        let mut members = Vec::new();
+        for (_, raw) in self.raw_queues().await? {
+            for raw in raw {
+                let entry: Entry = serde_json::from_str(&raw)?;
+                members.extend(entry.members.iter().map(Uuid::to_string));
+            }
+        }
+        self.notify(&members, text).await?;
+        Ok(u32::try_from(members.len()).unwrap_or(u32::MAX))
+    }
+
+    async fn raw_queues(&self) -> Result<Vec<(String, Vec<String>)>> {
+        let mut kinds: Vec<String> = self.conn().smembers(self.keys.queue_kinds()).await?;
+        kinds.sort();
+        let mut all = Vec::with_capacity(kinds.len());
+        for kind in kinds {
+            let raw: Vec<String> = self.conn().lrange(self.keys.queue(&kind), 0, -1).await?;
+            all.push((kind, raw));
+        }
+        Ok(all)
     }
 
     async fn queued_players(&self, kind: &str) -> Result<u32> {

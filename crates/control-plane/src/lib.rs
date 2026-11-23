@@ -17,6 +17,7 @@ pub mod auth;
 mod error;
 pub mod events;
 mod fleet;
+pub mod fleet_manager;
 mod friends;
 pub mod instances;
 mod kinds;
@@ -115,6 +116,9 @@ pub struct Config {
     /// Instance orchestration; `None` leaves servers to whoever starts them.
     /// Needs `database_url` (the kinds registry).
     pub instances: Option<InstancesSetup>,
+    /// The fleet manager (`HALLOW_FLEET_FILE`); `None` leaves nodes alone.
+    /// Needs `database_url`.
+    pub fleet: Option<fleet_manager::FleetSetup>,
     /// A proxy or server that hasn't heartbeated for this long is removed.
     pub expiry: Duration,
     /// How long a long poll is held before answering `unchanged`.
@@ -140,6 +144,7 @@ impl Config {
             panel: None,
             join_token_ttl: Duration::from_secs(24 * 3600),
             instances: None,
+            fleet: None,
             // Three missed heartbeats.
             expiry: Duration::from_secs(HEARTBEAT_SECONDS * 3),
             long_poll: Duration::from_secs(LONG_POLL_SECONDS),
@@ -203,8 +208,49 @@ pub async fn serve_with(
     panel: Option<Arc<dyn panel::Panel>>,
     orchestrator: Option<Arc<dyn orchestrator::Orchestrator>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    serve_custom(
+        listener,
+        agent,
+        config,
+        Overrides {
+            panel,
+            orchestrator,
+            provider: None,
+        },
+    )
+    .await
+}
+
+/// What [`serve_custom`] uses instead of building it from the config.
+#[derive(Default)]
+pub struct Overrides {
+    /// The panel client (`config.panel` must still be set for node joins).
+    pub panel: Option<Arc<dyn panel::Panel>>,
+    /// The orchestrator (`config.instances` must still be set).
+    pub orchestrator: Option<Arc<dyn orchestrator::Orchestrator>>,
+    /// The fleet manager's real provider (`config.fleet` must still be
+    /// set), such as one that fails a test if it is ever called.
+    pub provider: Option<Arc<dyn fleet_manager::DynProvider>>,
+}
+
+/// [`serve_all`] with parts given instead of built from the config.
+pub async fn serve_custom(
+    listener: TcpListener,
+    agent: Option<TcpListener>,
+    config: Config,
+    overrides: Overrides,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Overrides {
+        panel,
+        orchestrator,
+        provider,
+    } = overrides;
     let client = redis::Client::open(config.redis_url.as_str())?;
     let store = store::Store::new(&client, &config).await?;
+    let fleet_store = match &config.fleet {
+        Some(_) => Some(store::Store::new(&client, &config).await?),
+        None => None,
+    };
     let events = events::Events::listen(client, store.keys().channel());
     let db = match &config.database_url {
         Some(url) => {
@@ -239,6 +285,31 @@ pub async fn serve_with(
     tokio::spawn(matchmaker(state.clone()));
     if state.instances.is_some() {
         tokio::spawn(sweeper(state.clone()));
+    }
+    if let (Some(setup), Some(fleet_store)) = (&state.config.fleet, fleet_store) {
+        let db = state
+            .db
+            .clone()
+            .ok_or("the fleet manager needs the database (HALLOW_DATABASE_URL)")?;
+        let real = match provider {
+            Some(provider) => provider,
+            None => setup.provider()?,
+        };
+        let manager = fleet_manager::FleetManager::new(
+            db,
+            fleet_store,
+            Arc::new(fleet_manager::LiveWorld {
+                state: state.clone(),
+            }),
+            real,
+            setup.config.clone(),
+        );
+        tracing::info!(
+            provider = %setup.config.provider,
+            every = setup.config.tick_secs,
+            "fleet manager on"
+        );
+        tokio::spawn(fleet_manager::run(manager));
     }
     tokio::spawn(signals::retention(state.clone()));
     tokio::spawn(nodes::retention(state.clone()));
@@ -301,6 +372,7 @@ async fn start_instances(
             settings: setup.settings,
             control_plane: setup.control_plane.clone(),
             env: setup.env.clone(),
+            fleet: config.fleet.is_some(),
         },
     )))
 }
