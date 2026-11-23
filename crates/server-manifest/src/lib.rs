@@ -146,7 +146,8 @@ pub struct Scaling {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Maps {
-    /// Folder of map worlds, relative to the manifest. Read by `hallow-sdk`.
+    /// Folder of map worlds, relative to the manifest. `apply` copies it to
+    /// `plugins/data/<first plugin>/maps`, where `hallow-sdk` reads it.
     pub dir: Option<PathBuf>,
     pub pick: MapPick,
 }
@@ -468,6 +469,28 @@ impl Manifest {
                 permissions: plugin.permissions,
             });
         }
+        // hallow-sdk loads a map as a world one folder up from Pumpkin's world
+        // folder (`../plugins/data/...`), so that folder must be one deep.
+        if maps.as_ref().is_some_and(|maps| maps.dir.is_some())
+            && world
+                .as_ref()
+                .is_some_and(|world: &PathBuf| world.components().count() > 1)
+        {
+            problem(
+                "world",
+                "must be a single folder in a game with maps.dir (hallow-sdk loads maps next to it)"
+                    .to_owned(),
+            );
+        }
+        // The maps are copied into the first plugin's data folder, the only
+        // place a plugin can read files.
+        if maps.as_ref().is_some_and(|maps| maps.dir.is_some()) && plugins.is_empty() {
+            problem(
+                "maps.dir",
+                "needs a [[plugins]] entry: the maps are copied into the first plugin's data folder"
+                    .to_owned(),
+            );
+        }
 
         for (key, why) in RESERVED_PUMPKIN_KEYS {
             if has_key(&raw.pumpkin, key) {
@@ -628,6 +651,20 @@ impl Manifest {
         ];
         if let Some(lobby) = &self.lobby {
             env.push(("HALLOW_RETURN_LOBBY".to_owned(), lobby.clone()));
+        }
+        // For hallow-sdk: when a match can start, and how its map is picked.
+        if self.role == Role::Game {
+            env.push((
+                "HALLOW_MIN_PLAYERS".to_owned(),
+                self.players.min.to_string(),
+            ));
+            if let Some(maps) = &self.maps {
+                let pick = match maps.pick {
+                    MapPick::Random => "random",
+                    MapPick::Vote => "vote",
+                };
+                env.push(("HALLOW_MAPS_PICK".to_owned(), pick.to_owned()));
+            }
         }
         env.extend(self.env.iter().map(|(k, v)| (k.clone(), v.clone())));
         env
@@ -827,6 +864,17 @@ mod tests {
             }]
         );
         assert_eq!(manifest.env["SKYWARS_MODE"], "solo");
+        let env = manifest.env();
+        assert!(env.contains(&("HALLOW_MIN_PLAYERS".into(), "2".into())));
+        assert!(env.contains(&("HALLOW_MAPS_PICK".into(), "vote".into())));
+    }
+
+    #[test]
+    fn maps_need_a_plugin() {
+        assert_problem(
+            "name = \"g\"\nrole = \"game\"\nbase = \"^0.1\"\n[players]\nmax = 4\n[maps]\ndir = \"maps\"\n",
+            "needs a [[plugins]] entry",
+        );
     }
 
     #[test]

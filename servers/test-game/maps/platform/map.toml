@@ -1,0 +1,21 @@
+# The test game's one map: a 15x15 stone platform at y 100, made by the
+# plugin's chunk generator, so this folder has no region files. A real map
+# folder is a Pumpkin world (region/ and so on) next to its map.toml.
+name = "Platform"
+authors = ["Xena Studios"]
+void_y = 90.0                # below this a player is out
+spectators = { x = 0.5, y = 106.0, z = 0.5, pitch = 45.0 }
+
+[[spawns]]
+team = "red"
+x = -4.5
+y = 101.0
+z = 0.5
+yaw = -90.0
+
+[[spawns]]
+team = "blue"
+x = 5.5
+y = 101.0
+z = 0.5
+yaw = 90.0

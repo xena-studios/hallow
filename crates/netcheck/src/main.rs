@@ -6,6 +6,7 @@
 //! netcheck --route "/some-command arg,game-1"   # steps starting with / run a command
 //! netcheck --route "~5,/msg someone hi"         # steps like ~5 wait that many seconds
 //! netcheck --route ">hello there"               # steps starting with > send chat
+//! netcheck --route "/play test-game,?match has started"   # steps like ?text wait up to 90 s for a chat line containing text
 //! netcheck --bots 100 [--ramp 10] [--stay 60] [--name load]   # load test; bots are load0000, load0001, ...
 //! ```
 //!
@@ -60,6 +61,10 @@ use uuid::Uuid;
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// Chat lines a bot remembers for `?text` steps.
+const CHAT_KEPT: usize = 200;
+/// How long a `?text` step waits for its chat line.
+const EXPECT_TIMEOUT: Duration = Duration::from_secs(90);
 /// What Vine says when it won't move a player.
 const REFUSALS: [&str; 3] = ["Unknown server", "does not exist", "Failed to connect"];
 const COMPRESSION_LEVEL: u32 = 6;
@@ -75,6 +80,8 @@ struct Bot {
     position: Vector3<f64>,
     /// Print chat the player receives.
     verbose: bool,
+    /// Chat lines seen, for `?text` steps.
+    chat: Vec<String>,
 }
 
 async fn send_to<P: ClientPacket + MultiVersionJavaPacket>(
@@ -127,6 +134,7 @@ impl Bot {
             writer: TCPNetworkEncoder::new(BufWriter::new(write)),
             position: Vector3::new(0.0, 0.0, 0.0),
             verbose: true,
+            chat: Vec::new(),
         };
 
         bot.send(&SHandShake {
@@ -268,7 +276,35 @@ impl Bot {
     /// teleport the server sends and following switches the proxy starts, so
     /// plugins can act on the player.
     async fn stay(&mut self, seconds: u64) -> Result<(), String> {
-        let until = Instant::now() + Duration::from_secs(seconds);
+        self.stay_until(Instant::now() + Duration::from_secs(seconds), None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Stays in play, like [`Bot::stay`], until a chat line containing
+    /// `text` arrives (true) or `until` passes (false).
+    async fn wait_for(&mut self, text: &str, until: Instant) -> Result<bool, String> {
+        self.stay_until(until, Some(text)).await
+    }
+
+    /// Whether a chat line containing `expect` arrived since the last line
+    /// found this way; forgets the lines up to it.
+    fn saw(&mut self, expect: &str) -> bool {
+        match self.chat.iter().position(|line| line.contains(expect)) {
+            Some(index) => {
+                self.chat.drain(..=index);
+                true
+            }
+            None => false,
+        }
+    }
+
+    async fn stay_until(&mut self, until: Instant, expect: Option<&str>) -> Result<bool, String> {
+        if let Some(expect) = expect
+            && self.saw(expect)
+        {
+            return Ok(true);
+        }
         let position = CPlayerPosition::to_id(CURRENT_MC_VERSION);
         let start_config = CStartConfiguration::to_id(CURRENT_MC_VERSION);
         while Instant::now() < until {
@@ -279,6 +315,11 @@ impl Bot {
                 Err(_) => break,
             };
             if self.answer_play(&packet).await? {
+                if let Some(expect) = expect
+                    && self.saw(expect)
+                {
+                    return Ok(true);
+                }
                 continue;
             }
             // The proxy moved this player (a party warp, the matchmaker):
@@ -305,7 +346,7 @@ impl Bot {
                 .await?;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Walks a 4-block circle around where it spawned for `seconds`, sending a
@@ -404,9 +445,14 @@ impl Bot {
             self.send(&SPlayPong { id }).await?;
             Ok(true)
         } else if packet.id == clientbound::play::SYSTEM_CHAT {
+            let line = text_of(&packet.payload);
             if self.verbose {
-                println!("    {} sees: {}", self.name, text_of(&packet.payload));
+                println!("    {} sees: {line}", self.name);
             }
+            if self.chat.len() >= CHAT_KEPT {
+                self.chat.remove(0);
+            }
+            self.chat.push(line);
             Ok(true)
         } else if packet.id == clientbound::play::DISCONNECT {
             Err(format!("kicked: {}", text_of(&packet.payload)))
@@ -530,8 +576,9 @@ async fn run(args: &Args) -> Result<(), String> {
     for server in &args.route {
         let step = Instant::now();
         // `~N` waits N seconds (still answering keep-alives and printing chat),
-        // a step starting with `/` runs that command, and anything else is a
-        // server to switch to.
+        // `?text` waits for a chat line containing text and fails without
+        // one, a step starting with `/` runs that command, and anything else
+        // is a server to switch to.
         if let Some(secs) = server.strip_prefix('~') {
             let secs: u64 = secs
                 .parse()
@@ -539,6 +586,20 @@ async fn run(args: &Args) -> Result<(), String> {
             bot.stay(secs)
                 .await
                 .map_err(|err| format!("waiting {secs}s: {err}"))?;
+            continue;
+        }
+        if let Some(expect) = server.strip_prefix('?') {
+            let seen = bot
+                .wait_for(expect, step + EXPECT_TIMEOUT)
+                .await
+                .map_err(|err| format!("waiting for \"{expect}\": {err}"))?;
+            if !seen {
+                return Err(format!(
+                    "no chat line with \"{expect}\" within {}s",
+                    EXPECT_TIMEOUT.as_secs()
+                ));
+            }
+            println!("  ok  saw \"{expect}\" ({} ms)", step.elapsed().as_millis());
             continue;
         }
         if let Some(message) = server.strip_prefix('>') {

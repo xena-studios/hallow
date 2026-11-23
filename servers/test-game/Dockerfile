@@ -14,5 +14,8 @@ ENV HALLOW_SERVER_VERSION=${HALLOW_SERVER_VERSION}
 COPY --chown=hallow:hallow hallow.toml /server/hallow.toml
 # The plugins hallow.toml lists, built before the image (they're not in git).
 COPY --chown=hallow:hallow plugins/ /server/plugins/
+# The maps hallow.toml's [maps] names. The base image copies them into the
+# game plugin's data folder on start, where hallow-sdk reads them.
+COPY --chown=hallow:hallow maps/ /server/maps/
 
 RUN hallow-manifest check /server --base-version "$(cat /etc/hallow/base-version)"

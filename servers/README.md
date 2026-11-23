@@ -6,7 +6,7 @@ In-tree server repos, each made from [`templates/server-repo`](../templates/serv
 |---|---|---|
 | `hub/` | hub | The hub every player lands in: the game menu, welcome title, tab list and a safe spawn from its plugin (`hub/plugin`), adventure mode, no PvP, no Nether or End. The dev network's `lobby` |
 | `test-game-lobby/` | lobby | test-game's lobby, queueing for `test-game` and returning to `hub`. No plugin. Run by the control plane as instances (one always warm) on the dynamic dev network |
-| `test-game/` | game | A game whose plugin (`test-game/plugin`) runs a timed match when `TEST_GAME_MATCH_SECS` is set, then turns `draining` so players go back to `test-game-lobby`. The dev network's `game-1`, and the dynamic network's game instances |
+| `test-game/` | game | A Red against Blue match on `hallow-sdk` (`test-game/plugin`, one map in `test-game/maps`) when `TEST_GAME_MATCH_SECS` is set: countdown, teams, kits, sidebar, `/forfeit` to spectate, stats, then `draining` so players go back to `test-game-lobby`. The dev network's `game-1` (no matches there), and the dynamic network's game instances |
 
 Real lobbies and games each get their own repo (see [Servers](../docs/SERVERS.md)); these stay here so the network and CI test the server repo path. The hub moves to its own `hub` repo with its plugin later.
 

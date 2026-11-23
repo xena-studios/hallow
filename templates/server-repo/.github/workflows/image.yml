@@ -17,9 +17,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    # With a game plugin, build it into plugins/ first:
-    # with:
-    #   rust: true
-    #   prepare: |
-    #     cargo build --release --target wasm32-wasip2
-    #     cp target/wasm32-wasip2/release/example.wasm plugins/
+    # Builds the game's plugin (plugin/, on hallow-sdk) into plugins/ first.
+    with:
+      rust: true
+      prepare: |
+        cd plugin
+        cargo build --release --target wasm32-wasip2
+        cp target/wasm32-wasip2/release/example.wasm ../plugins/
