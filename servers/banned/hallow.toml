@@ -1,0 +1,30 @@
+# The banned lobby: where banned players wait instead of being disconnected.
+# The control plane sends banned players to ready servers of the banned kind
+# (HALLOW_BANNED_KIND, "banned"), keeps them there, leaves it out of the game
+# modes, and moves them to the hub when their ban ends or is lifted. See
+# docs/SERVERS.md#hallowtoml and docs/PANEL.md.
+name = "banned"
+role = "lobby"
+base = "^0.2"                # works with base image 0.2.x
+
+[players]
+max = 500                    # a closed room and nobody to see: cheap per player
+
+[scaling]
+warm = 1                     # banned players always have somewhere to go
+
+# The banned lobby's plugin (plugin/, built into plugins/): the closed room,
+# the ban, the countdown, and no chat or commands. It asks Hallow's server
+# plugin for each player's ban over IPC, so it needs no permissions.
+[[plugins]]
+file = "plugins/hallow_banned.wasm"
+
+# Merged over the base image's pumpkin.toml.
+[pumpkin]
+default_gamemode = "Adventure"   # Pumpkin's spelling
+default_difficulty = "Peaceful"
+allow_nether = false
+allow_end = false
+
+[pumpkin.pvp]
+enabled = false

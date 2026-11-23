@@ -78,6 +78,9 @@ impl Store {
         if self.player(&req.player).await?.is_none() {
             return Ok(Err("You aren't online.".into()));
         }
+        if self.restriction(&req.player).await?.is_some() {
+            return Ok(Err(crate::limbo::LOCKED.into()));
+        }
         let (servers_rev, servers) = self.read_servers().await?;
         let _ = servers_rev;
         if !startable
@@ -94,6 +97,11 @@ impl Store {
             Some(party) => party.members.into_iter().map(|m| m.uuid).collect(),
             None => vec![req.player],
         };
+        for member in &members {
+            if self.restriction(member).await?.is_some() {
+                return Ok(Err("Someone in your party can't play right now.".into()));
+            }
+        }
         // Queuing again (for this kind or another) replaces the old entry.
         for member in &members {
             self.dequeue(member).await?;

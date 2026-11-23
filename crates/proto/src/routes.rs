@@ -16,6 +16,7 @@
 //! | `GET` | [`server_players`] | | `Vec<`[`ServerPlayer`](crate::server::ServerPlayer)`>` by username, or `404` |
 //! | `GET` | [`SERVERS`]`?since=` | | [`Poll`](crate::Poll)`<Vec<`[`ServerInfo`](crate::server::ServerInfo)`>>` |
 //! | `POST` | [`PRESENCE_LOGIN`] | [`LoginRequest`](crate::presence::LoginRequest) | [`LoginDecision`](crate::presence::LoginDecision) |
+//! | `POST` | [`PRESENCE_FALLBACK`] | [`FallbackRequest`](crate::presence::FallbackRequest) | [`Fallback`](crate::presence::Fallback), or `404` if the player isn't online |
 //! | `POST` | [`PRESENCE_SWITCH`] | [`PlayerSwitched`](crate::presence::PlayerSwitched) | `204` |
 //! | `POST` | [`PRESENCE_LEAVE`] | [`PlayerLeft`](crate::presence::PlayerLeft) | `204` |
 //! | `GET` | [`PRESENCE_COUNT`] | | [`NetworkCount`](crate::presence::NetworkCount) |
@@ -27,6 +28,7 @@
 //! | `POST` | [`PUNISHMENTS`] | [`IssuePunishment`](crate::punishment::IssuePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
 //! | `POST` | [`PUNISHMENTS_REVOKE`] | [`RevokePunishment`](crate::punishment::RevokePunishment) | [`PunishmentReply`](crate::punishment::PunishmentReply) |
 //! | `GET` | [`punishment_history`] | | `Vec<`[`PunishmentRecord`](crate::punishment::PunishmentRecord)`>` |
+//! | `GET` | [`ban_of`] | | [`BanInfo`](crate::punishment::BanInfo) of the player's active ban, or `404` |
 //! | `GET` | [`PUNISHMENTS_SEARCH`]`?player=&kind=&active=&limit=&offset=` | | [`PunishmentPage`](crate::punishment::PunishmentPage), newest first |
 //! | `GET` | [`PUNISHMENT_TEMPLATES`] | | `Vec<`[`PunishmentTemplate`](crate::punishment::PunishmentTemplate)`>` |
 //! | `POST` | [`PUNISHMENT_TEMPLATES`] | [`SaveTemplate`](crate::punishment::SaveTemplate) | [`PunishmentTemplate`](crate::punishment::PunishmentTemplate), or `400` with fields |
@@ -80,6 +82,7 @@ pub const PROXIES: &str = "/v1/proxies";
 pub const SERVERS: &str = "/v1/servers";
 pub const PRESENCE_LOGIN: &str = "/v1/presence/login";
 pub const PRESENCE_SWITCH: &str = "/v1/presence/switch";
+pub const PRESENCE_FALLBACK: &str = "/v1/presence/fallback";
 pub const PRESENCE_LEAVE: &str = "/v1/presence/leave";
 pub const PRESENCE_COUNT: &str = "/v1/presence/count";
 pub const QUEUES: &str = "/v1/queues";
@@ -95,6 +98,7 @@ pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 pub const PUNISHMENTS_SEARCH: &str = "/v1/punishments/search";
 pub const PUNISHMENT_TEMPLATES: &str = "/v1/punishments/templates";
+pub const BANS: &str = "/v1/bans";
 pub const RANKS: &str = "/v1/ranks";
 pub const RANK_GRANTS: &str = "/v1/rank-grants";
 pub const RANK_GRANTS_REVOKE: &str = "/v1/rank-grants/revoke";
@@ -181,6 +185,13 @@ pub fn player_by_name(name: &str) -> String {
 #[must_use]
 pub fn punishment_history(name: &str) -> String {
     player_by_name(name).replacen(PLAYERS, PUNISHMENTS, 1)
+}
+
+/// `GET`: a player's active ban, by UUID. A server's scoped token may ask
+/// about players on that server only (the banned lobby).
+#[must_use]
+pub fn ban_of(uuid: &str) -> String {
+    format!("{BANS}/{uuid}")
 }
 
 #[must_use]

@@ -14,3 +14,7 @@ pumpkin-util.workspace = true
 tokio.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+# The control plane steps (`@server`, `!ban`): plain HTTP on the dev network.
+hallow-proto = { path = "../proto" }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }

@@ -1,12 +1,15 @@
 //! What the control plane keeps in PostgreSQL (`hallow-db`): accounts, bans,
 //! ranks and sessions. Only used when `database_url` is set; then it fails
-//! closed, because a login that can't be checked for a ban isn't let in.
+//! closed, because a login that can't be checked for a ban isn't let in
+//! (the proxy holds the player in limbo and asks again).
 
 use std::net::IpAddr;
 
-use chrono::Utc;
-use hallow_db::{Edition, Login, NewSession, PgPool, Punishment};
-use hallow_proto::{presence::LoginRequest, punishment::MuteInfo};
+use hallow_db::{Edition, Login, NewSession, PgPool};
+use hallow_proto::{
+    presence::LoginRequest,
+    punishment::{BanInfo, MuteInfo},
+};
 use uuid::Uuid;
 
 use crate::store::Store;
@@ -16,19 +19,22 @@ pub type DbResult<T> = Result<T, hallow_db::sqlx::Error>;
 /// The rank `admins` from the config get: everything, highest weight.
 pub const ADMIN_RANK: &str = "admin";
 
-/// What an allowed login carries from the database.
+/// What a login carries from the database.
+#[derive(Debug, Default)]
 pub struct Grant {
     pub permissions: Vec<String>,
     pub mute: Option<MuteInfo>,
+    /// Set for a banned player, who gets no permissions.
+    pub ban: Option<BanInfo>,
 }
 
-/// Records the login and returns the player's permissions and mute, or the
-/// reason they're refused (a ban).
+/// Records the login and returns the player's permissions and mute, or
+/// their active ban.
 pub async fn check_login(
     pool: &PgPool,
     req: &LoginRequest,
-    admins: &[String],
-) -> DbResult<Result<Grant, String>> {
+    config: &crate::Config,
+) -> DbResult<Grant> {
     let ip = req.ip.as_deref().and_then(|ip| ip.parse::<IpAddr>().ok());
     let account = hallow_db::upsert_account(
         pool,
@@ -45,8 +51,12 @@ pub async fn check_login(
     )
     .await?;
     if let Some(ban) = hallow_db::active_ban(pool, account.uuid).await? {
-        return Ok(Err(ban_message(&ban)));
+        return Ok(Grant {
+            ban: Some(crate::punish::ban_info(pool, config, &ban).await?),
+            ..Grant::default()
+        });
     }
+    let admins = &config.admins;
     if admins.iter().any(|a| a.eq_ignore_ascii_case(&req.username)) {
         ensure_admin(pool, account.uuid).await?;
     }
@@ -57,7 +67,11 @@ pub async fn check_login(
         .await?
         .as_ref()
         .map(crate::punish::mute_info);
-    Ok(Ok(Grant { permissions, mute }))
+    Ok(Grant {
+        permissions,
+        mute,
+        ban: None,
+    })
 }
 
 /// Gives the account the admin rank, creating the rank (`*`) the first time.
@@ -93,18 +107,6 @@ pub async fn open_session(pool: &PgPool, req: &LoginRequest) -> DbResult<Uuid> {
     )
     .await?;
     Ok(session.id)
-}
-
-/// What a banned player sees.
-pub fn ban_message(ban: &Punishment) -> String {
-    let until = match ban.expires_at {
-        None => "§7This ban is permanent.".to_owned(),
-        Some(at) => format!("§7It ends in §f{}§7.", remaining(at - Utc::now())),
-    };
-    format!(
-        "§cYou are banned from this network.\n§7Reason: §f{}\n{until}",
-        ban.reason
-    )
 }
 
 /// `3d 4h`, `5h 10m`, `12m`: the two largest units, rounded down.

@@ -9,6 +9,8 @@
 //! forwarding = "vine"                    # how to forward to servers from the control plane
 //! forwarding_secret_file = "forwarding.secret"   # or forwarding_secret = "..."
 //! poll_ms = 250                          # how often to poll for changes
+//! hub_kind = "hub"                       # where players go if a server drops them and the control plane can't say
+//! transfer_to = "play.example.net:25565" # optional: the load balancer; a draining proxy transfers players there
 //! ```
 
 use serde::Deserialize;
@@ -29,6 +31,13 @@ struct File {
     forwarding_secret_file: Option<String>,
     #[serde(default = "default_poll_ms")]
     poll_ms: u64,
+    #[serde(default = "default_hub_kind")]
+    hub_kind: String,
+    transfer_to: Option<String>,
+}
+
+fn default_hub_kind() -> String {
+    "hub".into()
 }
 
 fn default_forwarding() -> String {
@@ -55,6 +64,9 @@ pub struct Config {
     pub forwarding: Forwarding,
     pub forwarding_secret: Option<String>,
     pub poll_ms: u64,
+    pub hub_kind: String,
+    /// `host:port` a draining proxy transfers players to.
+    pub transfer_to: Option<String>,
 }
 
 /// A secret given inline or as a file name under `/data`.
@@ -118,6 +130,8 @@ impl Config {
             forwarding,
             forwarding_secret,
             poll_ms: file.poll_ms.clamp(50, 5000),
+            hub_kind: file.hub_kind,
+            transfer_to: file.transfer_to.filter(|t| !t.is_empty()),
         })
     }
 }

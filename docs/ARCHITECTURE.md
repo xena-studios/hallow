@@ -46,8 +46,9 @@ flowchart TB
 | Component | Job | Built from | Path |
 |---|---|---|---|
 | Load balancer | Spreads TCP connections over healthy proxies, passes the real IP with PROXY protocol | HAProxy or a DDoS-protection provider | `deploy/` |
-| Vine proxy | Mojang auth, forwarding to backends, server switching, translating Java 1.7 – 26.2 clients to 26.3 | Vine fork, with pumpkin-java-multiversion's translation linked in | `upstream/Vine`, `upstream/pumpkin-java-multiversion` |
-| Hallow Vine plugin | Presence, global player count, duplicate-login check, server-list sync, cross-proxy commands; parties and queues later | Ours, WASM | `crates/vine-plugin` |
+| Vine proxy | Mojang auth, forwarding to backends, server switching, translating Java 1.7 – 26.2 clients to 26.3, a built-in limbo, and moving players to a fallback instead of disconnecting them | Vine fork, with pumpkin-java-multiversion's translation linked in | `upstream/Vine`, `upstream/pumpkin-java-multiversion` |
+| Hallow Vine plugin | Presence, global player count, duplicate logins, server-list sync, cross-proxy commands, parties and queues, fallbacks, keeping banned players in the banned lobby | Ours, WASM | `crates/vine-plugin` |
+| Banned lobby | Where banned players wait: the ban's reason, issuer, end and appeal | A server repo, like the hub | `servers/banned` |
 | Server base image | Pumpkin and Hallow's server plugin; every server image builds on it | Pumpkin + ours | `templates/` |
 | Server repos | One per lobby or game (`hub`, `skywars-lobby`, `skywars`, …): plugin, maps, config, `hallow.toml` | Ours, one repo each | separate repos |
 | SDK | Minigame library (arenas, teams, kits, scoreboards, spectating, stats, optional 1.8 combat) and control-plane client for server repos | Ours, WASM | `crates/hallow-sdk` |
@@ -64,12 +65,35 @@ flowchart TB
 ## A player's path
 
 1. The client connects to the load balancer, which picks a healthy Vine proxy.
-2. Vine authenticates with Mojang. The presence plugin asks the control plane whether the player is already online on another proxy and refuses the duplicate.
-3. Vine sends the player to a `hub` instance the control plane picked, with signed (Ed25519) forwarding.
+2. Vine authenticates with Mojang. The presence plugin asks the control plane where the player goes. A login from an account already online replaces the old session.
+3. Vine sends the player where the control plane said, with signed (Ed25519) forwarding: a `hub` instance, the banned lobby for a banned player, or limbo to wait when the network is full or no hub is free ([Never dropped](#never-dropped)).
 4. For any client older than 26.3, Vine translates every packet both ways, so the lobby sees a 26.3 client. Switching servers on a client before 1.20.2 is a new join packet and a respawn instead of the configuration phase.
 5. The player moves to a gamemode lobby such as `skywars-lobby` and queues. The queue plugin hands the entry to the control plane.
 6. The matchmaker fills a game: it uses a warm instance or asks Wings to start one from the game's image, registers it with every Vine, then tells the player's proxy to move them.
 7. When the game ends the instance reports results, players go back to the lobby named in its `hallow.toml`, and the instance is deleted. The next match gets a fresh one.
+
+## Never dropped
+
+The network never disconnects a player for something it can fix. Every case that used to end the connection puts the player somewhere and tells them why:
+
+| What happens | Where the player goes | Who decides |
+|---|---|---|
+| A banned player logs in, or is banned while online | The banned lobby (`servers/banned`), or limbo while none is up. They can't leave: `/server` is refused by their proxy, and `/hub`, `/lobby`, `/play`, parties and sends by the control plane. When the ban ends or staff lift it, they go to a hub without reconnecting | Control plane |
+| The network is full, or no hub is free | Limbo, with their place in line. They move on by themselves, oldest first, when there's room | Control plane |
+| A server kicks them, crashes, stops or is deleted | The game's lobby, another lobby of the same kind, a hub, or limbo, in that order, with a message naming the server and its reason | Control plane, asked by the proxy (`POST /v1/presence/fallback`) |
+| A switch to another server fails | They stay where they are, with a message | Vine |
+| The first connect fails | The next fallback, then limbo | Vine and the control plane |
+| The control plane can't be reached | Limbo, unverified: they can't leave, and the proxy asks again every 2 s, then sends them where the answer says | Vine plugin |
+| A staff kick (`/gkick`, the panel) | Limbo for `HALLOW_KICK_HOLD_SECS` (10) with the reason as a title, then a hub | Control plane |
+| A second login from the same account | The new session replaces the old one, which is disconnected: one account can only be in one place, and the player is the one who connected again. `HALLOW_DUPLICATE_LOGIN=deny` keeps the old one instead | Control plane |
+| A proxy drains | Players on lobbies and in limbo are handed to the load balancer with the Transfer packet (1.20.5 and later), which picks another proxy; players in a game go when they leave it. Older clients have no Transfer packet: they stay until they leave or the proxy stops | Vine plugin (`transfer_to`) |
+| A proxy stops | Vine transfers 1.20.5+ clients to `routing.shutdown_transfer`, then disconnects the rest with a message to reconnect | Vine |
+
+**Limbo is answered by Vine itself.** It is a minimal 26.3 server inside the proxy, on a loopback port, registered as the server `limbo` on every proxy: a void, spectator mode, keep-alives, nothing else. No world and no backend connection, so it costs one small task per player, and it is there whenever the proxy is. That is the point: limbo is where players wait exactly when the network can't place them, with the control plane down, no hub up or every server failing, so it can't be a server the network has to start or reach. Old clients reach it through Vine's translation like any server. The plugin shows each limbo player why they wait on their action bar.
+
+**The banned lobby is a Pumpkin server kind.** It is a normal place on a working network, and it needs a world (a closed room) and per-player display: a title, the ban's reason, who issued it as the panel shows them, when it ends with a live countdown, the punishment id and how to appeal (`HALLOW_APPEAL_TEXT`, `HALLOW_APPEAL_URL`). Players are invisible to each other and chat is off. One instance holds 500 players; the control plane starts one when a banned player waits in limbo for it.
+
+**What still disconnects:** the client quitting, a lost network connection, protocol errors, a login racing the same account's other login, and a proxy shutting down (after the transfers above).
 
 ## Bedrock
 

@@ -40,6 +40,10 @@ The first build compiles Pumpkin and Vine for Linux and takes a while; later bui
 
 Image tags default to `dev`; set `HALLOW_IMAGE_TAG` to build and run your own set side by side with someone else's (`hallow-proxy:$HALLOW_IMAGE_TAG`, and so on).
 
+## The banned lobby
+
+[`compose.hallow.yaml`](compose.hallow.yaml) also runs `banned`, a static instance of [`servers/banned`](../../servers/banned) (kind `banned`), next to the hub. Banned players are sent there instead of being disconnected: a closed room above spawn where they see the ban's reason, who issued it, when it ends (with a live countdown), its id and how to appeal, and can't chat or use commands but `/help` and `/appeal`. The control plane keeps them there and moves them to the hub when the ban ends or is lifted. Its config is [`config/hallow/banned.toml`](config/hallow/banned.toml).
+
 ## Dynamic games
 
 [`compose.instances.yaml`](compose.instances.yaml), over [`compose.hallow.yaml`](compose.hallow.yaml) (two proxies, the control plane, Valkey and PostgreSQL), lets the control plane start and delete game instances itself through the local Docker Engine, the way it does through Wings on real nodes ([Instances](../../docs/INSTANCES.md)):
@@ -75,6 +79,26 @@ cargo run --release -p netcheck -- --name hubbot --stay 0 \
 ```
 
 The bot lands in the hub (the static `lobby`), `/lobby test-game` sends it to the warm `test-game-lobby-xxxxxx` instance, `/play test-game` queues it and the matchmaker moves it into a `test-game-xxxxxx` instance. The match ends after 20 s: the server turns `draining`, its server plugin sends the bot back to the lobby, and the emptied game instance is deleted. `/hub` brings it back to the hub from anywhere. `GET /v1/lobbies` shows the modes and their player counts, as the hub's menu does.
+
+### Never dropped
+
+[`neverdrop.sh`](neverdrop.sh) checks that the network moves players instead of disconnecting them ([Never dropped](../../docs/ARCHITECTURE.md#never-dropped)). Each scenario is one netcheck bot whose route acts on the network and checks where the bot lands through the control plane; any disconnect fails it. CI runs it after the smoke test.
+
+```sh
+servers/build-plugins.sh && cargo build -p netcheck
+export HALLOW_IMAGE_TAG=nd HALLOW_DOCKER_NETWORK=nd TEST_GAME_MATCH_SECS=600
+docker compose -p nd $files up --build -d --wait
+deploy/compose/neverdrop.sh nd            # ONLY=banned, crash, hubs or control-plane for one
+```
+
+| Scenario | The bot |
+|---|---|
+| `banned` | Lands in the hub, is banned for an hour through the API, lands in `banned`, sees the reason and the countdown, is refused by `/hub` and `/server lobby`, joins again and lands in `banned` again, is unbanned and lands in the hub |
+| `crash` | Queues for `test-game`, lands in a game instance, which is killed; lands in `test-game-lobby` and is told the game went offline |
+| `hubs` | Lands in the hub, which is stopped; lands in limbo and is told no hub is free; joins again and waits in limbo; the hub starts and the bot is moved there |
+| `control-plane` | The control plane is stopped; the bot joins again and waits in limbo, told the network is having trouble; the control plane starts and the bot is moved to the hub |
+
+The netcheck steps it uses (`@server`, `?text`, `!ban`, `!unban`, `$command`, `^`) are listed at the top of [`crates/netcheck/src/main.rs`](../../crates/netcheck/src/main.rs).
 
 Instances aren't compose services, so `down` doesn't remove them. Stop the control plane first, so it doesn't start a new warm lobby meanwhile, then delete them:
 

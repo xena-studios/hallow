@@ -25,7 +25,9 @@ pub enum NetworkCommand {
         text: String,
         servers: Option<Vec<String>>,
     },
-    /// Disconnect a player with `reason`.
+    /// Take a player out of what they're doing: they wait in limbo for a
+    /// short while (`HALLOW_KICK_HOLD_SECS`) with `reason` on screen, then
+    /// go to a hub. Hallow never disconnects a player for a kick.
     Kick { player: Uuid, reason: String },
 }
 
@@ -51,9 +53,24 @@ pub enum ProxyCommand {
         text: String,
         servers: Option<Vec<String>>,
     },
+    /// Disconnect the player with `reason`. Only sent when the same account
+    /// logged in again elsewhere, which ends the old session; kicks move
+    /// players to limbo instead.
     Kick {
         player: Uuid,
         reason: String,
+    },
+    /// Show the player a title (legacy `§` text; either may be empty).
+    Title {
+        player: Uuid,
+        title: String,
+        subtitle: String,
+    },
+    /// The player was banned (`Some`): they may only be moved by the control
+    /// plane, to a banned lobby or limbo. `None` lifts it.
+    Restrict {
+        player: Uuid,
+        ban: Option<crate::punishment::BanInfo>,
     },
     /// Stop (or resume) accepting new logins on this proxy.
     Drain {
@@ -72,6 +89,8 @@ impl From<NetworkCommand> for ProxyCommand {
             NetworkCommand::Send { player, server } => Self::Send { player, server },
             NetworkCommand::Message { player, text, from } => Self::Message { player, text, from },
             NetworkCommand::Broadcast { text, servers } => Self::Broadcast { text, servers },
+            // The control plane doesn't route a kick through this: it holds
+            // the player in limbo instead of disconnecting them.
             NetworkCommand::Kick { player, reason } => Self::Kick { player, reason },
         }
     }

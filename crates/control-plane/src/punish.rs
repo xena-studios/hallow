@@ -1,6 +1,7 @@
 //! Issuing and lifting punishments, and enforcing them on the proxy that
-//! holds the player: a ban or kick disconnects them, a mute is pushed so the
-//! proxy blocks their chat. In-game staff (a player UUID), panel staff (a
+//! holds the player: a ban moves them to the banned lobby and locks them
+//! there, a kick holds them in limbo before a hub ([`crate::limbo`]), a mute
+//! is pushed so the proxy blocks their chat. Nobody is disconnected. In-game staff (a player UUID), panel staff (a
 //! [`StaffMember`]) and the console all go through the same path, so a ban
 //! from the panel reaches the proxies exactly like `/ban`.
 //!
@@ -12,17 +13,19 @@ use hallow_proto::{
     command::ProxyCommand,
     fleet::FieldErrors,
     punishment::{
-        IssuePunishment, IssuerKind, MuteInfo, PunishmentEntry, PunishmentKind, PunishmentPage,
-        PunishmentRecord, PunishmentReply, PunishmentSearch, PunishmentTemplate, RevocationInfo,
-        RevokePunishment, SaveTemplate, StaffMember,
+        BanInfo, IssuePunishment, IssuerKind, MuteInfo, PunishmentEntry, PunishmentKind,
+        PunishmentPage, PunishmentRecord, PunishmentReply, PunishmentSearch, PunishmentTemplate,
+        RevocationInfo, RevokePunishment, SaveTemplate, StaffMember,
     },
     routes,
 };
 use uuid::Uuid;
 
 use crate::{
-    accounts::{DbResult, ban_message, remaining, resolve},
+    Config,
+    accounts::{DbResult, remaining, resolve},
     error::Failure,
+    limbo,
     store::Store,
 };
 
@@ -72,6 +75,34 @@ pub fn mute_info(mute: &Punishment) -> MuteInfo {
     MuteInfo {
         reason: mute.reason.clone(),
         until_ms: mute.expires_at.map(millis),
+    }
+}
+
+/// A ban as the banned lobby shows it: issuer named as the panel names them,
+/// with the network's appeal text.
+pub async fn ban_info(pool: &PgPool, config: &Config, ban: &Punishment) -> DbResult<BanInfo> {
+    let (issuer, issuer_kind) = actor_name(pool, &ban.issuer).await?;
+    Ok(BanInfo {
+        id: ban.id,
+        reason: ban.reason.clone(),
+        issuer,
+        issuer_kind,
+        created_ms: millis(ban.created_at),
+        expires_ms: ban.expires_at.map(millis),
+        appeal: config.appeal_text.clone(),
+        appeal_url: config.appeal_url.clone(),
+    })
+}
+
+/// The player's active ban, if any.
+pub async fn active_ban_info(
+    pool: &PgPool,
+    config: &Config,
+    player: Uuid,
+) -> DbResult<Option<BanInfo>> {
+    match hallow_db::active_ban(pool, player).await? {
+        Some(ban) => Ok(Some(ban_info(pool, config, &ban).await?)),
+        None => Ok(None),
     }
 }
 
@@ -126,6 +157,7 @@ async fn tell_proxy(store: &Store, player: Uuid, command: ProxyCommand) {
 pub async fn issue(
     pool: &PgPool,
     store: &Store,
+    config: &Config,
     req: IssuePunishment,
 ) -> DbResult<PunishmentReply> {
     let issuer = match actor(req.issuer, req.staff.as_ref()) {
@@ -145,7 +177,8 @@ pub async fn issue(
     if req.issuer == Some(target) && req.staff.is_none() {
         return Ok(refuse("You can't punish yourself."));
     }
-    // A kick is a disconnect; there's nothing to record for someone offline.
+    // A kick moves an online player; there's nothing to record for someone
+    // offline.
     if req.kind == PunishmentKind::Kick && matches!(store.player(&target).await, Ok(None)) {
         return Ok(refuse(format!("{username} isn't online.")));
     }
@@ -193,15 +226,10 @@ pub async fn issue(
     };
     let summary = match req.kind {
         PunishmentKind::Ban => {
-            tell_proxy(
-                store,
-                target,
-                ProxyCommand::Kick {
-                    player: target,
-                    reason: ban_message(&punishment),
-                },
-            )
-            .await;
+            let info = ban_info(pool, config, &punishment).await?;
+            if let Err(err) = limbo::banned(store, config, &target, &info).await {
+                tracing::warn!(%err, "couldn't move the banned player");
+            }
             format!("§aBanned {username} {length}: §f{reason}")
         }
         PunishmentKind::Mute => {
@@ -227,15 +255,9 @@ pub async fn issue(
             format!("§aMuted {username} {length}: §f{reason}")
         }
         PunishmentKind::Kick => {
-            tell_proxy(
-                store,
-                target,
-                ProxyCommand::Kick {
-                    player: target,
-                    reason: format!("§cYou were kicked.\n§7Reason: §f{reason}"),
-                },
-            )
-            .await;
+            if let Err(err) = limbo::kick(store, config, &target, &reason).await {
+                tracing::warn!(%err, "couldn't move the kicked player");
+            }
             format!("§aKicked {username}: §f{reason}")
         }
         PunishmentKind::Warn => {
@@ -265,6 +287,7 @@ pub async fn issue(
 pub async fn revoke(
     pool: &PgPool,
     store: &Store,
+    config: &Config,
     req: RevokePunishment,
 ) -> DbResult<PunishmentReply> {
     let by = match actor(req.issuer, req.staff.as_ref()) {
@@ -319,6 +342,9 @@ pub async fn revoke(
         .await;
         Ok(ok(format!("§aUnmuted {username}."), active.id))
     } else {
+        if let Err(err) = limbo::unbanned(store, config, &target).await {
+            tracing::warn!(%err, "couldn't release the unbanned player");
+        }
         Ok(ok(format!("§aUnbanned {username}."), active.id))
     }
 }
