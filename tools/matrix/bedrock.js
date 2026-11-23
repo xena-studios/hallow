@@ -1,14 +1,21 @@
 // A headless Bedrock client (RakNet) joins through Geyser -> Vine -> Pumpkin,
 // chats, and switches servers twice with Vine's /server command.
-// Usage: node bedrock.js [host] [port]
+// Usage: node bedrock.js [host] [port] [gamertag] [xuid]
+// The xuid is what Geyser puts in Floodgate's handoff (Geyser here doesn't
+// validate Bedrock logins), so Vine gives the bot UUID 0-0-xuid.
 const bedrock = require('bedrock-protocol');
 
 const host = process.argv[2] || '127.0.0.1';
 const port = Number(process.argv[3] || 19132);
-const r = { join: false, chunks: 0, chat: false, switches: [], messages: [], errors: [], end: null };
+const username = process.argv[4] || 'BedrockBot';
+const xuid = process.argv[5] || '2535400000000001';
+const r = { username, xuid, join: false, chunks: 0, chat: false, switches: [], messages: [], errors: [], end: null };
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-const client = bedrock.createClient({ host, port, username: 'BedrockBot', offline: true, skipPing: false, connectTimeout: 15000 });
+const client = bedrock.createClient({ host, port, username, offline: true, skipPing: false, connectTimeout: 15000 });
+// Offline sessions send xuid 0; set ours once the profile exists, before the
+// login chain is built.
+client.once('connect_allowed', () => { if (client.profile) client.profile.xuid = xuid; });
 let spawns = 0;
 let dimensionChanges = 0;
 let runtimeId = 0n;

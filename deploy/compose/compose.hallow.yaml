@@ -97,6 +97,7 @@ services:
         aliases: [proxy-1]
     volumes:
       - ./config/hallow/vine.toml:/proxy/vine.toml:ro
+      - ./config/floodgate/key.pem:/proxy/floodgate/key.pem:ro
       - ../../target/wasm32-wasip2/release/hallow_vine.wasm:/proxy/plugins/hallow_vine.wasm:ro
       - ./config/hallow/control-plane.token:/proxy/plugins/data/hallow_vine/token:ro
       - ./config/hallow/forwarding.secret:/proxy/plugins/data/hallow_vine/forwarding.secret:ro
@@ -112,6 +113,7 @@ services:
       - "25566:25565"
     volumes:
       - ./config/hallow/vine.toml:/proxy/vine.toml:ro
+      - ./config/floodgate/key.pem:/proxy/floodgate/key.pem:ro
       - ../../target/wasm32-wasip2/release/hallow_vine.wasm:/proxy/plugins/hallow_vine.wasm:ro
       - ./config/hallow/control-plane.token:/proxy/plugins/data/hallow_vine/token:ro
       - ./config/hallow/forwarding.secret:/proxy/plugins/data/hallow_vine/forwarding.secret:ro

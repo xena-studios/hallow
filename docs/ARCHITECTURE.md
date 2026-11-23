@@ -77,6 +77,13 @@ Since Bedrock 26.60 (27 October 2026) clients connect over **NetherNet**, not Ra
 
 **Launch route: Geyser in front of Vine** ([Decisions](DECISIONS.md) 4). Geyser (2.12.1 build 1273 or newer, NetherNet) turns Bedrock players into Java players before Vine, so there is one routing path, one multi-proxy setup and one anticheat for everyone, and only proxies are public. Geyser normally hands Bedrock identities to the proxy through Floodgate, a Java plugin Vine can't run, so Vine verifies Floodgate's encrypted handoff natively (a contribution to Vine).
 
+How the handoff works in Vine (`[floodgate]` in `vine.toml`):
+
+- Geyser puts Floodgate's data in the handshake's server address: AES-128-GCM with a key shared by Geyser and every proxy.
+- Vine takes it out of the address before routing, decrypts and checks it, and refuses the login if it's invalid. Geyser joins a listener of its own, where a login without a handoff is refused too.
+- The player gets Floodgate's Java identity: `.` + gamertag, UUID `0-0-xuid`, and their own IP. Vine forwards these to servers like any Java player's, so servers and the control plane need nothing extra.
+- Plugins can ask whether a player is on Bedrock (`get-bedrock-info`: xuid, device, game version).
+
 **Long-term: Vine speaks Bedrock itself**, terminating NetherNet with Pumpkin's own crates and relaying Bedrock to Pumpkin's Bedrock support. All Rust, and it shows off Pumpkin's Bedrock work, once that work is further along.
 
 **Not used: Bedrock players straight to each Pumpkin server.** Every server would need public TCP and UDP and its own TLS certificate, and players would move between servers with Bedrock's transfer packet.
