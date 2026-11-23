@@ -45,6 +45,11 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `GET /v1/punishments/search?player=&kind=&active=&limit=&offset=` pages through every punishment, newest first, with the target, issuer and revocation (for the panel);
   - `GET`/`POST /v1/punishments/templates` and `PUT`/`DELETE /v1/punishments/templates/{id}` manage reason templates (name, kind, length, reason);
   - an active mute is sent with the login and pushed whenever it changes.
+- **Reports** (with the database; shared token only):
+  - `POST /v1/reports` with `{reporter, target, reason}` is a proxy's `/report`: the target by username, online or not (`404` if they never joined), never yourself (`400`), a reason of 1 to 256 characters (`400`). A reporter has at most one open or claimed report per target (`409`) and makes at most 5 reports in 10 minutes (`429`, code `rate_limited`). The reporter's server is recorded from presence. The answer is `{id, message}`, the message for the reporter;
+  - every online player whose ranks grant `hallow.staff.reports` is told in chat on their own proxy (`[Report #id] reporter → target (server): reason`);
+  - `GET /v1/reports?status=open|claimed|resolved|dismissed|active&target=&limit=&offset=` pages through reports newest first (`active` is open and claimed; 50 by default, at most 200), with the reporter, target, who claimed and closed it (the same actors as punishment issuers), the note, the punishment and the target's report count; `GET /v1/reports/{id}` returns one;
+  - `POST /v1/reports/{id}/claim` (`{staff}` or `{issuer}`, like punishments; claiming a claimed report hands it over), `/unclaim` (back to open), `/resolve` (`{staff, note?, punishment_id?}`; the punishment must be the target's, else `400`) and `/dismiss` (`{staff, note?}`). A resolved or dismissed report answers `409` to all four; an unknown id `404`.
 - **Ranks** (with the database), edited from the panel:
   - `GET /v1/ranks` lists ranks with their member counts; `PUT /v1/ranks/{name}` creates or replaces one (bad nodes get a `400` with `fields`); `DELETE /v1/ranks/{name}` deletes one, except the default;
   - `GET /v1/rank-grants?name=`, `POST /v1/rank-grants` and `POST /v1/rank-grants/revoke` show, give and take a player's ranks. Nodes reach the proxy with the login, so a change applies at the player's next join.
@@ -69,7 +74,12 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - players online and the limit;
   - players per proxy;
   - per-server players, limit and tick time;
-  - queue sizes.
+  - queue sizes (`hallow_queue_players{kind}`);
+  - `hallow_games_started_total{kind}`, a counter of games started: each time the matchmaker puts the first players onto a ready game server that had nobody on it;
+  - `hallow_queue_wait_seconds{kind}`, a histogram (buckets 1, 2, 5, 10, 20, 30, 60, 120 and 300 s) of how long each queue entry, a player or a whole party, waited before the matchmaker placed it;
+  - `hallow_reports_open`, a gauge of player reports not yet resolved or dismissed (open and claimed), with the database.
+
+  The counter and histogram are network-wide totals kept in Redis (`metrics:*`, see [`src/store/metrics.rs`](src/store/metrics.rs)), so every instance serves the same numbers and a restart loses nothing.
 - **Lookups.** Online players can be looked up by UUID, or by username ignoring case, for `/find` and `/msg`.
 - **Commands.**
   - Send, message and kick go to the proxy holding the player. Broadcast goes to every proxy.
@@ -92,7 +102,8 @@ Live state is kept in Redis (Valkey works too), so any number of instances can r
   - `POST /v1/lobbies/send` moves a player to the least full ready instance of a mode's lobby (by mode name, lobby kind, or a game kind's `lobby`), or to a hub; `/lobby`, `/hub`, the game menu and a finished game all use it. With `fallback_hub`, an unknown mode or a full one sends the player to a hub instead of refusing;
   - logins pick the emptiest ready hub, skipping instances that are ending.
 - **Instances** ([Instances](../../docs/INSTANCES.md)), with `HALLOW_ORCHESTRATOR=docker` or `wings` and the database:
-  - `PUT /v1/kinds/{name}` registers a server kind (live image, role, players, scaling); `GET /v1/kinds` lists them, `DELETE` removes one. A kinds file (`HALLOW_KINDS_FILE`) registers kinds at start from their `hallow.toml`;
+  - `PUT /v1/kinds/{name}` registers a server kind (live image, role, players, scaling); `GET /v1/kinds` lists them, `DELETE` removes one. A kinds file (`HALLOW_KINDS_FILE`) registers kinds at start from their `hallow.toml`, keeping any that staff disabled disabled;
+  - a kind with `"enabled": false` (default true) starts no new instances and keeps no warm ones, its running games finish, the queue refuses it ("`<kind>` is disabled right now.", `409`) and its mode leaves `GET /v1/lobbies` once its lobby, or every game returning to that lobby, is disabled. A hub can't be disabled;
   - `GET /v1/instances` lists every instance with its lifecycle state (`creating`, `starting`, `ready`, `ending`, `deleting`, `failed`); `DELETE /v1/instances/{name}` ends one;
   - a pure planner keeps `warm` unused instances while players are online, starts instances for queue entries that fit nowhere (up to `max_instances`), and deletes a game once it reports `draining` empty or has been empty for `HALLOW_INSTANCE_EMPTY_SECS` after having players. Lobby and hub kinds keep at least `warm` instances and add one when their players fill them past 80 % on average;
   - an instance that ends with players on it (staff ended it, a timeout) first sends them to its kind's `lobby` (or a hub) and waits up to 5 s for them to leave;
@@ -119,6 +130,6 @@ The tests in `tests/network.rs` start two instances against one Redis and drive 
 HALLOW_TEST_REDIS_URL=redis://127.0.0.1:6379 cargo test -p hallow-control-plane
 ```
 
-`tests/nodes.rs` also needs `HALLOW_TEST_DATABASE_URL`. It runs node joins against a mock of the panel's admin API. So does `tests/instances.rs`, which drives the instance lifecycle with the mock orchestrator and plays each instance's server: a queue starts a fresh instance, the player is sent there, the emptied game is deleted; warm pools, `max_instances`, failed creates and staff endings. `tests/lobbies.rs` does the same for hubs and lobbies: a warm lobby instance, the mode list, sending players by mode name and back to the hub, refusals, and an ending game sending its players to its lobby before it stops.
+`tests/nodes.rs` also needs `HALLOW_TEST_DATABASE_URL`. It runs node joins against a mock of the panel's admin API. So does `tests/instances.rs`, which drives the instance lifecycle with the mock orchestrator and plays each instance's server: a queue starts a fresh instance, the player is sent there, the emptied game is deleted; warm pools, `max_instances`, failed creates and staff endings. `tests/lobbies.rs` does the same for hubs and lobbies: a warm lobby instance, the mode list, sending players by mode name and back to the hub, refusals, and an ending game sending its players to its lobby before it stops. `tests/reports_games.rs` covers reports end to end (staff told on another proxy, the limits, the list's filters, claims, resolving with a punishment, dismissing, the `409`s), disabled kinds in the queue and the game menu, and the game and queue metrics.
 
 Without the variable they skip, except in CI, which provides Valkey.

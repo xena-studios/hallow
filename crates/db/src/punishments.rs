@@ -56,7 +56,7 @@ pub enum Actor {
 }
 
 impl Actor {
-    fn kind(&self) -> &'static str {
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::Account(_) => "account",
             Self::Staff { .. } => "staff",
@@ -66,28 +66,28 @@ impl Actor {
         }
     }
 
-    fn uuid(&self) -> Option<Uuid> {
+    pub(crate) fn uuid(&self) -> Option<Uuid> {
         match self {
             Self::Account(uuid) => Some(*uuid),
             _ => None,
         }
     }
 
-    fn name(&self) -> Option<&str> {
+    pub(crate) fn name(&self) -> Option<&str> {
         match self {
             Self::Staff { name, .. } => Some(name),
             _ => None,
         }
     }
 
-    fn panel_user(&self) -> Option<&str> {
+    pub(crate) fn panel_user(&self) -> Option<&str> {
         match self {
             Self::Staff { panel_user, .. } => panel_user.as_deref(),
             _ => None,
         }
     }
 
-    fn parse(
+    pub(crate) fn parse(
         kind: &str,
         uuid: Option<Uuid>,
         name: Option<String>,
@@ -235,6 +235,20 @@ pub async fn add_punishment(
     .fetch_one(pool)
     .await?;
     row.try_into()
+}
+
+/// One punishment by id.
+pub async fn get_punishment(pool: &PgPool, id: i64) -> Result<Option<Punishment>, sqlx::Error> {
+    sqlx::query_as::<_, PunishmentRow>(concat!(
+        "SELECT ",
+        columns!(),
+        " FROM hallow.punishments WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .map(Punishment::try_from)
+    .transpose()
 }
 
 /// Lifts a punishment. Returns the updated punishment, or `None` if there is

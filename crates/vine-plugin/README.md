@@ -12,7 +12,7 @@
   - Players already on them aren't affected.
 - **Commands.** Sends, messages, broadcasts and kicks queued for this proxy are carried out.
 - **Player commands** that work across proxies. The full table is in [`src/commands.rs`](src/commands.rs).
-  - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`, `/lobby [mode]` to go to a game mode's lobby and `/hub` to go back to a hub.
+  - Everyone: `/msg` and `/r`, `/party` (`/p`), `/pc` for party chat, `/play <game>` and `/leavequeue`, `/lobby [mode]` to go to a game mode's lobby and `/hub` to go back to a hub, `/report <player> <reason>`.
   - Staff: `/find`, `/alert` and `/gkick`, for players whose ranks grant `hallow.staff.find`, `.alert` or `.kick` (or a wildcard). The control plane sends each player's nodes with their login; the console may run everything.
 - **Friends** (needs the control plane's database):
   - `/friend` (`/f`): add, accept, deny, remove, list and requests; `/friend <player>` adds.
@@ -23,6 +23,9 @@
   - Permissions: `hallow.staff.ban`, `.mute`, `.warn` and `.history`.
   - A ban kicks the player wherever they are and refuses their logins.
   - A muted player's chat, `/msg`, `/r` and party chat are blocked until the mute ends.
+- **Reports** (needs the control plane's database):
+  - `/report <player> <reason>`, for everyone; tab completes players on this proxy, and anyone who has joined can be named. The control plane answers with a confirmation, or why not: an unknown player, yourself, a report on them still open, or more than 5 reports in 10 minutes.
+  - Online staff whose ranks grant `hallow.staff.reports` (or a wildcard) see each new report in chat, on whichever proxy they are, through the control plane's command queue. Staff claim, resolve and dismiss reports in the panel.
 - **Anticheat signals.** Every 30 s, one sample per player goes to the control plane (`POST /v1/signals`): chat and command counts and peak rates, plugin messages, server switches and time online. The list is in [`src/signals.rs`](src/signals.rs). Measurement only; nothing acts on them yet.
 - **Recovery.**
   - If the control plane forgets the proxy, for example after it expired or Redis was reset, the plugin registers again and re-reports its players.

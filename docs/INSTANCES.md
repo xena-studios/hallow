@@ -70,6 +70,8 @@ A **kind** is a server repo the control plane may start: its live image and the 
 
 Running instances keep the image they started with. Deleting a kind starts no new instances of it and ends its unused ones; games already running finish.
 
+**Disabling a kind** (`"enabled": false` in its spec, the panel's Games page) is the same without forgetting it: no new instances, no warm ones (unused or empty instances end after `HALLOW_INSTANCE_IDLE_SECS`), games already running finish. `POST /v1/queues` refuses it with "`<kind>` is disabled right now." (`409`), and its mode leaves the hub's game menu (`GET /v1/lobbies`) once its lobby kind, or every game kind returning to that lobby, is disabled; `/lobby <mode>` then answers that the mode is disabled, and a finished game's `fallback_hub` send goes to a hub. A hub kind can't be disabled. `enabled` defaults to true, so older specs and clients keep their kinds on, and the kinds file never turns a disabled kind back on at start. The panel edits a kind by `GET`, changing fields, and `PUT`ting the whole spec back; every field round-trips.
+
 ## Lifecycle
 
 Each instance is a record in Redis (`instances`, plus `instance-specs`: what it was created from, environment included, for Wings to fetch). `GET /v1/instances` lists them with their state and their server's player count. `DELETE /v1/instances/{name}` ends one (`202`).
