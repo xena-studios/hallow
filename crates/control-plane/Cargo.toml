@@ -15,6 +15,7 @@ path = "src/main.rs"
 hallow-proto = { path = "../proto" }
 hallow-db = { path = "../db" }
 hallow-manifest = { path = "../server-manifest" }
+ipnet = "2"
 bytes.workspace = true
 http-body-util = "0.1.3"
 hyper = { version = "1.8", features = ["client", "http1"] }

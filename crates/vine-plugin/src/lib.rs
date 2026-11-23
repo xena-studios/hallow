@@ -32,6 +32,7 @@ mod commands;
 mod config;
 mod http;
 mod signals;
+mod stats;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -199,6 +200,7 @@ impl Guest for Hallow {
             EventPriority::Monitor,
         );
         commands::register(&ctx);
+        stats::register(&ctx);
 
         with_state(State::tick);
         scheduler::schedule_repeating_task(TICK, poll_ms, poll_ms);
@@ -257,8 +259,12 @@ impl Guest for Hallow {
     fn handle_command(id: u32, sender: CommandSender, args: Vec<String>) -> Result<i32, String> {
         // Messages for the player go out as they are; Vine would prefix an
         // `Err` with "Error:".
-        let result = with_state(|state| state.command(id, &sender, &args))
-            .unwrap_or_else(|| Err(UNAVAILABLE.into()));
+        let result = with_state(|state| {
+            state
+                .stats_command(id, &sender, &args)
+                .unwrap_or_else(|| state.command(id, &sender, &args))
+        })
+        .unwrap_or_else(|| Err(UNAVAILABLE.into()));
         Ok(result.unwrap_or_else(|message| {
             vine::plugin::command::reply(&sender, &message);
             0
@@ -270,7 +276,12 @@ impl Guest for Hallow {
         _sender: CommandSender,
         args: Vec<String>,
     ) -> Vec<String> {
-        with_state(|state| state.suggest(id, &args)).unwrap_or_default()
+        with_state(|state| {
+            state
+                .stats_suggest(id, &args)
+                .unwrap_or_else(|| state.suggest(id, &args))
+        })
+        .unwrap_or_default()
     }
 
     fn handle_task(handler_id: u32) {

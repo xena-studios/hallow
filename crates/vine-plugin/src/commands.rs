@@ -20,6 +20,8 @@
 //! | `/unmute <player> [reason]` | `hallow.staff.mute` | Lift a mute |
 //! | `/warn <player> <reason>` | `hallow.staff.warn` | Warn, on the record |
 //! | `/history <player>` | `hallow.staff.history` | A player's last 10 punishments |
+//! | `/stats [player] [game]` | | A player's stats (see [`stats`](crate::stats)) |
+//! | `/leaderboard [game] [stat] [all\|month\|week]` (`/lb`, `/top`) | | A game's top 10 |
 //!
 //! Punishments are kept in PostgreSQL, so they need a control plane with a
 //! database.

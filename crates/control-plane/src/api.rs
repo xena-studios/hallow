@@ -116,6 +116,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::SIGNALS, post(add_signals).get(signal_history))
         .route(routes::STATS, post(add_stats))
         .route("/v1/stats/{player}", get(player_stats))
+        .merge(stats::routes())
         .route(
             routes::PUNISHMENTS,
             post(issue_punishment).get(punishment_history),
@@ -170,6 +171,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::NODE_JOIN, post(node_join))
         // Wings' calls to its remote, authorized by node credentials.
         .merge(crate::remote::router())
+        // Read-only, no token, rate limited.
+        .merge(crate::public::router(&state))
         .merge(api)
         .fallback(|| async { Failure::not_found("no such endpoint") })
         .with_state(state)

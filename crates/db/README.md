@@ -1,6 +1,6 @@
 # hallow-db
 
-Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions, punishments, anticheat signals and player stats. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
+Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions, punishments, anticheat signals, player stats and finished games. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
 Hallow's PostgreSQL schema and the typed queries the control plane runs against it: accounts, ranks, sessions, punishments and their templates. Redis holds live state; PostgreSQL holds everything kept ([Decisions](../../docs/DECISIONS.md) 13).
 
 - Migrations are in [`migrations/`](migrations), embedded with `sqlx::migrate!` and applied by `hallow_db::migrate`.
@@ -40,6 +40,9 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `node_join_tokens` | One-time node join tokens: SHA-256 of the token, role, region, optional node name, labels, expiry, a short claim lease while a join runs, and when it was used; deleted a week after expiry | `id` (hash unique) |
 | `nodes` | Every node that joined: name, panel UUID, role, region, labels, private and public IP, WireGuard public key, the token it used | `name` |
 | `player_stats` | Running totals per account, server kind and stat name (`play_time_s`, `joins`, `kills`, ...). `add_stats` adds a batch of increases in one upsert (`value = value + n`); increases for accounts that never joined are skipped | `(account_uuid, kind, stat)` |
+| `player_stats_daily` | The same increases per UTC day, for weekly and monthly leaderboards. `add_stats` writes both tables in one statement. The control plane deletes days older than 62 | `(account_uuid, kind, stat, day)` |
+| `games` | Finished games: id (from the server, so a retried report is stored once), kind, server, map, start, end and player count | `id` |
+| `game_players` | Each player's part in a game: won, placement, team, the game's stats as JSON, and the game's end. `record_game` stores a game and adds `games`, `wins` and its stats to the totals in one transaction | `(game_id, account_uuid)` |
 | `server_kinds` | Server kinds the control plane starts instances of: name, the kind's spec (`hallow_proto::instance::KindSpec` as JSON: live image, role, players, scaling, env), who changed it last and when. Instances are live state in Redis, never rows | `name` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 | `punishment_templates` | Reasons staff pick from: name (unique without case), kind, length (`NULL` is permanent) and reason | `id` |
@@ -53,11 +56,13 @@ A punishment's issuer and revoker are an actor: a staff `account` (with its UUID
 | Is this account banned now? Its active mute? | `punishments_active_idx`: `(target_uuid, kind, expires_at)` over unrevoked bans and mutes. Expiry is checked at query time, since `now()` can't go in an index predicate |
 | A player's punishment history | `punishments_target_history_idx`: `(target_uuid, created_at DESC)` |
 | The panel's list of every punishment, newest first | `punishments_created_idx`: `(created_at DESC, id DESC)` |
-| An account by username, ignoring case | `accounts_username_lower_idx` on `lower(username)`; `account_usernames_username_lower_idx` for past names |
+| An account by username, ignoring case, or names starting with a search | `accounts_username_lower_idx` on `lower(username) text_pattern_ops`; `account_usernames_username_lower_idx` for past names |
 | An account's ranks | the `account_ranks` primary key, which starts with `account_uuid` |
 | A player's sessions; accounts seen on an IP; open sessions on a proxy | `sessions_account_idx`, `sessions_ip_idx`, `sessions_open_by_proxy_idx` |
 | A player's stats | the `player_stats` primary key, which starts with `account_uuid` |
 | Leaderboards (top values of one stat in one kind) | `player_stats_kind_stat_value_idx`: `(kind, stat, value DESC)` |
+| Weekly and monthly leaderboards | `player_stats_daily_board_idx`: `(kind, stat, day)` |
+| A player's recent games | `game_players_account_idx`: `(account_uuid, ended_at DESC)` |
 
 A test checks that the planner uses the first group of indexes for those queries.
 

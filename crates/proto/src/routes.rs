@@ -42,6 +42,10 @@
 //! | `GET` | [`signals_of`] | | `Vec<`[`SignalRecord`](crate::signal::SignalRecord)`>` |
 //! | `POST` | [`STATS`] | [`StatsBatch`](crate::stats::StatsBatch) | `204` |
 //! | `GET` | [`stats_of`] | | [`PlayerStats`](crate::stats::PlayerStats) or `404`; by UUID or username |
+//! | `POST` | [`GAMES`] | [`GameResult`](crate::stats::GameResult) | `204`; a repeated `id` is ignored |
+//! | `GET` | [`LEADERBOARDS`] | | `Vec<`[`BoardKind`](crate::public::BoardKind)`>`: every kind with stats |
+//! | `GET` | [`leaderboard`]`?window=&limit=` | | [`Leaderboard`](crate::stats::Leaderboard) |
+//! | `POST` | [`DISPLAY`] | [`DisplayRequest`](crate::stats::DisplayRequest) | `Vec<`[`PlayerDisplay`](crate::stats::PlayerDisplay)`>` |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
 //! | `DELETE` | [`queue_entry`] | | `204` |
 //! | `GET` | [`LOBBIES`] | | [`LobbyOverview`](crate::lobby::LobbyOverview) |
@@ -59,6 +63,9 @@
 //! | `DELETE` | [`kind`] | | `204`; running instances finish, no new ones start |
 //! | `GET` | [`INSTANCES`] | | `Vec<`[`InstanceInfo`](crate::instance::InstanceInfo)`>` by name |
 //! | `DELETE` | [`instance`] | | `202`: the instance ends (its players are sent back by their proxy) |
+//!
+//! The read-only public API, with no token, is under `/public/v1`; see
+//! [`public`](crate::public).
 //!
 //! The control plane also answers HAProxy agent checks on a separate TCP
 //! port (not HTTP); see the control plane's README.
@@ -91,6 +98,9 @@ pub const PARTIES: &str = "/v1/parties";
 pub const FRIENDS: &str = "/v1/friends";
 pub const SIGNALS: &str = "/v1/signals";
 pub const STATS: &str = "/v1/stats";
+pub const GAMES: &str = "/v1/games";
+pub const LEADERBOARDS: &str = "/v1/leaderboards";
+pub const DISPLAY: &str = "/v1/display";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
 pub const PUNISHMENTS_SEARCH: &str = "/v1/punishments/search";
@@ -220,7 +230,7 @@ pub fn stats_of(player: &str) -> String {
     path
 }
 
-fn encode_into(path: &mut String, text: &str) {
+pub(crate) fn encode_into(path: &mut String, text: &str) {
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.') {
             path.push(char::from(byte));
@@ -228,6 +238,27 @@ fn encode_into(path: &mut String, text: &str) {
             path.push_str(&format!("%{byte:02X}"));
         }
     }
+}
+
+/// A leaderboard; add `?window=` and `?limit=` with [`leaderboard_query`].
+#[must_use]
+pub fn leaderboard(kind: &str, stat: &str) -> String {
+    format!("{LEADERBOARDS}/{kind}/{stat}")
+}
+
+/// [`leaderboard`] with its query.
+#[must_use]
+pub fn leaderboard_query(
+    kind: &str,
+    stat: &str,
+    window: crate::stats::Window,
+    limit: u32,
+) -> String {
+    format!(
+        "{}?window={}&limit={limit}",
+        leaderboard(kind, stat),
+        window.as_str()
+    )
 }
 
 /// The party `uuid` is in.

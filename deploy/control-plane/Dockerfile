@@ -8,6 +8,8 @@ WORKDIR /src
 # needs it to resolve the workspace even though the control plane doesn't use it.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# The player website is a workspace member too.
+COPY web web
 COPY upstream/Pumpkin upstream/Pumpkin
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin

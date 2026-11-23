@@ -72,8 +72,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint and test the host crates
         run: |
-          cargo clippy -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-db -p hallow-fleet -p hallow-manifest -p hallow-provider-hetzner-cloud --all-targets -- -D warnings
-          cargo test -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-db -p hallow-vine -p hallow-server -p hallow-hub -p hallow-fleet -p hallow-manifest -p hallow-provider-hetzner-cloud
+          cargo clippy -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-db -p hallow-fleet -p hallow-manifest -p hallow-provider-hetzner-cloud -p hallow-web --all-targets -- -D warnings
+          cargo test -p netcheck -p hallow-proto -p hallow-control-plane -p hallow-db -p hallow-vine -p hallow-server -p hallow-hub -p hallow-test-game -p hallow-fleet -p hallow-manifest -p hallow-provider-hetzner-cloud -p hallow-web
       - name: Lint and build the plugins
         run: |
           # hallow-proto is linted for WASM too, since plugins build against it.

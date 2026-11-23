@@ -70,8 +70,8 @@ Original gate: a 26.3 and a Bedrock client each join, play and switch servers tw
 - [ ] Cheating bots in `netcheck` (speed, fly, reach, auto-clicker, timer) as a CI suite
 - [ ] 1.8-style combat module, if [Decisions](DECISIONS.md) keeps it
 - [ ] Two launch games (to be chosen), each with its lobby, as server repos
-- [ ] Stats, leaderboards and ranks
-- [ ] Player website: profiles and leaderboards
+- [x] Stats, leaderboards and ranks (totals per game kind all time and per day; games report results through the server plugin, `game_result` over IPC; all-time, weekly and monthly boards; `/stats` and `/leaderboard` on every server; rank prefixes in chat and the tab list)
+- [x] Player website: profiles and leaderboards (`web/`, server-rendered Rust on the control plane's public, rate-limited API; in the dev network on port 18095)
 - [ ] Panel: reports, games and stats pages
 - [ ] Fleet manager: provider trait, scaling rules, drain and cancel, spend caps, dry run (`crates/fleet` has the trait, the planner and dry run, tested on a simulated day; not yet wired into the control plane, and no audit log yet)
 - [ ] Hetzner Cloud provider: burst nodes on demand (`crates/providers/hetzner-cloud`, tested against a mock API; not yet run against Hetzner)

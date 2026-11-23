@@ -33,6 +33,9 @@
 //! | `HALLOW_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker orchestrator: the Engine API (`unix://` or `tcp://`) |
 //! | `HALLOW_DOCKER_NETWORK` | required with Docker | Docker orchestrator: the network instances join, such as `gatetest_default` |
 //! | `HALLOW_DOCKER_OWNER` | the network | Docker orchestrator: label value marking this network's containers |
+//! | `HALLOW_PUBLIC_API` | `on` | `off` turns off the read-only public API under `/public/v1` (profiles and leaderboards, no token) |
+//! | `HALLOW_PUBLIC_RATE_PER_MINUTE` / `HALLOW_PUBLIC_BURST` | `120` / `40` | The public API's rate limit per client address |
+//! | `HALLOW_PUBLIC_TRUSTED_PROXIES` | none | Comma-separated addresses or CIDR ranges (the player website) whose `X-Forwarded-For` the public API believes |
 //! | `RUST_LOG` | `info` | Log filter |
 
 use std::{env, process::ExitCode};
@@ -41,6 +44,7 @@ use hallow_control_plane::{
     Config, DuplicateLogin, InstancesSetup, OrchestratorChoice,
     orchestrator::docker::{DockerConfig, Endpoint},
     panel::PanelConfig,
+    public::PublicConfig,
     serve_all,
 };
 use tracing_subscriber::EnvFilter;
@@ -143,6 +147,7 @@ fn config() -> Result<Config, String> {
             .ok_or_else(|| format!("HALLOW_JOIN_TOKEN_TTL_HOURS must be 1 to 168, not {hours}"))?;
         config.join_token_ttl = std::time::Duration::from_secs(hours * 3600);
     }
+    config.public = public_config()?;
     config.panel = panel_config()?;
     config.instances = instances_setup()?;
     if let Ok(mode) = env::var("HALLOW_DUPLICATE_LOGIN") {
@@ -157,6 +162,34 @@ fn config() -> Result<Config, String> {
         };
     }
     Ok(config)
+}
+
+fn public_config() -> Result<PublicConfig, String> {
+    let mut public = PublicConfig::default();
+    if let Ok(on) = env::var("HALLOW_PUBLIC_API") {
+        public.enabled = match on.as_str() {
+            "on" => true,
+            "off" => false,
+            other => return Err(format!("HALLOW_PUBLIC_API must be on or off, not {other}")),
+        };
+    }
+    for (var, field) in [
+        ("HALLOW_PUBLIC_RATE_PER_MINUTE", &mut public.per_minute),
+        ("HALLOW_PUBLIC_BURST", &mut public.burst),
+    ] {
+        if let Ok(value) = env::var(var) {
+            *field = value
+                .parse()
+                .ok()
+                .filter(|n| (1..=100_000).contains(n))
+                .ok_or_else(|| format!("{var} must be 1 to 100000, not {value}"))?;
+        }
+    }
+    if let Ok(list) = env::var("HALLOW_PUBLIC_TRUSTED_PROXIES") {
+        public.trusted_proxies = hallow_control_plane::public::parse_trusted(&list)
+            .map_err(|err| format!("HALLOW_PUBLIC_TRUSTED_PROXIES: {err}"))?;
+    }
+    Ok(public)
 }
 
 fn panel_config() -> Result<Option<PanelConfig>, String> {
