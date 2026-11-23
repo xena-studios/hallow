@@ -41,6 +41,9 @@ Enumerations (`edition`, punishment `kind`, actor kinds) are `text` columns with
 | `nodes` | Every node that joined: name, panel UUID, role, region, labels, private and public IP, WireGuard public key, the token it used | `name` |
 | `player_stats` | Running totals per account, server kind and stat name (`play_time_s`, `joins`, `kills`, ...). `add_stats` adds a batch of increases in one upsert (`value = value + n`); increases for accounts that never joined are skipped | `(account_uuid, kind, stat)` |
 | `server_kinds` | Server kinds the control plane starts instances of: name, the kind's spec (`hallow_proto::instance::KindSpec` as JSON: live image, role, players, scaling, env), who changed it last and when. Instances are live state in Redis, never rows | `name` |
+| `kind_versions` | Each kind's recorded versions: name (`1.4.0`, `sha-3f2a9c1`), image, `hallow.toml`'s `base` range, the base image version and commit it was built from, who added it and when. Deleted with the kind | `(kind, version)` |
+| `kind_channels` | Each kind's `live` version, the `previous` one a rollback goes back to, and the `canary` with its share and start time. The live image itself stays in `server_kinds` | `kind` |
+| `kind_version_audit` | Every version action (`add`, `canary`, `stop_canary`, `promote`, `rollback`, `register`), append-only and kept after the kind is deleted: the version, what it replaced, who did it (name and panel user) and when | `id` |
 | `punishments` | Bans, mutes, kicks and warnings: target, issuer, reason, created, expiry (`NULL` is permanent), and revocation (when, by whom, why) | `id` |
 | `punishment_templates` | Reasons staff pick from: name (unique without case), kind, length (`NULL` is permanent) and reason | `id` |
 

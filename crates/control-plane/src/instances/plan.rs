@@ -24,6 +24,12 @@
 //! least `warm` instances, and more when their players fill them past
 //! [`LOBBY_FILL_PERCENT`] on average. Nothing goes past `max_instances`.
 //!
+//! Instances on an old version ([`World::outdated`]: neither the kind's live
+//! nor its canary image) finish what they are doing but don't count as
+//! warm, so new ones start on the current version; unused ones are then
+//! extras, ended after [`Settings::idle_ms`]. An empty old lobby instance is
+//! ended once the kind has enough current ones ready.
+//!
 //! New instances go on the node with the fewest instances (then by name),
 //! on its lowest free game port if it has a port range.
 
@@ -75,6 +81,9 @@ pub struct World<'a> {
     pub players_online: u32,
     pub nodes: &'a [NodeSlot],
     pub settings: &'a Settings,
+    /// Instances on neither their kind's live nor its canary image
+    /// (`crate::versions::outdated`).
+    pub outdated: &'a BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,11 +294,12 @@ fn game_demand(
         .map(|s| (s.name.as_str(), s.players, s.max_players))
         .collect();
     open.sort_by(|a, b| a.0.cmp(b.0));
-    // Instances on their way up, as empty bins.
-    let mut pending: Vec<u32> = live
+    // Instances on their way up, as empty bins, and whether each is on an
+    // old version.
+    let mut pending: Vec<(u32, bool)> = live
         .iter()
         .filter(|i| matches!(i.state, InstanceState::Creating | InstanceState::Starting))
-        .map(|_| 0)
+        .map(|i| (0, world.outdated.contains(&i.name)))
         .collect();
     let mut new_bins: Vec<u32> = Vec::new();
     let mut used: BTreeSet<&str> = BTreeSet::new();
@@ -309,6 +319,7 @@ fn game_demand(
         }
         if let Some(bin) = pending
             .iter_mut()
+            .map(|(bin, _)| bin)
             .chain(new_bins.iter_mut())
             .find(|bin| max - **bin >= size)
         {
@@ -337,21 +348,37 @@ fn game_demand(
         })
         .collect();
     unused.sort_by_key(|i| (i.state_since_ms, i.name.clone()));
-    let idle = unused.len() as u32 + pending.iter().filter(|bin| **bin == 0).count() as u32;
+    // Unused instances on an old version don't count as warm, and are
+    // extras.
+    let (old, unused): (Vec<&InstanceInfo>, Vec<&InstanceInfo>) = unused
+        .into_iter()
+        .partition(|i| world.outdated.contains(&i.name));
+    let idle = unused.len() as u32
+        + pending
+            .iter()
+            .filter(|(bin, outdated)| *bin == 0 && !outdated)
+            .count() as u32;
     let wanted = new_bins.len() as u32 + warm.saturating_sub(idle);
 
-    let mut surplus = Vec::new();
+    let idle_long =
+        |i: &InstanceInfo| world.now_ms.saturating_sub(i.state_since_ms) >= world.settings.idle_ms;
+    let mut surplus: Vec<String> = old
+        .iter()
+        .filter(|i| idle_long(i))
+        .map(|i| i.name.clone())
+        .collect();
     if new_bins.is_empty() && idle > warm {
         let extra = (idle - warm) as usize;
-        surplus = unused
-            .iter()
-            .rev()
-            .filter(|i| world.now_ms.saturating_sub(i.state_since_ms) >= world.settings.idle_ms)
-            .take(extra)
-            .map(|i| i.name.clone())
-            .collect();
-        surplus.sort();
+        surplus.extend(
+            unused
+                .iter()
+                .rev()
+                .filter(|i| idle_long(i))
+                .take(extra)
+                .map(|i| i.name.clone()),
+        );
     }
+    surplus.sort();
     (wanted, surplus)
 }
 
@@ -372,25 +399,37 @@ fn lobby_demand(
         .sum();
     let fill = (spec.players.max.max(1) * LOBBY_FILL_PERCENT / 100).max(1);
     let target = spec.scaling.warm.max(players.div_ceil(fill));
-    let count = live.len() as u32;
+    // Instances on an old version keep their players but aren't counted, so
+    // current ones start alongside them.
+    let (old, current): (Vec<&InstanceInfo>, Vec<&InstanceInfo>) = live
+        .iter()
+        .copied()
+        .partition(|i| world.outdated.contains(&i.name));
+    let count = current.len() as u32;
     if count < target {
         return (target - count, Vec::new());
     }
-    let mut empty: Vec<&InstanceInfo> = live
-        .iter()
-        .copied()
-        .filter(|i| {
-            i.state == InstanceState::Ready
-                && servers.get(i.name.as_str()).is_some_and(|s| s.players == 0)
-                && world.now_ms.saturating_sub(i.state_since_ms) >= world.settings.idle_ms
-        })
-        .collect();
+    let empty_idle = |i: &InstanceInfo| {
+        i.state == InstanceState::Ready
+            && servers.get(i.name.as_str()).is_some_and(|s| s.players == 0)
+            && world.now_ms.saturating_sub(i.state_since_ms) >= world.settings.idle_ms
+    };
+    let mut empty: Vec<&InstanceInfo> = current.iter().copied().filter(|i| empty_idle(i)).collect();
     empty.sort_by(|a, b| a.name.cmp(&b.name));
-    let surplus = empty
+    let mut surplus: Vec<String> = empty
         .into_iter()
         .take((count - target) as usize)
         .map(|i| i.name.clone())
         .collect();
+    // Empty old ones go once enough current ones are ready.
+    let ready = current
+        .iter()
+        .filter(|i| i.state == InstanceState::Ready && servers.contains_key(i.name.as_str()))
+        .count() as u32;
+    if ready >= target {
+        surplus.extend(old.iter().filter(|i| empty_idle(i)).map(|i| i.name.clone()));
+    }
+    surplus.sort();
     (0, surplus)
 }
 
@@ -454,6 +493,7 @@ mod tests {
             kind: "tg".into(),
             uuid: Uuid::nil(),
             image: "img".into(),
+            version: None,
             node: "n1".into(),
             state,
             state_since_ms: since,
@@ -500,6 +540,7 @@ mod tests {
         online: u32,
         nodes: Vec<NodeSlot>,
         settings: Settings,
+        outdated: BTreeSet<String>,
     }
 
     impl Case {
@@ -512,6 +553,7 @@ mod tests {
                 online: 1,
                 nodes: nodes(&["n1"]),
                 settings: Settings::default(),
+                outdated: BTreeSet::new(),
             }
         }
 
@@ -530,6 +572,7 @@ mod tests {
                 players_online: self.online,
                 nodes: &self.nodes,
                 settings: &self.settings,
+                outdated: &self.outdated,
             })
         }
     }
@@ -822,6 +865,59 @@ mod tests {
         case.instances.truncate(2);
         case.instances[1].had_players = true;
         case.servers.truncate(2);
+        assert_eq!(case.plan(), []);
+    }
+
+    #[test]
+    fn old_versions_are_not_kept_warm() {
+        let mut case = Case::new(game(1, 4, None));
+        case.instances = vec![
+            instance("tg-old", InstanceState::Ready, NOW - 1000),
+            instance("tg-play", InstanceState::Ready, 0),
+        ];
+        case.instances[1].had_players = true;
+        case.servers = vec![
+            server("tg-old", 0, ServerState::Ready),
+            server("tg-play", 3, ServerState::InGame),
+        ];
+        assert_eq!(case.plan(), []);
+        // After a rollback both are on an old version: a warm one starts on
+        // the current version, the running game plays on, and the unused one
+        // is an extra, ended after the idle time.
+        case.outdated = ["tg-old".to_owned(), "tg-play".to_owned()].into();
+        let actions = case.plan();
+        assert_eq!(creates(&actions), 1);
+        assert!(ends(&actions).is_empty());
+        case.instances[0].state_since_ms = 0;
+        let actions = case.plan();
+        assert_eq!(creates(&actions), 1);
+        assert_eq!(ends(&actions), [("tg-old", "not needed")]);
+        // An old one on its way up isn't warm either.
+        case.instances = vec![instance("tg-old", InstanceState::Starting, NOW)];
+        case.servers.clear();
+        case.outdated = ["tg-old".to_owned()].into();
+        assert_eq!(creates(&case.plan()), 1);
+    }
+
+    #[test]
+    fn old_lobbies_go_once_current_ones_are_ready() {
+        let mut spec = game(1, 50, None);
+        spec.role = KindRole::Lobby;
+        let mut case = Case::new(spec);
+        case.instances = vec![instance("tg-old", InstanceState::Ready, 0)];
+        case.servers = vec![server("tg-old", 0, ServerState::Ready)];
+        case.outdated = ["tg-old".to_owned()].into();
+        // A current one starts first; the old one stays until it is ready.
+        assert_eq!(creates(&case.plan()), 1);
+        assert!(ends(&case.plan()).is_empty());
+        case.instances
+            .push(instance("tg-new", InstanceState::Starting, NOW));
+        assert_eq!(case.plan(), []);
+        case.instances[1].state = InstanceState::Ready;
+        case.servers.push(server("tg-new", 0, ServerState::Ready));
+        assert_eq!(ends(&case.plan()), [("tg-old", "not needed")]);
+        // An old one with players stays until they leave.
+        case.servers[0].players = 2;
         assert_eq!(case.plan(), []);
     }
 
