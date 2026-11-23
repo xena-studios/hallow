@@ -1,0 +1,16 @@
+[package]
+name = "hallow-game-lobby"
+version = "0.1.0"
+description = "A game mode lobby's Pumpkin plugin: the welcome, buttons that queue for the mode's games, and a safe spawn."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pumpkin-plugin-api.workspace = true
+tracing.workspace = true
+uuid = { version = "1.29", default-features = false }

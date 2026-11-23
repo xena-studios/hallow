@@ -31,6 +31,10 @@ COPY crates crates
 # The in-tree servers' plugins are workspace members too.
 COPY servers/hub/plugin servers/hub/plugin
 COPY servers/test-game/plugin servers/test-game/plugin
+COPY servers/islands servers/islands
+COPY servers/eggwars/plugin servers/eggwars/plugin
+COPY servers/skywars/plugin servers/skywars/plugin
+COPY servers/lobby-plugin servers/lobby-plugin
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=hallow-server-plugin-target,target=/src/target,sharing=locked \
     find crates servers upstream/Pumpkin -name '*.rs' -exec touch {} + \

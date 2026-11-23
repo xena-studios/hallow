@@ -1,6 +1,6 @@
 # Dynamic instances for the two-proxy dev network: an override for
 # compose.yaml + compose.hallow.yaml. The control plane starts and deletes
-# test-game and test-game-lobby containers itself through the local Docker
+# game and lobby containers (test-game, eggwars, skywars and their lobbies) itself through the local Docker
 # Engine (HALLOW_ORCHESTRATOR=docker), the way it does through Wings on real
 # nodes (docs/INSTANCES.md): a warm test-game-lobby, games as players queue.
 # game-1 is built but not started; the hub (lobby) stays a static compose
@@ -40,7 +40,9 @@ services:
       HALLOW_INSTANCE_CONTROL_PLANE: control-plane:8080
       # TEST_GAME_MATCH_SECS: how long a test-game match lasts before it ends
       # and sends its players back to test-game-lobby.
-      HALLOW_INSTANCE_ENV: HALLOW_VINE_SECRET=${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production},TEST_GAME_MATCH_SECS=${TEST_GAME_MATCH_SECS:-30}
+      # HALLOW_GAME_TEST_HOOKS=1 lets bots end an eggwars or skywars match
+      # from chat (`!test die`, `!test breakegg`); off unless set.
+      HALLOW_INSTANCE_ENV: HALLOW_VINE_SECRET=${HALLOW_VINE_SECRET:-hallow-dev-secret-not-for-production},TEST_GAME_MATCH_SECS=${TEST_GAME_MATCH_SECS:-30},HALLOW_GAME_TEST_HOOKS=${HALLOW_GAME_TEST_HOOKS:-0}
       HALLOW_KINDS_FILE: /etc/hallow/kinds/kinds.toml
       # Expanded in kinds.toml's images.
       HALLOW_IMAGE_TAG: ${HALLOW_IMAGE_TAG:-dev}
@@ -52,6 +54,11 @@ services:
       - ./config/hallow/kinds.toml:/etc/hallow/kinds/kinds.toml:ro
       - ../../servers/test-game/hallow.toml:/etc/hallow/kinds/test-game/hallow.toml:ro
       - ../../servers/test-game-lobby/hallow.toml:/etc/hallow/kinds/test-game-lobby/hallow.toml:ro
+      - ../../servers/eggwars/hallow.toml:/etc/hallow/kinds/eggwars/hallow.toml:ro
+      - ../../servers/eggwars-lobby/hallow.toml:/etc/hallow/kinds/eggwars-lobby/hallow.toml:ro
+      - ../../servers/skywars/hallow.toml:/etc/hallow/kinds/skywars/hallow.toml:ro
+      - ../../servers/skywars/hallow-teams.toml:/etc/hallow/kinds/skywars/hallow-teams.toml:ro
+      - ../../servers/skywars-lobby/hallow.toml:/etc/hallow/kinds/skywars-lobby/hallow.toml:ro
 
   # Built for the control plane to run, never started by compose.
   game-1:
@@ -63,6 +70,49 @@ services:
       additional_contexts:
         ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
     image: hallow-test-game-lobby:${HALLOW_IMAGE_TAG:-dev}
+    scale: 0
+
+  # The launch games and their lobbies, built for the control plane to run.
+  eggwars:
+    build:
+      context: ../../servers/eggwars
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-eggwars:${HALLOW_IMAGE_TAG:-dev}
+    scale: 0
+
+  eggwars-lobby:
+    build:
+      context: ../../servers/eggwars-lobby
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-eggwars-lobby:${HALLOW_IMAGE_TAG:-dev}
+    scale: 0
+
+  skywars:
+    build:
+      context: ../../servers/skywars
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-skywars:${HALLOW_IMAGE_TAG:-dev}
+    scale: 0
+
+  skywars-teams:
+    build:
+      context: ../../servers/skywars
+      args:
+        MANIFEST: hallow-teams.toml
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-skywars-teams:${HALLOW_IMAGE_TAG:-dev}
+    scale: 0
+
+  skywars-lobby:
+    build:
+      context: ../../servers/skywars-lobby
+      additional_contexts:
+        ghcr.io/xena-studios/hallow-server-base:0.2: service:server-base
+    image: hallow-skywars-lobby:${HALLOW_IMAGE_TAG:-dev}
     scale: 0
 
   proxy:

@@ -1,0 +1,130 @@
+# Tidewater: sandy atolls far apart, joined by half-built prismarine
+# piers. Longer bridges, so more iron gets spent on wool.
+name = "Tidewater"
+description = "Sandy atolls and half-built prismarine piers."
+seed = 4417
+void_y = 30
+border = 84
+copies = 4
+team_size = 2
+waiting = [0.5, 104, 0.5]
+spectate = [0.5, 92, 0.5]
+
+[team]
+spawn = [-3.5, 65, -48.5]
+egg = [-3, 65, -56]
+shop = [1.5, 65, -51.5]
+
+[[team.generator]]
+tier = "iron"
+at = [-7, 64, -50]
+
+[[team.generator]]
+tier = "gold"
+at = [-7, 64, -46]
+
+[[shape]]
+kind = "island"
+at = [-3, 64, -49]
+radius = 8.5
+depth = 8
+top = "sand"
+soil = "sandstone"
+core = "prismarine"
+ore = "sea_lantern"
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [-3, 64, -56]
+radius = 3
+depth = 4
+top = "sand"
+soil = "sandstone"
+core = "prismarine"
+repeat = true
+
+[[shape]]
+kind = "cylinder"
+at = [-3, 64, -56]
+radius = 1.5
+height = 1
+block = "dark_prismarine"
+repeat = true
+
+# The pier towards the middle, stopping short.
+[[shape]]
+kind = "box"
+from = [-4, 64, -42]
+to = [-2, 64, -33]
+block = "prismarine_bricks"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [-4, 65, -33]
+to = [-4, 65, -33]
+block = "sea_lantern"
+repeat = true
+
+[[shape]]
+kind = "box"
+from = [-2, 65, -33]
+to = [-2, 65, -33]
+block = "sea_lantern"
+repeat = true
+
+# Reef islands between teams, with gold.
+[[shape]]
+kind = "island"
+at = [31, 63, -31]
+radius = 5
+depth = 5
+top = "sand"
+soil = "sandstone"
+core = "prismarine"
+repeat = true
+
+[[generator]]
+tier = "gold"
+at = [31, 63, -31]
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [0, 65, 0]
+radius = 12
+depth = 12
+top = "sand"
+soil = "sandstone"
+core = "prismarine"
+ore = "sea_lantern"
+
+[[shape]]
+kind = "box"
+from = [-2, 66, -2]
+to = [2, 66, 2]
+block = "prismarine_bricks"
+
+[[shape]]
+kind = "tree"
+at = [6, 65, -6]
+log = "stripped_birch_log"
+leaves = "birch_leaves"
+height = 4
+
+[[shape]]
+kind = "tree"
+at = [-7, 65, 6]
+log = "stripped_birch_log"
+leaves = "birch_leaves"
+height = 4
+
+[[generator]]
+tier = "diamond"
+at = [0, 66, 0]
+
+[[generator]]
+tier = "diamond"
+at = [7, 65, 7]
+level = 0

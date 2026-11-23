@@ -1,0 +1,34 @@
+# Sky Wars' lobby: where players pick Sky Wars from the hub's game menu (or
+# /lobby skywars), queue for solo or teams, and come back to when a match
+# ends. See docs/SERVERS.md#hallowtoml.
+name = "skywars-lobby"
+role = "lobby"
+lobby = "hub"
+queues = ["skywars", "skywars-teams"]
+base = "^0.2"
+
+[players]
+max = 60
+
+[scaling]
+warm = 1
+max_instances = 4
+
+# The shared lobby plugin (servers/lobby-plugin): welcome, queue buttons and
+# a safe spawn, set up by LOBBY_TITLE and LOBBY_MODES below.
+[[plugins]]
+file = "plugins/hallow_game_lobby.wasm"
+permissions = ["sys.env.LOBBY_TITLE", "sys.env.LOBBY_MODES"]
+
+[pumpkin]
+default_gamemode = "Adventure"
+default_difficulty = "Peaceful"
+allow_nether = false
+allow_end = false
+
+[pumpkin.pvp]
+enabled = false
+
+[env]
+LOBBY_TITLE = "§b§lSKY WARS"
+LOBBY_MODES = "skywars=Solo|Eight islands, every player for themselves;skywars-teams=Teams of 2|Four islands, two players each"

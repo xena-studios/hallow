@@ -1,0 +1,127 @@
+# Mossgrove: old wooded islands, each team's set off to one side so the
+# rush to the middle and the flank to a neighbour are about as long.
+name = "Mossgrove"
+description = "Wooded islands with a mossy ruin in the middle."
+seed = 9093
+void_y = 28
+border = 80
+copies = 4
+team_size = 2
+waiting = [0.5, 106, 0.5]
+spectate = [0.5, 94, 0.5]
+
+[team]
+spawn = [10.5, 65, -41.5]
+egg = [12, 65, -49]
+shop = [6.5, 65, -44.5]
+
+[[team.generator]]
+tier = "iron"
+at = [14, 64, -43]
+
+[[team.generator]]
+tier = "gold"
+at = [15, 64, -39]
+
+[[team.generator]]
+tier = "diamond"
+at = [7, 64, -38]
+level = 0
+
+[[shape]]
+kind = "island"
+at = [11, 64, -42]
+radius = 8
+depth = 10
+ore = "mossy_cobblestone"
+repeat = true
+
+[[shape]]
+kind = "island"
+at = [12, 64, -49]
+radius = 3.5
+depth = 4
+top = "moss_block"
+soil = "moss_block"
+core = "mossy_cobblestone"
+repeat = true
+
+[[shape]]
+kind = "tree"
+at = [7, 64, -46]
+repeat = true
+
+[[shape]]
+kind = "tree"
+at = [16, 64, -45]
+height = 6
+repeat = true
+
+# Stepping stones towards the next team clockwise.
+[[shape]]
+kind = "island"
+at = [33, 63, -22]
+radius = 3
+depth = 3
+top = "moss_block"
+soil = "dirt"
+core = "mossy_cobblestone"
+repeat = true
+
+[[generator]]
+tier = "iron"
+at = [33, 63, -22]
+repeat = true
+
+# The ruin in the middle.
+[[shape]]
+kind = "island"
+at = [0, 64, 0]
+radius = 13
+depth = 15
+top = "moss_block"
+soil = "dirt"
+core = "stone"
+ore = "mossy_cobblestone"
+
+[[shape]]
+kind = "box"
+from = [-4, 65, -4]
+to = [4, 68, 4]
+block = "mossy_stone_bricks"
+hollow = true
+
+[[shape]]
+kind = "box"
+from = [-3, 65, -4]
+to = [3, 67, 4]
+block = "air"
+
+[[shape]]
+kind = "box"
+from = [-4, 65, -3]
+to = [4, 67, 3]
+block = "air"
+
+[[shape]]
+kind = "box"
+from = [-3, 64, -3]
+to = [3, 64, 3]
+block = "cracked_stone_bricks"
+
+[[shape]]
+kind = "tree"
+at = [-9, 64, 6]
+height = 6
+
+[[generator]]
+tier = "diamond"
+at = [0, 64, 0]
+
+[[generator]]
+tier = "gold"
+at = [8, 64, 8]
+
+[[generator]]
+tier = "gold"
+at = [-8, 64, -8]

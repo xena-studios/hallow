@@ -1135,38 +1135,56 @@ mod tests {
     fn repo_manifests_are_valid() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut kinds = std::collections::BTreeMap::new();
-        for dir in [
-            "servers/hub",
-            "servers/test-game",
-            "servers/test-game-lobby",
-            "templates/server-repo",
+        for (dir, file) in [
+            ("servers/hub", FILE_NAME),
+            ("servers/test-game", FILE_NAME),
+            ("servers/test-game-lobby", FILE_NAME),
+            ("servers/eggwars", FILE_NAME),
+            ("servers/eggwars-lobby", FILE_NAME),
+            ("servers/skywars", FILE_NAME),
+            ("servers/skywars", "hallow-teams.toml"),
+            ("servers/skywars-lobby", FILE_NAME),
+            ("templates/server-repo", FILE_NAME),
         ] {
             let dir = root.join(dir);
-            let manifest = Manifest::load(&dir.join(FILE_NAME))
+            let manifest = Manifest::load(&dir.join(file))
                 .unwrap_or_else(|err| panic!("{}: {err}", dir.display()));
             for plugin in &manifest.plugins {
                 let built = dir.join(&plugin.file);
                 if built.is_file() {
                     continue;
                 }
-                let crate_toml = std::fs::read_to_string(dir.join("plugin/Cargo.toml"))
-                    .unwrap_or_else(|_| {
-                        panic!(
-                            "{}: {} isn't built and there's no plugin/ crate",
-                            dir.display(),
-                            plugin.file.display()
-                        )
-                    });
-                let package: toml::Table = toml::from_str(&crate_toml).unwrap();
-                let name = package["package"]["name"]
-                    .as_str()
-                    .unwrap()
-                    .replace('-', "_");
-                assert_eq!(
-                    plugin.file,
-                    Path::new("plugins").join(format!("{name}.wasm")),
-                    "{}: plugin/ builds {name}.wasm",
-                    dir.display()
+                // The server's own plugin/ crate, or the lobby plugin the
+                // game mode lobbies share.
+                let names: Vec<String> = [
+                    dir.join("plugin/Cargo.toml"),
+                    root.join("servers/lobby-plugin/Cargo.toml"),
+                ]
+                .iter()
+                .filter_map(|path| std::fs::read_to_string(path).ok())
+                .map(|text| {
+                    let package: toml::Table = toml::from_str(&text).unwrap();
+                    package["package"]["name"]
+                        .as_str()
+                        .unwrap()
+                        .replace('-', "_")
+                })
+                .collect();
+                assert!(
+                    names.iter().any(
+                        |name| plugin.file == Path::new("plugins").join(format!("{name}.wasm"))
+                    ),
+                    "{}: {} isn't built, and no in-tree crate builds it",
+                    dir.display(),
+                    plugin.file.display()
+                );
+            }
+            if let Some(maps) = manifest.maps.as_ref().and_then(|m| m.dir.as_ref()) {
+                assert!(
+                    dir.join(maps).is_dir(),
+                    "{}: no {}",
+                    dir.display(),
+                    maps.display()
                 );
             }
             kinds.insert(manifest.name.clone(), manifest);
@@ -1178,5 +1196,18 @@ mod tests {
         assert_eq!(lobby.role, Role::Lobby);
         assert_eq!(lobby.queues, ["test-game"]);
         assert_eq!(lobby.lobby.as_deref(), Some("hub"));
+        // The launch games and their lobbies.
+        for (game, mode) in [
+            ("eggwars", "eggwars-lobby"),
+            ("skywars", "skywars-lobby"),
+            ("skywars-teams", "skywars-lobby"),
+        ] {
+            assert_eq!(kinds[game].role, Role::Game);
+            assert_eq!(kinds[game].lobby.as_deref(), Some(mode));
+            assert!(
+                kinds[mode].queues.iter().any(|q| q == game),
+                "{mode} queues {game}"
+            );
+        }
     }
 }

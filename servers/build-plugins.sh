@@ -7,8 +7,13 @@
 set -eu
 cd "$(dirname "$0")/.."
 cargo build --release --locked --target wasm32-wasip2 \
-  -p hallow-vine -p hallow-server -p hallow-hub -p hallow-test-game
+  -p hallow-vine -p hallow-server -p hallow-hub -p hallow-test-game \
+  -p hallow-eggwars -p hallow-skywars -p hallow-game-lobby
 out=target/wasm32-wasip2/release
 cp "$out/hallow_hub.wasm" servers/hub/plugins/
 cp "$out/hallow_test_game.wasm" servers/test-game/plugins/
-echo "Built the plugins into $out, servers/hub/plugins and servers/test-game/plugins."
+cp "$out/hallow_eggwars.wasm" servers/eggwars/plugins/
+cp "$out/hallow_skywars.wasm" servers/skywars/plugins/
+cp "$out/hallow_game_lobby.wasm" servers/eggwars-lobby/plugins/
+cp "$out/hallow_game_lobby.wasm" servers/skywars-lobby/plugins/
+echo "Built the plugins into $out and the servers' plugins/ folders."

@@ -1,0 +1,15 @@
+[package]
+name = "hallow-islands"
+version = "0.1.0"
+description = "Sky-island maps for Hallow's games: the map format, symmetry, a chunk generator that builds them, and the match plumbing the SDK doesn't have yet."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pumpkin-plugin-api.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+toml = { version = "1.2.1", default-features = false, features = ["parse", "serde"] }
+tracing.workspace = true
+uuid = { version = "1.29", default-features = false }

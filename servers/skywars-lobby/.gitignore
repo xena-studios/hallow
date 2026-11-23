@@ -1,0 +1,3 @@
+/target
+# Built by CI (or by hand) before the image build.
+/plugins/*.wasm
