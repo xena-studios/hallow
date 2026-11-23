@@ -34,7 +34,7 @@ services:
       retries: 6
 
   postgres:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     environment:
       # Dev only.
       POSTGRES_PASSWORD: hallow-dev
