@@ -31,6 +31,7 @@ mod remote;
 mod signals;
 mod stats;
 pub mod store;
+pub mod verdicts;
 
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -106,8 +107,10 @@ pub struct Config {
     /// Usernames given the `admin` rank (`*`) when they log in, to bootstrap
     /// a new network. Needs `database_url`.
     pub admins: Vec<String>,
-    /// How long anticheat signal samples are kept.
+    /// How long anticheat signal samples (and violations) are kept.
     pub signal_retention_days: u32,
+    /// How the verdict service scores violations; observe-only by default.
+    pub anticheat: verdicts::Policy,
     /// The panel, for joining nodes. Without it node joins are off.
     pub panel: Option<panel::PanelConfig>,
     /// How long a node join token lasts unless the request says otherwise.
@@ -137,6 +140,7 @@ impl Config {
             database_url: None,
             admins: Vec::new(),
             signal_retention_days: 14,
+            anticheat: verdicts::Policy::default(),
             panel: None,
             join_token_ttl: Duration::from_secs(24 * 3600),
             instances: None,
@@ -241,6 +245,7 @@ pub async fn serve_with(
         tokio::spawn(sweeper(state.clone()));
     }
     tokio::spawn(signals::retention(state.clone()));
+    tokio::spawn(verdicts::retention(state.clone()));
     tokio::spawn(nodes::retention(state.clone()));
     if let Some(agent) = agent {
         tracing::info!(address = %agent.local_addr()?, "answering load balancer agent checks");

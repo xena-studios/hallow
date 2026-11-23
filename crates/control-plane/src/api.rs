@@ -32,6 +32,7 @@ use hallow_proto::{
     server::{RegisterServer, ServerHeartbeat, ServerInfo, ServerPlayer, ServerPlayersChanged},
     signal::{SignalBatch, SignalRecord},
     stats::{PlayerStats, StatsBatch},
+    violation::{PlayerViolations, ViolationBatch},
 };
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
@@ -43,6 +44,7 @@ use crate::{
     error::Failure,
     events, fleet, friends, kinds, lobbies, nodes, punish, ranks, signals, stats,
     store::{LoginOutcome, RegisterError},
+    verdicts,
 };
 
 type Shared = State<Arc<AppState>>;
@@ -114,6 +116,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(routes::PARTIES, post(party_action))
         .route(routes::FRIENDS, post(friend_action))
         .route(routes::SIGNALS, post(add_signals).get(signal_history))
+        .route(
+            routes::VIOLATIONS,
+            post(add_violations).get(violation_history),
+        )
         .route(routes::STATS, post(add_stats))
         .route("/v1/stats/{player}", get(player_stats))
         .route(
@@ -514,6 +520,48 @@ async fn signal_history(
     let Query(params) = query?;
     let db = database(&state)?;
     signals::history(db, &state.store, &params.name)
+        .await?
+        .map(Body)
+        .ok_or_else(|| Failure::not_found("nobody by that name has joined"))
+}
+
+// Anticheat verdicts
+
+async fn add_violations(
+    State(state): Shared,
+    Extension(caller): Extension<Caller>,
+    Body(batch): Body<ViolationBatch>,
+) -> Reply<StatusCode> {
+    check_name("violation source", &batch.source)?;
+    caller.check_server(&batch.source, None)?;
+    if batch.violations.len() > verdicts::MAX_BATCH {
+        return Err(Failure::bad_request(format!(
+            "at most {} violations per batch",
+            verdicts::MAX_BATCH
+        )));
+    }
+    if let Some(bad) = batch
+        .violations
+        .iter()
+        .find(|v| !verdicts::valid_check(&v.check))
+    {
+        return Err(Failure::bad_request(format!(
+            "check {:?} must be 1 to 32 lowercase letters, digits or '_'",
+            bad.check
+        )));
+    }
+    let db = database(&state)?;
+    verdicts::record(db, &state.config.anticheat, &batch).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn violation_history(
+    State(state): Shared,
+    query: Result<Query<NameParams>, axum::extract::rejection::QueryRejection>,
+) -> Reply<Body<PlayerViolations>> {
+    let Query(params) = query?;
+    let db = database(&state)?;
+    verdicts::standing(db, &state.store, &state.config.anticheat, &params.name)
         .await?
         .map(Body)
         .ok_or_else(|| Failure::not_found("nobody by that name has joined"))

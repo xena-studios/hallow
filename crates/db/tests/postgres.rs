@@ -128,6 +128,9 @@ async fn migrations_stay_in_the_hallow_schema() {
             "account_ranks",
             "account_usernames",
             "accounts",
+            "anticheat_scores",
+            "anticheat_verdicts",
+            "anticheat_violations",
             "fleet_settings",
             "fleet_settings_history",
             "friend_requests",
@@ -782,6 +785,98 @@ async fn signals() {
     assert!(recent[0].at > recent[1].at, "newest first");
 
     let deleted = hallow_db::delete_signals_before(&db.pool, now - Duration::days(14))
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn violations_scores_and_verdicts() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let (player, stranger) = (Uuid::new_v4(), Uuid::new_v4());
+    join(&db.pool, player, "flyer").await;
+    let evidence = serde_json::json!({"hover_ms_max": 5000.0, "limit": 2000.0});
+    let now = Utc::now();
+    let violation = |account, at| hallow_db::NewViolation {
+        account,
+        source: "proxy-1",
+        check: "fly",
+        at,
+        severity: 2.5,
+        protocol: Some(777),
+        summary: "5000 ms in the air",
+        evidence: &evidence,
+    };
+    assert!(
+        hallow_db::add_violation(&db.pool, &violation(player, now - Duration::days(20)))
+            .await
+            .unwrap()
+    );
+    assert!(
+        hallow_db::add_violation(&db.pool, &violation(player, now))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !hallow_db::add_violation(&db.pool, &violation(stranger, now))
+            .await
+            .unwrap()
+    );
+    let recent = hallow_db::recent_violations(&db.pool, player, 10)
+        .await
+        .unwrap();
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0].check_name, "fly");
+    assert_eq!(recent[0].evidence.0["limit"], 2000.0);
+    assert!(recent[0].at > recent[1].at, "newest first");
+
+    // Scores add up and halve every half-life.
+    let half_life = 600.0;
+    let first = hallow_db::bump_score(&db.pool, player, "fly", 4.0, now, half_life)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first, (4.0, "none".to_string()));
+    let later = now + Duration::seconds(600);
+    let (level, _) = hallow_db::bump_score(&db.pool, player, "fly", 1.0, later, half_life)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!((level - 3.0).abs() < 1e-6, "{level}");
+    // Out of order: no growth from a negative age.
+    let (level, _) = hallow_db::bump_score(&db.pool, player, "fly", 1.0, now, half_life)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!((level - 4.0).abs() < 1e-6, "{level}");
+    assert!(
+        hallow_db::bump_score(&db.pool, stranger, "fly", 1.0, now, half_life)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    hallow_db::set_score_action(&db.pool, player, "fly", "review")
+        .await
+        .unwrap();
+    let scores = hallow_db::scores_of(&db.pool, player).await.unwrap();
+    assert_eq!(scores.len(), 1);
+    assert_eq!(scores[0].action, "review");
+    assert_eq!(scores[0].updated_at.timestamp(), later.timestamp());
+
+    hallow_db::add_verdict(&db.pool, player, "fly", "review", 4.0, false, "hovering")
+        .await
+        .unwrap();
+    let verdicts = hallow_db::recent_verdicts(&db.pool, player, 10)
+        .await
+        .unwrap();
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].action, "review");
+    assert!(!verdicts[0].enforced);
+
+    let deleted = hallow_db::delete_violations_before(&db.pool, now - Duration::days(14))
         .await
         .unwrap();
     assert_eq!(deleted, 1);

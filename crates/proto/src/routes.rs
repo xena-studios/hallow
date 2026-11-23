@@ -40,6 +40,8 @@
 //! | `POST` | [`RANK_GRANTS_REVOKE`] | [`RevokeRank`](crate::rank::RevokeRank) | [`PlayerRanks`](crate::rank::PlayerRanks), or `404` |
 //! | `POST` | [`SIGNALS`] | [`SignalBatch`](crate::signal::SignalBatch) | `204` |
 //! | `GET` | [`signals_of`] | | `Vec<`[`SignalRecord`](crate::signal::SignalRecord)`>` |
+//! | `POST` | [`VIOLATIONS`] | [`ViolationBatch`](crate::violation::ViolationBatch) | `204` |
+//! | `GET` | [`violations_of`] | | [`PlayerViolations`](crate::violation::PlayerViolations) or `404` |
 //! | `POST` | [`STATS`] | [`StatsBatch`](crate::stats::StatsBatch) | `204` |
 //! | `GET` | [`stats_of`] | | [`PlayerStats`](crate::stats::PlayerStats) or `404`; by UUID or username |
 //! | `POST` | [`QUEUES`] | [`JoinQueue`](crate::queue::JoinQueue) | [`QueueStatus`](crate::queue::QueueStatus) |
@@ -90,6 +92,7 @@ pub const PLAYERS: &str = "/v1/players";
 pub const PARTIES: &str = "/v1/parties";
 pub const FRIENDS: &str = "/v1/friends";
 pub const SIGNALS: &str = "/v1/signals";
+pub const VIOLATIONS: &str = "/v1/violations";
 pub const STATS: &str = "/v1/stats";
 pub const PUNISHMENTS: &str = "/v1/punishments";
 pub const PUNISHMENTS_REVOKE: &str = "/v1/punishments/revoke";
@@ -209,6 +212,12 @@ pub fn rank_grants_of(name: &str) -> String {
 #[must_use]
 pub fn signals_of(name: &str) -> String {
     player_by_name(name).replacen(PLAYERS, SIGNALS, 1)
+}
+
+/// A player's anticheat violations, scores and verdicts by username.
+#[must_use]
+pub fn violations_of(name: &str) -> String {
+    player_by_name(name).replacen(PLAYERS, VIOLATIONS, 1)
 }
 
 /// A player's stats, by UUID or username, percent-encoded like

@@ -1,6 +1,6 @@
 //! Hallow's PostgreSQL schema and the typed queries the control plane runs
 //! against it: accounts, ranks, sessions, punishments and their templates,
-//! anticheat signals, fleet settings, node join tokens, player stats and
+//! anticheat signals, violations and verdicts, fleet settings, node join tokens, player stats and
 //! server kinds.
 //!
 //! Every table lives in the `hallow` schema, so Hallow and the Calagopus
@@ -25,6 +25,7 @@ mod ranks;
 mod sessions;
 mod signals;
 mod stats;
+mod violations;
 
 pub use accounts::{
     Account, Edition, Login, PastUsername, find_accounts_by_username, get_account, upsert_account,
@@ -61,6 +62,10 @@ pub use sessions::{
 pub use signals::{NewSignal, Signal, add_signals, delete_signals_before, recent_signals};
 pub use sqlx::{self, PgPool, migrate::MigrateError};
 pub use stats::{StatIncrease, StatTotal, add_stats, stats_of};
+pub use violations::{
+    NewViolation, Score, StoredViolation, Verdict, add_verdict, add_violation, bump_score,
+    delete_violations_before, recent_verdicts, recent_violations, scores_of, set_score_action,
+};
 
 /// The schema every Hallow table lives in.
 pub const SCHEMA: &str = "hallow";

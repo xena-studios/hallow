@@ -11,6 +11,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+hallow-anticheat = { path = "../anticheat" }
 hallow-proto = { path = "../proto" }
 pumpkin-plugin-api.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }

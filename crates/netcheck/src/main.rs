@@ -7,7 +7,13 @@
 //! netcheck --route "~5,/msg someone hi"         # steps like ~5 wait that many seconds
 //! netcheck --route ">hello there"               # steps starting with > send chat
 //! netcheck --bots 100 [--ramp 10] [--stay 60] [--name load]   # load test; bots are load0000, load0001, ...
+//! netcheck --anticheat 40 [--server game-1] [--control-plane 127.0.0.1:18090] \
+//!          [--token-file deploy/compose/config/hallow/control-plane.token]   # cheat bots, see `anticheat`
 //! ```
+//!
+//! With `--anticheat`, cheating and honest bots play on `--server` for that
+//! many seconds, then the control plane is asked which violations each got
+//! (see [`anticheat`]); it needs the two-proxy network (`compose.hallow.yaml`).
 //!
 //! With `--bots`, that many bots join (`--ramp` per second), walk around spawn
 //! like idle players for `--stay` seconds, and a summary reports how many
@@ -16,7 +22,11 @@
 //! The proxy must allow offline players (`online_mode = false` in Vine).
 //! Exits non-zero on the first step that fails, or if any bot fails.
 
-use std::{collections::BTreeMap, net::SocketAddr, process::ExitCode, time::Duration};
+mod anticheat;
+
+use std::{
+    collections::BTreeMap, net::SocketAddr, path::PathBuf, process::ExitCode, time::Duration,
+};
 
 use bytes::Bytes;
 use pumpkin_data::packet::{CURRENT_MC_VERSION, clientbound};
@@ -73,6 +83,8 @@ struct Bot {
     writer: Writer,
     /// Where the server last put this player.
     position: Vector3<f64>,
+    /// This player's entity id on the current server.
+    entity_id: i32,
     /// Print chat the player receives.
     verbose: bool,
 }
@@ -126,6 +138,7 @@ impl Bot {
             reader: TCPNetworkDecoder::new(BufReader::new(read)),
             writer: TCPNetworkEncoder::new(BufWriter::new(write)),
             position: Vector3::new(0.0, 0.0, 0.0),
+            entity_id: 0,
             verbose: true,
         };
 
@@ -211,6 +224,7 @@ impl Bot {
                 continue;
             }
             if packet.id == CLogin::to_id(CURRENT_MC_VERSION) {
+                self.entity_id = read_i32(&packet.payload).ok_or("bad join packet")?;
                 joined = true;
             } else if packet.id == CPlayerPosition::to_id(CURRENT_MC_VERSION) {
                 let mut slice = &packet.payload[..];
@@ -457,6 +471,11 @@ struct Args {
     stay: u64,
     bots: u32,
     ramp: u32,
+    /// Seconds of play for the anticheat suite; 0 runs the route instead.
+    anticheat: u64,
+    server: String,
+    control_plane: SocketAddr,
+    token_file: PathBuf,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -467,6 +486,10 @@ fn parse_args() -> Result<Args, String> {
         stay: 0,
         bots: 0,
         ramp: 10,
+        anticheat: 0,
+        server: "game-1".to_string(),
+        control_plane: "127.0.0.1:18090".parse().expect("valid default"),
+        token_file: PathBuf::from("deploy/compose/config/hallow/control-plane.token"),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -501,6 +524,18 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|err| format!("--ramp {value}: {err}"))?
                     .max(1);
             }
+            "--anticheat" => {
+                args.anticheat = value
+                    .parse()
+                    .map_err(|err| format!("--anticheat {value}: {err}"))?;
+            }
+            "--server" => args.server = value,
+            "--control-plane" => {
+                args.control_plane = value
+                    .parse()
+                    .map_err(|err| format!("--control-plane {value}: {err}"))?;
+            }
+            "--token-file" => args.token_file = PathBuf::from(value),
             _ => return Err(format!("unknown flag {flag}")),
         }
     }
@@ -694,7 +729,21 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let outcome = if args.bots > 0 {
+    let outcome = if args.anticheat > 0 {
+        anticheat::run(&anticheat::Options {
+            proxy: args.proxy,
+            prefix: if args.name == "netcheck" {
+                "ac".to_string()
+            } else {
+                args.name.clone()
+            },
+            server: args.server.clone(),
+            seconds: args.anticheat,
+            control_plane: args.control_plane,
+            token_file: args.token_file.clone(),
+        })
+        .await
+    } else if args.bots > 0 {
         load_test(&args).await
     } else {
         run(&args).await
