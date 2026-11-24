@@ -1,10 +1,10 @@
-![Hallow by Xena Studios. The title "Hallow" over the Ion Blue planet horizon, with "A full minigame network on Pumpkin, in Rust."](.github/assets/banner.png)
+![Hallow by Xena Studios. The title "Hallow" over the Ion Blue planet horizon, with "A full minigame network on Pumpkin, in Rust."](https://cdn.jsdelivr.net/gh/xena-studios/brand@1/github/hallow-banner.png)
 
-# Hallow
+**A full minigame network on Pumpkin, in Rust.**
 
-**A full minigame network, built on [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin).** Lobbies, matchmaking, parties, multiple proxies, machines bought and returned on demand from Hetzner and OVHcloud, one panel for every node, server, player and ban. Java 1.7 to 26.3 and Bedrock, written in Rust.
+Hallow is a minigame network by [Xena Studios](https://xenastudios.co), built on [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin): lobbies, matchmaking, parties, multiple proxies, machines bought and returned on demand from Hetzner and OVHcloud, one panel for every node, server, player and ban. Java 1.7 to 26.3 and Bedrock, written in Rust.
 
-Hallow is a Xena Studios project. It exists to show that Pumpkin and its ecosystem can run a large-network setup, not just a single server, and to send what we build back upstream.
+It exists to show that Pumpkin and its ecosystem can run a large-network setup, not just a single server, and to send what we build back upstream.
 
 > **Status:** planning. Nothing here runs yet. The first step is [Phase 0](docs/ROADMAP.md#phase-0-validation-spike), a two-week spike that proves old clients, Bedrock and server switching work on the stack before any game is written.
 
@@ -80,6 +80,6 @@ Old Java clients (1.7.2 to 26.2) are translated on the proxy: Vine links [pumpki
 
 Issues and pull requests are welcome. Start with the [roadmap](docs/ROADMAP.md) and the [open issues](https://github.com/xena-studios/hallow/issues). The org-wide [contributing guide](https://github.com/xena-studios/.github/blob/main/CONTRIBUTING.md), [code of conduct](https://github.com/xena-studios/.github/blob/main/CODE_OF_CONDUCT.md) and [security policy](https://github.com/xena-studios/.github/blob/main/SECURITY.md) apply.
 
-## License
+## Licence
 
 Hallow is licensed under the [GNU Affero General Public License v3.0](LICENSE). Upstream projects keep their own licences: Pumpkin and Vine (GPL-3.0), multiversion (MIT or Apache-2.0, per its `Cargo.toml`), Calagopus Panel and Wings (MIT), Geyser (MIT).
